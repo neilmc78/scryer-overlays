@@ -212,10 +212,19 @@ fn merge_max_u32(target: &mut Option<u32>, candidate: Option<u32>) {
     }
 }
 
+/// The admission lane a pass dispatches through. `None` is the unbounded
+/// background lane: machine-initiated sweeps fan out to every routed indexer
+/// at once and rely on the upstream scheduler's per-destination pacing and
+/// cooldowns for pushback instead of a Scryer-side ceiling.
+type SearchAdmission = Option<Arc<Semaphore>>;
+
+/// A held admission slot, `None` when the lane is unbounded.
+type SearchPermit = Option<OwnedSemaphorePermit>;
+
 #[derive(Clone)]
 struct StrategyTierContext {
     client: Arc<dyn IndexerClient>,
-    search_limit: Arc<Semaphore>,
+    search_limit: SearchAdmission,
     rate_limiter: IndexerRateLimiter,
     search_timeout: std::time::Duration,
     pacing: IndexerPacing,
@@ -281,12 +290,15 @@ async fn within_search_window<T>(
 }
 
 async fn acquire_search_permit(
-    search_limit: Arc<Semaphore>,
+    search_limit: SearchAdmission,
     cancel_token: &CancellationToken,
     deadline_at: Option<tokio::time::Instant>,
-) -> Result<OwnedSemaphorePermit, SearchPermitError> {
+) -> Result<SearchPermit, SearchPermitError> {
+    let Some(search_limit) = search_limit else {
+        return Ok(None);
+    };
     match within_search_window(search_limit.acquire_owned(), cancel_token, deadline_at).await {
-        Ok(Ok(permit)) => Ok(permit),
+        Ok(Ok(permit)) => Ok(Some(permit)),
         Ok(Err(error)) => Err(SearchPermitError::Closed(error.to_string())),
         Err(SearchWindowError::Cancelled) => Err(SearchPermitError::Cancelled),
         Err(SearchWindowError::DeadlineExpired) => Err(SearchPermitError::DeadlineExpired),
@@ -1270,10 +1282,9 @@ impl StrategyBatchHealth {
     }
 }
 
-/// Global admission limit for complete automatic indexer strategies. This is
-/// intentionally independent of the number of configured indexers: callers
-/// share one bounded background-search lane across cloned clients.
-const BACKGROUND_INDEXER_SEARCH_CONCURRENCY_LIMIT: usize = 4;
+/// Admission limit for searches someone is waiting on. Background sweeps
+/// (RSS and the consenting convergence lanes) are deliberately unbounded here;
+/// the upstream scheduler's per-destination pacing is the only throttle.
 const INTERACTIVE_INDEXER_SEARCH_CONCURRENCY_LIMIT: usize = 24;
 const LEARNED_EMPTY_SUPPRESSION_THRESHOLD: u32 = 3;
 const LEARNED_SUPPRESSION_REPROBE_INTERVAL_DAYS: i64 = 7;
@@ -2841,7 +2852,6 @@ pub struct MultiIndexerSearchClient {
     backoff_tracker: IndexerBackoffTracker,
     rss_feed_cache: RssFeedCache,
     rss_bare_query_indexers: RssBareQueryIndexers,
-    background_search_limit: Arc<Semaphore>,
     interactive_search_limit: Arc<Semaphore>,
 }
 
@@ -2869,9 +2879,6 @@ impl MultiIndexerSearchClient {
             backoff_tracker: IndexerBackoffTracker::new(),
             rss_feed_cache: Arc::new(Mutex::new(HashMap::new())),
             rss_bare_query_indexers: Arc::new(Mutex::new(HashSet::new())),
-            background_search_limit: Arc::new(Semaphore::new(
-                BACKGROUND_INDEXER_SEARCH_CONCURRENCY_LIMIT,
-            )),
             interactive_search_limit: Arc::new(Semaphore::new(
                 INTERACTIVE_INDEXER_SEARCH_CONCURRENCY_LIMIT,
             )),
@@ -3255,21 +3262,22 @@ impl MultiIndexerSearchClient {
         .await
     }
 
-    /// The background lane's budget bounds machine-initiated sweeps: RSS and
-    /// the convergence lanes that consent to corpus reuse. An operator's
+    /// Machine-initiated sweeps — RSS and the convergence lanes that consent
+    /// to corpus reuse — dispatch unbounded: with twenty-plus indexers a
+    /// Scryer-side ceiling only serialises the walk, and the upstream
+    /// scheduler already paces and cools each destination. An operator's
     /// Auto-mode search — queue-best-release, the UI search buttons, and the
-    /// acquisition-search job they start — admits through the interactive lane
-    /// so it is never queued behind that sweep.
+    /// acquisition-search job they start — admits through the interactive lane.
     fn search_limit_for_mode(
         &self,
         mode: SearchMode,
         is_rss_request: bool,
         learning_context: Option<&IndexerSearchLearningContext>,
-    ) -> Arc<Semaphore> {
+    ) -> SearchAdmission {
         if Self::is_background_pass(mode, is_rss_request, learning_context) {
-            self.background_search_limit.clone()
+            None
         } else {
-            self.interactive_search_limit.clone()
+            Some(self.interactive_search_limit.clone())
         }
     }
 
@@ -3617,7 +3625,7 @@ impl MultiIndexerSearchClient {
     fn execute_legacy_strategy_tier(
         context: StrategyTierContext,
         strategies: Vec<PreparedSearchStrategy>,
-        initial_permit: Option<OwnedSemaphorePermit>,
+        initial_permit: Option<SearchPermit>,
         page_sink: IndexerSearchPageSink,
     ) -> tokio::task::JoinSet<StrategyExecutionOutcome> {
         let mut set = tokio::task::JoinSet::<StrategyExecutionOutcome>::new();
@@ -3863,7 +3871,7 @@ impl MultiIndexerSearchClient {
     fn execute_strategy_tier(
         context: StrategyTierContext,
         strategies: Vec<PreparedSearchStrategy>,
-        initial_permit: Option<OwnedSemaphorePermit>,
+        initial_permit: Option<SearchPermit>,
         page_sink: IndexerSearchPageSink,
     ) -> StrategyTierOutcomes {
         if context
@@ -3885,7 +3893,7 @@ impl MultiIndexerSearchClient {
     fn execute_plan_strategy_tier(
         context: StrategyTierContext,
         strategies: Vec<PreparedSearchStrategy>,
-        initial_permit: Option<OwnedSemaphorePermit>,
+        initial_permit: Option<SearchPermit>,
         page_sink: IndexerSearchPageSink,
     ) -> StrategyTierOutcomes {
         let (outcome_tx, outcome_rx) = tokio::sync::mpsc::channel(16);
@@ -3963,7 +3971,7 @@ impl MultiIndexerSearchClient {
     async fn run_paced_plan_slice(
         context: &StrategyTierContext,
         slice: PacedPlanSlice,
-        initial_permit: Option<OwnedSemaphorePermit>,
+        initial_permit: Option<SearchPermit>,
         page_sink: &IndexerSearchPageSink,
         outcome_tx: &tokio::sync::mpsc::Sender<StrategyExecutionOutcome>,
         plan_cancel_token: &CancellationToken,
@@ -4015,7 +4023,7 @@ impl MultiIndexerSearchClient {
     async fn dispatch_plan_slice(
         context: &StrategyTierContext,
         strategies: Vec<PreparedSearchStrategy>,
-        initial_permit: Option<OwnedSemaphorePermit>,
+        initial_permit: Option<SearchPermit>,
         page_sink: &IndexerSearchPageSink,
         outcome_tx: &tokio::sync::mpsc::Sender<StrategyExecutionOutcome>,
         plan_cancel_token: &CancellationToken,
@@ -7693,7 +7701,7 @@ mod tests {
             client: Arc::new(MockIndexerClient {
                 calls: Arc::new(AtomicUsize::new(0)),
             }),
-            search_limit: Arc::new(Semaphore::new(1)),
+            search_limit: Some(Arc::new(Semaphore::new(1))),
             rate_limiter: IndexerRateLimiter::new(),
             search_timeout: std::time::Duration::from_secs(5),
             pacing: unpaced_tier_pacing(),
@@ -9001,8 +9009,8 @@ mod tests {
             SearchMode::Interactive => IndexerErrorOperation::InteractiveSearch,
             SearchMode::Auto => IndexerErrorOperation::AutomaticSearch,
         };
-        // Auto-mode admission caps apply to background passes; a context-less
-        // Auto search would take the operator's interactive lane instead.
+        // A context-less Auto search takes the operator's interactive lane; a
+        // consenting background context would dispatch unbounded instead.
         let learning_context = Some(background_pass_context());
         let first_context = learning_context.clone();
         let first_search = tokio::spawn(async move {
@@ -9249,7 +9257,7 @@ mod tests {
         let mut outcomes = MultiIndexerSearchClient::execute_plan_strategy_tier(
             StrategyTierContext {
                 client,
-                search_limit: Arc::new(Semaphore::new(1)),
+                search_limit: Some(Arc::new(Semaphore::new(1))),
                 rate_limiter: IndexerRateLimiter::new(),
                 search_timeout: std::time::Duration::from_secs(5),
                 pacing: unpaced_tier_pacing(),
@@ -9280,7 +9288,7 @@ mod tests {
             client: Arc::new(ProtocolPlanIndexerClient {
                 mode: PlanFailureMode::MissingEvent,
             }),
-            search_limit: Arc::new(Semaphore::new(1)),
+            search_limit: Some(Arc::new(Semaphore::new(1))),
             rate_limiter: IndexerRateLimiter::new(),
             search_timeout: std::time::Duration::from_secs(5),
             pacing: unpaced_tier_pacing(),
@@ -9577,10 +9585,10 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn rss_cache_followers_do_not_consume_search_permits() {
+    async fn rss_cache_followers_wait_on_the_leader_without_a_second_request() {
         let probe = Arc::new(SearchConcurrencyProbe::default());
         let scheduler = Arc::new(RecordingScheduler::default());
-        let mut multi = MultiIndexerSearchClient::new(
+        let multi = MultiIndexerSearchClient::new(
             Arc::new(MockIndexerConfigRepository {
                 configs: vec![mock_indexer_config()],
             }),
@@ -9593,8 +9601,6 @@ mod tests {
             }),
         )
         .with_upstream_scheduler(scheduler);
-        let background_limit = Arc::new(Semaphore::new(2));
-        multi.background_search_limit = background_limit.clone();
 
         let first_client = multi.clone();
         let first = tokio::spawn(async move {
@@ -9616,7 +9622,6 @@ mod tests {
                 .await
         });
         wait_for_started(&probe, 1).await;
-        assert_eq!(background_limit.available_permits(), 1);
 
         let second_client = multi.clone();
         let second = tokio::spawn(async move {
@@ -9640,11 +9645,10 @@ mod tests {
         // The follower has now reached its wait on the leader's result.
         run_until_idle().await;
 
-        assert_eq!(probe.started.load(Ordering::SeqCst), 1);
         assert_eq!(
-            background_limit.available_permits(),
+            probe.started.load(Ordering::SeqCst),
             1,
-            "the cache follower must wait without holding a search permit"
+            "the cache follower must reuse the leader's poll, not start its own"
         );
 
         probe.release_all();
@@ -9759,7 +9763,7 @@ mod tests {
         let cancel_token = CancellationToken::new();
         cancel_token.cancel();
 
-        let result = acquire_search_permit(search_limit, &cancel_token, None).await;
+        let result = acquire_search_permit(Some(search_limit), &cancel_token, None).await;
 
         assert_eq!(result.unwrap_err(), SearchPermitError::Cancelled);
     }
@@ -9787,33 +9791,74 @@ mod tests {
         assert_eq!(child_domain.as_str(), "parent-config:child-42");
     }
 
-    #[test]
-    fn automatic_strategy_capacity_is_fixed_at_four() {
-        let client = MultiIndexerSearchClient::new(
-            Arc::new(MockIndexerConfigRepository {
-                configs: Vec::new(),
-            }),
-            Arc::new(MockIndexerStatsTracker),
-            Arc::new(MockIndexerPluginProvider {
-                rss: false,
-                calls: Arc::new(AtomicUsize::new(0)),
-            }),
-        );
+    #[tokio::test]
+    async fn unbounded_lane_admits_without_a_permit() {
+        let cancel_token = CancellationToken::new();
 
-        assert_eq!(
-            client.background_search_limit.available_permits(),
-            BACKGROUND_INDEXER_SEARCH_CONCURRENCY_LIMIT
-        );
-        assert_eq!(BACKGROUND_INDEXER_SEARCH_CONCURRENCY_LIMIT, 4);
+        let permit = acquire_search_permit(None, &cancel_token, None).await;
+
+        assert!(matches!(permit, Ok(None)));
     }
 
+    /// A background sweep with more indexers than the interactive lane admits
+    /// must reach every one of them at once, across cloned clients; the only
+    /// throttle left on that lane is the upstream scheduler.
     #[tokio::test(start_paused = true)]
-    async fn automatic_strategy_concurrency_is_shared_across_cloned_clients() {
-        assert_leaf_search_limit_shared_across_clones(
-            SearchMode::Auto,
-            BACKGROUND_INDEXER_SEARCH_CONCURRENCY_LIMIT,
-        )
-        .await;
+    async fn background_passes_fan_out_to_every_indexer_at_once() {
+        let config_count = INTERACTIVE_INDEXER_SEARCH_CONCURRENCY_LIMIT + 4;
+        let probe = StdArc::new(SearchConcurrencyProbe::default());
+        let client = Arc::new(BlockingIndexerClient {
+            probe: probe.clone(),
+        });
+        let multi = MultiIndexerSearchClient::new(
+            Arc::new(MockIndexerConfigRepository {
+                configs: indexed_mock_configs(config_count),
+            }),
+            Arc::new(MockIndexerStatsTracker),
+            Arc::new(ScriptedIndexerPluginProvider {
+                client,
+                caps: movie_caps(),
+            }),
+        );
+        let searches = (0..2)
+            .map(|_| {
+                let client = multi.clone();
+                tokio::spawn(async move {
+                    <MultiIndexerSearchClient as IndexerClient>::search(
+                        &client,
+                        "Search Limit".to_string(),
+                        HashMap::new(),
+                        None,
+                        Some("movie".to_string()),
+                        None,
+                        None,
+                        None,
+                        SearchMode::Auto,
+                        IndexerErrorOperation::AutomaticSearch,
+                        None,
+                        None,
+                        None,
+                        None,
+                        vec![],
+                        Some(background_pass_context()),
+                        CancellationToken::new(),
+                    )
+                    .await
+                })
+            })
+            .collect::<Vec<_>>();
+
+        wait_for_started(&probe, config_count * 2).await;
+        assert_eq!(probe.max_active.load(Ordering::SeqCst), config_count * 2);
+
+        probe.release_all();
+        for search in searches {
+            tokio::time::timeout(std::time::Duration::from_secs(30), search)
+                .await
+                .expect("background search should finish")
+                .expect("background search task should join")
+                .expect("background search should succeed");
+        }
     }
 
     #[tokio::test(start_paused = true)]
@@ -13378,7 +13423,7 @@ mod tests {
     ) -> StrategyTierContext {
         StrategyTierContext {
             client,
-            search_limit: Arc::new(Semaphore::new(4)),
+            search_limit: Some(Arc::new(Semaphore::new(4))),
             rate_limiter: limiter.clone(),
             search_timeout: std::time::Duration::from_secs(30),
             pacing,
@@ -14664,11 +14709,10 @@ mod tests {
             ..background.clone()
         };
 
-        let background_lane =
-            |limit: &Arc<Semaphore>| Arc::ptr_eq(limit, &multi.background_search_limit);
+        let background_lane = |limit: &SearchAdmission| limit.is_none();
         assert!(
             background_lane(&multi.search_limit_for_mode(SearchMode::Auto, true, None)),
-            "RSS stays on the bounded background lane"
+            "RSS dispatches on the unbounded background lane"
         );
         assert!(
             background_lane(&multi.search_limit_for_mode(
@@ -14676,7 +14720,7 @@ mod tests {
                 false,
                 Some(&background)
             )),
-            "consenting convergence passes stay on the background lane"
+            "consenting convergence passes dispatch on the unbounded background lane"
         );
         assert!(
             !background_lane(&multi.search_limit_for_mode(
