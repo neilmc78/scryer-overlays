@@ -521,6 +521,10 @@ fn provider_capabilities(
 /// re-maps the title to a different canonical subject, changing these ids, so folding
 /// them into the fingerprint re-opens convergence. Plain metadata edits
 /// that leave the match unchanged do not.
+///
+/// A pre-release search carries a phase suffix, so its empty answer is kept
+/// apart from released coverage and the scope is searched again once the
+/// release settles. Released identities carry no suffix.
 pub(crate) fn scope_match_identity(subject: &ResolvedReleaseSearchSubject) -> String {
     fn part(label: &str, value: &Option<String>) -> String {
         format!(
@@ -528,14 +532,19 @@ pub(crate) fn scope_match_identity(subject: &ResolvedReleaseSearchSubject) -> St
             value.as_deref().map(str::trim).unwrap_or_default()
         )
     }
-    [
+    let identity = [
         part("imdb", &subject.imdb_id),
         part("tmdb", &subject.tmdb_id),
         part("tvdb", &subject.tvdb_id),
         part("anidb", &subject.anidb_id),
         part("mal", &subject.mal_id),
     ]
-    .join(";")
+    .join(";");
+    if subject.pre_release {
+        format!("{identity};phase=pre")
+    } else {
+        identity
+    }
 }
 
 impl AppUseCase {
@@ -1488,6 +1497,43 @@ mod tests {
             a, b,
             "a rematch (changed SMG match id) must change the fingerprint"
         );
+    }
+
+    #[test]
+    fn an_episode_stays_pre_release_until_a_day_after_its_air_date() {
+        use crate::acquisition::release_search::episode_is_pre_release;
+        let now = chrono::DateTime::parse_from_rfc3339("2026-03-10T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert!(
+            episode_is_pre_release(Some("2026-03-11"), &now),
+            "airs tomorrow"
+        );
+        assert!(
+            episode_is_pre_release(Some("2026-03-10"), &now),
+            "twelve hours after a date-only air date the release has not settled"
+        );
+        assert!(
+            !episode_is_pre_release(Some("2026-03-08"), &now),
+            "aired two days ago"
+        );
+        assert!(!episode_is_pre_release(None, &now), "no air date");
+        assert!(
+            !episode_is_pre_release(Some("soon"), &now),
+            "unreadable air date"
+        );
+    }
+
+    #[test]
+    fn a_movie_without_release_dates_is_never_pre_release() {
+        use crate::acquisition::release_search::movie_is_pre_release;
+        let now = chrono::DateTime::parse_from_rfc3339("2026-03-10T12:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        assert!(!movie_is_pre_release(None, None, &now));
+        assert!(!movie_is_pre_release(Some("tba"), None, &now));
+        assert!(movie_is_pre_release(None, Some("2026-03-10"), &now));
+        assert!(!movie_is_pre_release(None, Some("2026-03-08"), &now));
     }
 
     fn test_criteria() -> QualityProfileCriteria {

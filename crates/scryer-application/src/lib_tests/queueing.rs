@@ -6301,6 +6301,85 @@ async fn stale_fingerprint_coverage_reopens_convergence() {
 }
 
 #[tokio::test]
+async fn pre_release_match_identity_differs_only_by_its_phase_suffix() {
+    let settings = Arc::new(StoredSettingsRepo::default());
+    let (app, user) = bootstrap_with_search_settings_indexer_and_configs(
+        settings,
+        Arc::new(MockIndexerClient),
+        vec![synthetic_direct_nab_indexer_config("indexer-a", "newznab")],
+    );
+    let (_, released) = convergence_test_title_and_subject(&app, &user).await;
+    assert!(!released.pre_release, "fixture: the subject is released");
+    let mut pre_release = released.clone();
+    pre_release.pre_release = true;
+
+    let released_identity = crate::acquisition::convergence::scope_match_identity(&released);
+    assert!(
+        !released_identity.contains("phase="),
+        "released identities are unchanged"
+    );
+    assert_eq!(
+        crate::acquisition::convergence::scope_match_identity(&pre_release),
+        format!("{released_identity};phase=pre")
+    );
+}
+
+#[tokio::test]
+async fn pre_release_coverage_does_not_cover_the_released_scope() {
+    // An empty search before air proves nothing about the released catalog;
+    // once the scope is released, every routed indexer is uncovered again.
+    let settings = Arc::new(StoredSettingsRepo::default());
+    let configs = vec![
+        synthetic_direct_nab_indexer_config("indexer-a", "newznab"),
+        synthetic_direct_nab_indexer_config("indexer-b", "newznab"),
+    ];
+    let (app, user) = bootstrap_with_search_settings_indexer_and_configs(
+        settings,
+        Arc::new(MockIndexerClient),
+        configs,
+    );
+    let coverage = Arc::new(RecordingScopeIndexerCoverageRepo::new());
+    let app = app
+        .with_test_overrides(|builder| builder.with_scope_indexer_coverage_store(coverage.clone()));
+
+    let (title, released) = convergence_test_title_and_subject(&app, &user).await;
+    let mut pre_release = released.clone();
+    pre_release.pre_release = true;
+
+    app.record_search_coverage(
+        &title,
+        &pre_release,
+        &["indexer-a".to_string(), "indexer-b".to_string()],
+        &[],
+    )
+    .await;
+    assert!(
+        scope_is_converged(&app, &title, &pre_release).await,
+        "fixture: the pre-release search covered the scope"
+    );
+
+    let convergence = app
+        .resolve_scope_convergence(&title, &released)
+        .await
+        .expect("routed convergence coordinates");
+    let mut uncovered = app
+        .uncovered_indexers_for_scope(
+            &convergence.scope_key,
+            &convergence.facet,
+            &convergence.fingerprint,
+            &convergence.routed_indexer_ids,
+        )
+        .await
+        .expect("coverage read");
+    uncovered.sort();
+    assert_eq!(
+        uncovered,
+        vec!["indexer-a".to_string(), "indexer-b".to_string()],
+        "released scope is searched again on every routed indexer"
+    );
+}
+
+#[tokio::test]
 async fn coverage_excludes_disabled_indexers() {
     // A disabled indexer is never queried, so it must not be recorded as covered
     // (otherwise enabling it later would wrongly present as already-searched).
@@ -7437,6 +7516,52 @@ impl AnidbSelectionFixture {
             .expect("interactive subject")
             .anidb_id;
         (automatic, interactive)
+    }
+}
+
+/// Both the walk's subject and the interactive subject for an episode are
+/// pre-release until a day after it airs, and released after that.
+#[tokio::test]
+async fn episode_subjects_are_pre_release_until_a_day_after_air() {
+    let fixture = AnidbSelectionFixture::new(MediaFacet::Series, None).await;
+    let now = Utc::now();
+    let cases = [
+        (
+            (now + chrono::Duration::days(1)).date_naive().to_string(),
+            true,
+            "airs tomorrow",
+        ),
+        (
+            (now - chrono::Duration::hours(12)).to_rfc3339(),
+            true,
+            "aired twelve hours ago",
+        ),
+        (
+            (now - chrono::Duration::days(2)).date_naive().to_string(),
+            false,
+            "aired two days ago",
+        ),
+    ];
+    for (number, (air_date, expected, case)) in (1_u32..).zip(cases) {
+        let mut episode = fixture.episode(number).await;
+        episode.air_date = Some(air_date);
+        for stored in fixture.shows.episodes.lock().await.iter_mut() {
+            if stored.id == episode.id {
+                stored.air_date = episode.air_date.clone();
+            }
+        }
+
+        let walk = fixture.walk_subject(&episode, None).await;
+        assert_eq!(walk.pre_release, expected, "walk subject: {case}");
+        let interactive = fixture
+            .app
+            .resolve_release_search_subject_for_episode(&fixture.title, "1", &number.to_string())
+            .await
+            .expect("interactive subject");
+        assert_eq!(
+            interactive.pre_release, expected,
+            "interactive subject: {case}"
+        );
     }
 }
 
