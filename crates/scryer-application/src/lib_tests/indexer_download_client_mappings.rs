@@ -451,6 +451,76 @@ async fn managed_child_search_toggles_are_operator_owned_and_survive_sync() {
 }
 
 #[tokio::test]
+async fn managed_child_rate_limits_are_operator_owned_and_survive_sync() {
+    let (configs, management_client) = managed_child_fixture();
+    let (app, admin) = bootstrap_with_search_settings_indexer_configs_and_management(
+        Arc::new(StoredSettingsRepo::default()),
+        Arc::new(MockIndexerClient),
+        configs,
+        Some(management_client),
+    );
+
+    let limited = app
+        .update_indexer_config(
+            &admin,
+            IndexerConfigUpdate {
+                id: "managed-child".to_string(),
+                rate_limit_seconds: Some(15),
+                max_queries_per_minute: Some(Some(4)),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("a managed child's rate limits should be accepted");
+    assert_eq!(limited.rate_limit_seconds, Some(15));
+    assert_eq!(limited.max_queries_per_minute, Some(4));
+
+    let refused = app
+        .update_indexer_config(
+            &admin,
+            IndexerConfigUpdate {
+                id: "managed-child".to_string(),
+                max_queries_per_minute: Some(Some(0)),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect_err("a zero budget is refused on a managed child as it is elsewhere");
+    assert!(matches!(refused, AppError::Validation(_)), "{refused:?}");
+
+    let cleared = app
+        .update_indexer_config(
+            &admin,
+            IndexerConfigUpdate {
+                id: "managed-child".to_string(),
+                max_queries_per_minute: Some(None),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("clearing a managed child's budget should be accepted");
+    assert_eq!(cleared.max_queries_per_minute, None);
+    assert_eq!(cleared.rate_limit_seconds, Some(15));
+
+    app.sync_indexer_config(&admin, "prowlarr-parent")
+        .await
+        .expect("Prowlarr child sync should succeed");
+    let synced = app
+        .services
+        .integrations
+        .indexer_configs
+        .get_by_id("managed-child")
+        .await
+        .expect("child lookup should succeed")
+        .expect("child should remain");
+    assert_eq!(
+        synced.rate_limit_seconds,
+        Some(15),
+        "the sync must not reset the operator's request interval"
+    );
+}
+
+#[tokio::test]
 async fn managed_child_rejects_edits_beyond_its_local_fields() {
     let (configs, management_client) = managed_child_fixture();
     let (app, admin) = bootstrap_with_search_settings_indexer_configs_and_management(
