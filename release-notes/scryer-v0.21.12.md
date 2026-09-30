@@ -20,6 +20,7 @@ These notes cover what's changed since **0.21.11**.
 
 - **Interactive search:** a whole-season search lists only releases that actually cover multiple episodes. Season parts and multi-season packs remain distinct from a full-season pack, and starting a season search opens the season being searched.
 - **Activity:** failed imports offer a retry action directly from activity history. Background queue refreshes no longer insert and remove a loading line that made the table jump on every poll.
+- **Grabbing (PostgreSQL):** accepting a grab and observing the same download at the same time no longer deadlock or fail with a binding-key conflict. Both paths now lock and write the binding before the download row, accept an identical existing binding, and report a genuinely different binding as a named conflict. Grab-submission logs also identify the exact stage being awaited when a queue operation stalls.
 - **Requests:** an automatically approved request now starts its wanted search even when the requester has request permission but not manage-titles permission. A request that leaves monitoring at its default no longer narrows a series to future episodes only.
 - **Background searching:** disabled indexers and indexers with automatic search turned off no longer keep scopes permanently pending. Indexers behind the same Prowlarr or Hydra host keep independent scheduler cooldowns, and a scope deferred behind an active library scan is logged with its consecutive deferral count.
 - **Indexer settings:** standalone indexers expose both the minimum interval between queries and the per-minute query budget in the web editor. Operators can also control enabled state, automatic and interactive search, interval, budget and burst locally for Prowlarr-managed children without those choices being overwritten by the next parent sync.
@@ -30,6 +31,7 @@ These notes cover what's changed since **0.21.11**.
 - **Logs:** retention applies only to archives created by Scryer's own rotation, leaving unrelated files alone.
 - **Notifications:** recycle-bin purges emit notifications, rename events identify the surviving path, post-processing severity follows the script result, and upgrade-origin metadata is retained without incorrectly attaching media servers.
 - **Indexer pacing:** cancelling a reserved pacing slot returns its interval spacing instead of unnecessarily delaying later requests.
+- **Quality profiles:** action buttons on each quality-tier row have consistent spacing.
 - **Title deletion:** deleting a single series is queued through the existing title-job path.
 
 ## API and plugin changes
