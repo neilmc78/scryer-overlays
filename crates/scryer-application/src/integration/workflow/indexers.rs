@@ -912,6 +912,7 @@ impl AppUseCase {
         changes_beyond_local.enable_auto_search = None;
         changes_beyond_local.rate_limit_seconds = None;
         changes_beyond_local.rate_limit_burst = None;
+        changes_beyond_local.max_queries_per_minute = None;
         let managed_local_only = !changes_beyond_local.has_changes();
         let managed_local_update = IndexerConfigUpdate {
             id: update.id.clone(),
@@ -919,6 +920,10 @@ impl AppUseCase {
             enable_auto_search: update.enable_auto_search,
             rate_limit_seconds: update.rate_limit_seconds,
             rate_limit_burst: update.rate_limit_burst,
+            max_queries_per_minute: update
+                .max_queries_per_minute
+                .map(|budget| validate_max_queries_per_minute(budget, false))
+                .transpose()?,
             ..Default::default()
         };
 
