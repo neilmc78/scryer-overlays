@@ -1150,6 +1150,11 @@ impl AppUseCase {
 
     /// The routed indexer ids for `(library_id, scope_id)`, and whether every
     /// read behind them succeeded.
+    ///
+    /// Only indexers the background search would actually query count: a
+    /// disabled indexer, or one with automatic search turned off, never fires
+    /// and so never earns a receipt, and routing a scope to it would keep that
+    /// scope in the walk forever.
     async fn routed_indexer_ids_for_routing_scope(
         &self,
         library_id: &str,
@@ -1158,26 +1163,41 @@ impl AppUseCase {
         let routing = self
             .resolve_indexer_routing_observed(Some(library_id), scope_id)
             .await;
-        match routing.plan {
-            Some(plan) => (
+        let searchable = self
+            .services
+            .integrations
+            .indexer_configs
+            .list(None)
+            .await
+            .ok()
+            .map(|configs| {
+                configs
+                    .into_iter()
+                    .filter(|config| config.is_enabled && config.enable_auto_search)
+                    .map(|config| config.id)
+                    .collect::<Vec<_>>()
+            });
+        match (routing.plan, searchable) {
+            (Some(plan), Some(searchable)) => (
+                plan.entries
+                    .into_iter()
+                    .filter(|(indexer_id, entry)| entry.enabled && searchable.contains(indexer_id))
+                    .map(|(indexer_id, _)| indexer_id)
+                    .collect(),
+                !routing.read_failed,
+            ),
+            // Without the configs the plan cannot be narrowed; keep it for
+            // this stage but do not report the answer as complete.
+            (Some(plan), None) => (
                 plan.entries
                     .into_iter()
                     .filter(|(_, entry)| entry.enabled)
                     .map(|(indexer_id, _)| indexer_id)
                     .collect(),
-                !routing.read_failed,
+                false,
             ),
-            None => match self.services.integrations.indexer_configs.list(None).await {
-                Ok(configs) => (
-                    configs
-                        .into_iter()
-                        .filter(|config| config.is_enabled)
-                        .map(|config| config.id)
-                        .collect(),
-                    !routing.read_failed,
-                ),
-                Err(_) => (Vec::new(), false),
-            },
+            (None, Some(searchable)) => (searchable, !routing.read_failed),
+            (None, None) => (Vec::new(), false),
         }
     }
 

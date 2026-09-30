@@ -6351,6 +6351,61 @@ async fn coverage_excludes_disabled_indexers() {
 }
 
 #[tokio::test]
+async fn routed_indexers_exclude_indexers_without_automatic_search() {
+    // The background search never queries an indexer with automatic search
+    // off, so it can never earn a receipt; routing a scope to it would keep
+    // that scope in the walk every cycle.
+    let settings = Arc::new(StoredSettingsRepo::default());
+    let mut manual_only_b = synthetic_direct_nab_indexer_config("indexer-b", "newznab");
+    manual_only_b.enable_auto_search = false;
+    // indexer-c is searchable but unrouted, so it proves the plan is in force.
+    let configs = vec![
+        synthetic_direct_nab_indexer_config("indexer-a", "newznab"),
+        manual_only_b,
+        synthetic_direct_nab_indexer_config("indexer-c", "newznab"),
+    ];
+    let (app, user) = bootstrap_with_search_settings_indexer_and_configs(
+        settings.clone(),
+        Arc::new(MockIndexerClient),
+        configs,
+    );
+    let coverage = Arc::new(RecordingScopeIndexerCoverageRepo::new());
+    let app = app
+        .with_test_overrides(|builder| builder.with_scope_indexer_coverage_store(coverage.clone()));
+
+    let (title, subject) = convergence_test_title_and_subject(&app, &user).await;
+    settings
+        .set_scoped_value(
+            crate::SETTINGS_SCOPE_SYSTEM,
+            crate::INDEXER_ROUTING_SETTINGS_KEY,
+            &title.library_id,
+            &serde_json::json!({
+                "indexer-a": { "enabled": true, "categories": [], "priority": 1 },
+                "indexer-b": { "enabled": true, "categories": [], "priority": 2 }
+            })
+            .to_string(),
+        )
+        .await;
+
+    let convergence = app
+        .resolve_scope_convergence(&title, &subject)
+        .await
+        .expect("routed convergence coordinates");
+    assert_eq!(
+        convergence.routed_indexer_ids,
+        vec!["indexer-a".to_string()],
+        "the plan routes both, but only the auto-search indexer is searchable"
+    );
+
+    app.record_search_coverage(&title, &subject, &["indexer-a".to_string()], &[])
+        .await;
+    assert!(
+        scope_is_converged(&app, &title, &subject).await,
+        "covering the auto-search indexer converges the scope"
+    );
+}
+
+#[tokio::test]
 async fn coverage_records_only_indexers_that_fired() {
     // A routed indexer that did NOT fire (deferred/skipped/errored) is
     // not recorded as covered, so the scope stays a target for the cursor to retry.
