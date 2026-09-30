@@ -246,7 +246,7 @@ pub(crate) async fn run_background_acquisition_cycle_with_blocked_facets(
 
     // Scheduler availability, resolved once per cycle for the pre-skip.
     let availability = app.scheduler_availability().await;
-    let indexer_hosts = app.indexer_scheduler_host_keys().await;
+    let indexer_hosts = app.indexer_scheduler_destination_keys().await;
 
     let cycle = Arc::new(BackgroundAcquisitionCycleCoordinator::default());
 
@@ -3124,7 +3124,7 @@ where
     // the walk shares one code path with the cycle, so the input still has to
     // exist.
     let availability = app.scheduler_availability().await;
-    let indexer_hosts = app.indexer_scheduler_host_keys().await;
+    let indexer_hosts = app.indexer_scheduler_destination_keys().await;
     let dl_snapshot = DownloadClientSnapshot::fetch(app).await;
     let cycle = BackgroundAcquisitionCycleCoordinator::default();
 
