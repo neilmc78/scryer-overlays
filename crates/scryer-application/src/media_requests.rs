@@ -1026,9 +1026,10 @@ impl AppUseCase {
         )
         .await;
 
+        // Request policy already authorized this add; the requester usually
+        // lacks ManageTitles, so the post-add search runs with system authority.
         if let Err(error) = self
-            .trigger_title_wanted_search(
-                actor,
+            .trigger_title_wanted_search_unchecked(
                 &outcome.title.id,
                 SubmissionConflictPolicy::from_replace_flag(false),
             )
@@ -2277,11 +2278,10 @@ fn normalize_requested_monitor_type(
     facet: &MediaFacet,
     value: Option<String>,
 ) -> AppResult<Option<String>> {
+    // No requested monitor type means the title gets the default monitoring,
+    // not a narrower pick the requester never made.
     let Some(value) = normalized_optional_string(value) else {
-        return Ok(match facet {
-            MediaFacet::Movie => None,
-            MediaFacet::Series | MediaFacet::Anime => Some("futureepisodes".to_string()),
-        });
+        return Ok(None);
     };
     let normalized = value
         .chars()
