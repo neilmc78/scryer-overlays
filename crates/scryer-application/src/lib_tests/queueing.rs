@@ -7741,3 +7741,34 @@ async fn non_anime_episode_search_ignores_episode_scoped_and_cour_anidb_ids() {
         (expected.clone(), expected)
     );
 }
+
+#[test]
+fn scan_blocked_facet_streaks_count_consecutive_cycles_and_reset_when_free() {
+    let mut streaks = crate::acquisition::workflow::ScanBlockedFacetStreaks::default();
+
+    assert_eq!(
+        streaks.observe(&[MediaFacet::Series]),
+        vec![(MediaFacet::Series, 1)]
+    );
+    assert_eq!(
+        streaks.observe(&[MediaFacet::Series, MediaFacet::Movie, MediaFacet::Series]),
+        vec![(MediaFacet::Series, 2), (MediaFacet::Movie, 1)],
+        "a facet listed twice in one cycle still counts once"
+    );
+    assert_eq!(
+        streaks.observe(&[MediaFacet::Series]),
+        vec![(MediaFacet::Series, 3)],
+        "a facet that was free this cycle drops out"
+    );
+    assert_eq!(
+        streaks.observe(&[MediaFacet::Movie, MediaFacet::Series]),
+        vec![(MediaFacet::Movie, 1), (MediaFacet::Series, 4)],
+        "a freed facet starts counting again from one"
+    );
+    assert!(streaks.observe(&[]).is_empty());
+    assert_eq!(
+        streaks.observe(&[MediaFacet::Series]),
+        vec![(MediaFacet::Series, 1)],
+        "a cycle with no active scan resets every streak"
+    );
+}
