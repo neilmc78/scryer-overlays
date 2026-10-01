@@ -373,3 +373,10 @@ test("the Lists page resolves its panes and redirects the default pane's alias",
   }
   assert.equal(listsSectionFromPath("/lists/unknown"), "public");
 });
+
+test("the poster overlays settings page has a canonical path", () => {
+  const route = canonical("/settings/overlays");
+  assert.equal(route.view, "settings");
+  assert.equal(route.settingsSection, "posterOverlays");
+  redirects("/settings/poster-overlays", "/settings/overlays");
+});

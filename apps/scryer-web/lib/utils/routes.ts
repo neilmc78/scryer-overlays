@@ -85,6 +85,7 @@ export function canAccessSettingsSection(
     case "requestRules":
     case "post-processing":
     case "subtitles":
+    case "posterOverlays":
       return canManageCatalogSettings;
     default:
       return false;

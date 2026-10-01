@@ -5597,3 +5597,28 @@ export const listRouteOptionsQuery = `query ListRouteOptions {
     }
   }
 }`;
+
+export const POSTER_OVERLAY_TEMPLATE_FIELDS = `
+    id
+    name
+    svg
+    contentHash
+    createdAt
+    updatedAt
+`;
+
+export const posterOverlaysQuery = `query PosterOverlays {
+  posterOverlays {
+    settings { parallelism reconcileIntervalSeconds }
+    libraries { libraryId libraryName facet enabled templateId }
+    templates {${POSTER_OVERLAY_TEMPLATE_FIELDS}}
+    counts { enabledTitles rendered failed }
+    builtinTemplate
+    templateSpecVersion
+    templateFields
+  }
+}`;
+
+export const validatePosterOverlayTemplateQuery = `query ValidatePosterOverlayTemplate($svg: String!) {
+  validatePosterOverlayTemplate(svg: $svg) { valid error }
+}`;

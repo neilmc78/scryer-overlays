@@ -19873,6 +19873,31 @@ type MutationRoot {
 		"""
 		policy: ListPolicy!
 	): MemberListPolicyPayload!
+	"""
+	Turn overlays on or off for a library and choose its template.
+	Enabling starts a render pass; disabling serves originals at once.
+	"""
+	setPosterOverlayLibrary(input: SetPosterOverlayLibraryInput!): Boolean!
+	updatePosterOverlaySettings(input: UpdatePosterOverlaySettingsInput!): PosterOverlaySettings!
+	"""
+	Create a template, or replace one when `id` is given. Posters using
+	it are rebuilt.
+	"""
+	savePosterOverlayTemplate(input: SavePosterOverlayTemplateInput!): PosterOverlayTemplate!
+	"""
+	Delete a template. Libraries using it fall back to the built-in one.
+	"""
+	deletePosterOverlayTemplate(id: ID!): Boolean!
+	"""
+	Start a pass over every enabled library. Posters whose inputs are
+	unchanged are skipped.
+	"""
+	rebuildPosterOverlays: Boolean!
+	"""
+	Disable overlays in every library and serve every original poster
+	again. Returns how many posters were reverted.
+	"""
+	revertAllPosterOverlays: Int!
 }
 
 """
@@ -21321,6 +21346,97 @@ type PostProcessingScriptRunPayload {
 	Completion time in UTC, or null while the run is active.
 	"""
 	completedAt: DateTime
+}
+
+"""
+Progress across overlay-enabled libraries.
+"""
+type PosterOverlayCounts {
+	"""
+	Titles in libraries with overlays enabled.
+	"""
+	enabledTitles: Int!
+	"""
+	Of those, titles with a rendered poster.
+	"""
+	rendered: Int!
+	"""
+	Of those, titles whose last render failed.
+	"""
+	failed: Int!
+}
+
+"""
+Whether a library's posters carry overlays, and with which template.
+"""
+type PosterOverlayLibrary {
+	libraryId: ID!
+	libraryName: String!
+	facet: String!
+	enabled: Boolean!
+	"""
+	Null when the library uses the built-in template.
+	"""
+	templateId: ID
+}
+
+type PosterOverlayOverview {
+	settings: PosterOverlaySettings!
+	libraries: [PosterOverlayLibrary!]!
+	templates: [PosterOverlayTemplate!]!
+	counts: PosterOverlayCounts!
+	"""
+	The built-in template, a working example of the format.
+	"""
+	builtinTemplate: String!
+	"""
+	Highest `data-scryer-version` this server accepts.
+	"""
+	templateSpecVersion: Int!
+	"""
+	Every field a template may reference.
+	"""
+	templateFields: [String!]!
+}
+
+"""
+Render settings shared by every library.
+"""
+type PosterOverlaySettings {
+	"""
+	Posters rendered at once; also bounds memory during library-wide
+	rebuilds.
+	"""
+	parallelism: Int!
+	"""
+	Seconds between safety-net passes that pick up missed changes and new
+	upstream artwork.
+	"""
+	reconcileIntervalSeconds: Int!
+}
+
+"""
+A custom overlay template. The format is specified in
+`docs/poster-overlays.md`.
+"""
+type PosterOverlayTemplate {
+	id: ID!
+	name: String!
+	svg: String!
+	contentHash: String!
+	createdAt: DateTime!
+	updatedAt: DateTime!
+}
+
+"""
+Result of checking a template without saving it.
+"""
+type PosterOverlayTemplateValidation {
+	valid: Boolean!
+	"""
+	Why the template was rejected; null when valid.
+	"""
+	error: String
 }
 
 """
@@ -23818,6 +23934,15 @@ type QueryRoot {
 	management permission.
 	"""
 	listMemberPolicies: [MemberListPolicyPayload!]!
+	"""
+	Overlay settings, libraries, templates and progress. Requires
+	catalog or library settings access.
+	"""
+	posterOverlays: PosterOverlayOverview!
+	"""
+	Check a template against the format without saving it.
+	"""
+	validatePosterOverlayTemplate(svg: String!): PosterOverlayTemplateValidation!
 }
 
 """
@@ -25853,6 +25978,15 @@ type SaveExternalImportSetupSecretDraftPayload {
 	updatedAt: DateTime!
 }
 
+input SavePosterOverlayTemplateInput {
+	"""
+	Null creates a new template.
+	"""
+	id: ID
+	name: String!
+	svg: String!
+}
+
 """
 Complete quality-profile and scoring-persona settings replacement.
 """
@@ -26551,6 +26685,15 @@ input SetMyUiSettingsInput {
 	Complete table-column setting list; empty clears all saved column settings.
 	"""
 	tableColumns: [UiTableColumnSettingInput!]!
+}
+
+input SetPosterOverlayLibraryInput {
+	libraryId: ID!
+	enabled: Boolean!
+	"""
+	Null selects the built-in template.
+	"""
+	templateId: ID
 }
 
 """
@@ -30798,6 +30941,11 @@ input UpdatePostProcessingScriptInput {
 	Replacement debug state, or null to leave unchanged.
 	"""
 	debug: Boolean
+}
+
+input UpdatePosterOverlaySettingsInput {
+	parallelism: Int!
+	reconcileIntervalSeconds: Int!
 }
 
 """
