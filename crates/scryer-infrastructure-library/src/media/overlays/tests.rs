@@ -394,3 +394,92 @@ fn tmdb_sources_are_upsized_and_others_left_alone() {
         "https://artworks.thetvdb.com/banners/x.jpg"
     );
 }
+
+fn preview_template() -> String {
+    // A white block over the top-left quarter of the built-in template's
+    // 1000x1500 viewBox, shown only when a resolution is set.
+    r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1500" data-scryer-version="1"><rect data-scryer-if="resolution" x="0" y="0" width="500" height="750" fill="#ffffff"/></svg>"##.to_string()
+}
+
+#[test]
+fn preview_draws_on_the_placeholder_without_a_marker() {
+    let renderer = OverlayRenderer::new();
+    let jpeg = renderer
+        .render_preview(
+            None,
+            &preview_template(),
+            &values(&[("resolution", "2160p")]),
+        )
+        .expect("preview");
+
+    assert!(
+        !has_marker(&jpeg),
+        "previews are never stored, so carry no marker"
+    );
+    let image = image::load_from_memory(&jpeg).unwrap().to_rgb8();
+    assert_eq!(image.dimensions(), (PREVIEW_WIDTH, PREVIEW_HEIGHT));
+    // viewBox (500, 750) is preview pixel (250, 375): the block covers the
+    // top-left quarter and nothing else.
+    assert!(
+        image
+            .get_pixel(100, 100)
+            .0
+            .iter()
+            .all(|channel| *channel > 240)
+    );
+    assert!(
+        image
+            .get_pixel(400, 600)
+            .0
+            .iter()
+            .all(|channel| *channel < 120)
+    );
+}
+
+#[test]
+fn preview_skips_elements_whose_sample_value_is_unset() {
+    let jpeg = OverlayRenderer::new()
+        .render_preview(None, &preview_template(), &empty_values())
+        .expect("preview");
+    let image = image::load_from_memory(&jpeg).unwrap().to_rgb8();
+    assert!(
+        image
+            .get_pixel(100, 100)
+            .0
+            .iter()
+            .all(|channel| *channel < 120)
+    );
+}
+
+#[test]
+fn preview_crops_a_library_poster_to_the_template_shape() {
+    let square = poster(ImageFormat::Png, 900, 900);
+    let jpeg = OverlayRenderer::new()
+        .render_preview(Some(&square), &preview_template(), &empty_values())
+        .expect("preview");
+    let image = image::load_from_memory(&jpeg).unwrap();
+    assert_eq!(
+        (image.width(), image.height()),
+        (PREVIEW_WIDTH, PREVIEW_HEIGHT)
+    );
+}
+
+#[test]
+fn preview_falls_back_to_the_placeholder_for_an_unreadable_poster() {
+    let jpeg = OverlayRenderer::new()
+        .render_preview(Some(b"not an image"), &preview_template(), &empty_values())
+        .expect("an unreadable background must not fail the preview");
+    let image = image::load_from_memory(&jpeg).unwrap();
+    assert_eq!(
+        (image.width(), image.height()),
+        (PREVIEW_WIDTH, PREVIEW_HEIGHT)
+    );
+}
+
+#[test]
+fn preview_rejects_templates_that_break_the_contract() {
+    let error = OverlayRenderer::new()
+        .render_preview(None, &template("<text>{{rating}}</text>"), &empty_values())
+        .expect_err("unknown field");
+    assert!(error.to_string().contains("unknown field"), "{error}");
+}

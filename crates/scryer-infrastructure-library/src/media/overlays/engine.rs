@@ -21,7 +21,8 @@ use std::sync::{Arc, RwLock};
 use async_trait::async_trait;
 use scryer_application::overlays::{
     DEFAULT_OVERLAY_PARALLELISM, MAX_OVERLAY_PARALLELISM, PosterOverlayEngine,
-    PosterOverlayRenderRequest, PosterOverlayRendered, PosterOverlayVariant,
+    PosterOverlayPreviewRequest, PosterOverlayRenderRequest, PosterOverlayRendered,
+    PosterOverlayVariant,
 };
 use scryer_application::{AppError, AppResult};
 
@@ -243,6 +244,28 @@ impl PosterOverlayEngine for OverlayEngine {
         receive
             .await
             .map_err(|error| AppError::Repository(format!("overlay render was dropped: {error}")))?
+    }
+
+    async fn render_preview(&self, request: PosterOverlayPreviewRequest) -> AppResult<Vec<u8>> {
+        let renderer = self.renderer.clone();
+        let (send, receive) = tokio::sync::oneshot::channel();
+        self.pool().spawn(move || {
+            if send.is_closed() {
+                return;
+            }
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                renderer.render_preview(
+                    request.background.as_deref(),
+                    &request.template_svg,
+                    &request.values,
+                )
+            }))
+            .unwrap_or_else(|_| Err(AppError::Repository("overlay preview panicked".into())));
+            let _ = send.send(result);
+        });
+        receive.await.map_err(|error| {
+            AppError::Repository(format!("overlay preview was dropped: {error}"))
+        })?
     }
 
     async fn write_outputs(

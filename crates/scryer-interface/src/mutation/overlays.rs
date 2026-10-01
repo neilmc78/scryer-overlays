@@ -17,6 +17,7 @@ impl PosterOverlayMutations {
     async fn set_poster_overlay_library(
         &self,
         ctx: &Context<'_>,
+        #[graphql(desc = "The library, whether overlays are on, and its template.")]
         input: SetPosterOverlayLibraryInput,
     ) -> GqlResult<bool> {
         let app = app_from_ctx(ctx)?;
@@ -32,10 +33,11 @@ impl PosterOverlayMutations {
         Ok(true)
     }
 
+    /// Change render parallelism and the safety-net reconcile interval.
     async fn update_poster_overlay_settings(
         &self,
         ctx: &Context<'_>,
-        input: UpdatePosterOverlaySettingsInput,
+        #[graphql(desc = "The complete new settings.")] input: UpdatePosterOverlaySettingsInput,
     ) -> GqlResult<PosterOverlaySettingsPayload> {
         let app = app_from_ctx(ctx)?;
         let actor = actor_from_ctx(ctx)?;
@@ -53,6 +55,7 @@ impl PosterOverlayMutations {
     async fn save_poster_overlay_template(
         &self,
         ctx: &Context<'_>,
+        #[graphql(desc = "The template to create or replace.")]
         input: SavePosterOverlayTemplateInput,
     ) -> GqlResult<PosterOverlayTemplatePayload> {
         let app = app_from_ctx(ctx)?;
@@ -70,7 +73,11 @@ impl PosterOverlayMutations {
     }
 
     /// Delete a template. Libraries using it fall back to the built-in one.
-    async fn delete_poster_overlay_template(&self, ctx: &Context<'_>, id: ID) -> GqlResult<bool> {
+    async fn delete_poster_overlay_template(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(desc = "The template to delete.")] id: ID,
+    ) -> GqlResult<bool> {
         let app = app_from_ctx(ctx)?;
         let actor = actor_from_ctx(ctx)?;
         app.delete_poster_overlay_template(&actor, id.as_str())

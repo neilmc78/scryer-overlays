@@ -202,6 +202,16 @@ pub struct PosterOverlayRendered {
     pub output_hash: String,
 }
 
+/// A template rendered on a sample poster for the editor. Nothing is
+/// written: the result goes straight back to the caller.
+#[derive(Clone, Debug)]
+pub struct PosterOverlayPreviewRequest {
+    /// Poster to draw on; a neutral placeholder when absent.
+    pub background: Option<Vec<u8>>,
+    pub template_svg: String,
+    pub values: std::collections::BTreeMap<&'static str, String>,
+}
+
 /// Rendering, marker detection and overlay file ownership. Everything this
 /// port writes or removes lives under the overlay data root.
 #[async_trait]
@@ -228,6 +238,9 @@ pub trait PosterOverlayEngine: Send + Sync {
     async fn remove_outputs(&self, title_id: &str) -> AppResult<()>;
     /// True when the bytes are a poster this engine produced.
     fn has_marker(&self, bytes: &[u8]) -> bool;
+    /// CPU work on the render pool. Returns a JPEG without the overlay
+    /// marker, sized for the editor; it is never stored.
+    async fn render_preview(&self, request: PosterOverlayPreviewRequest) -> AppResult<Vec<u8>>;
     fn validate_template(&self, svg: &str) -> AppResult<()>;
     fn builtin_template(&self) -> &'static str;
     fn set_parallelism(&self, parallelism: usize);

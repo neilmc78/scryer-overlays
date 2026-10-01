@@ -35,6 +35,38 @@ export type PosterOverlayOverview = {
   builtinTemplate: string;
   templateSpecVersion: number;
   templateFields: string[];
+  sampleOptions: PosterOverlaySampleOptions;
+};
+
+/** One value of a badge field: the token conditions match, and its label. */
+export type PosterOverlaySampleOption = {
+  token: string;
+  label: string;
+};
+
+export type PosterOverlaySampleOptions = {
+  resolutions: PosterOverlaySampleOption[];
+  hdr: PosterOverlaySampleOption[];
+  audio: PosterOverlaySampleOption[];
+  audioChannels: string[];
+};
+
+/** Values the template preview shows. Empty strings leave a field unset. */
+export type PosterOverlaySample = {
+  resolution: string;
+  hdr: string;
+  audio: string;
+  audioChannels: string;
+  edition: string;
+};
+
+export type PosterOverlayPreviewState = {
+  /** `data:` URL of the last rendered preview. */
+  image: string | null;
+  /** True when drawn on a poster from the library. */
+  libraryPoster: boolean;
+  error: string | null;
+  loading: boolean;
 };
 
 export type PosterOverlayTemplateDraft = {

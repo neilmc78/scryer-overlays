@@ -4,13 +4,22 @@ import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { SettingsPosterOverlaysSection } from "@/components/views/settings/settings-poster-overlays-section";
 import { useGlobalStatus } from "@/lib/context/global-status-context";
 import { useTranslate } from "@/lib/context/translate-context";
-import { usePosterOverlays } from "@/lib/hooks/use-poster-overlays";
+import { usePosterOverlayPreview, usePosterOverlays } from "@/lib/hooks/use-poster-overlays";
 import type {
+  PosterOverlaySample,
   PosterOverlayTemplateDraft,
   PosterOverlayTemplateValidation,
 } from "@/lib/types/poster-overlays";
 
 const SECONDS_PER_HOUR = 3600;
+
+const EMPTY_SAMPLE: PosterOverlaySample = {
+  resolution: "",
+  hdr: "",
+  audio: "",
+  audioChannels: "",
+  edition: "",
+};
 
 type SettingsPosterOverlaysContainerProps = {
   /** Overlay configuration is catalog configuration. */
@@ -35,6 +44,7 @@ export function SettingsPosterOverlaysContainer({
   const [validation, setValidation] = React.useState<PosterOverlayTemplateValidation | null>(
     null,
   );
+  const [sample, setSample] = React.useState<PosterOverlaySample | null>(null);
   const [confirmRevert, setConfirmRevert] = React.useState(false);
   const [pendingDeleteId, setPendingDeleteId] = React.useState<string | null>(null);
 
@@ -50,6 +60,30 @@ export function SettingsPosterOverlaysContainer({
       reconcileHours: String(storedInterval / SECONDS_PER_HOUR),
     });
   }, [storedParallelism, storedInterval]);
+
+  // Preview with the best value of every field, so every badge shows.
+  const sampleOptions = overview?.sampleOptions;
+  const defaultEdition = t("settings.posterOverlays.sampleEditionDefault");
+  React.useEffect(() => {
+    if (!sampleOptions) {
+      return;
+    }
+    setSample(
+      (current) =>
+        current ?? {
+          resolution: sampleOptions.resolutions[0]?.token ?? "",
+          hdr: sampleOptions.hdr[0]?.token ?? "",
+          audio: sampleOptions.audio[0]?.token ?? "",
+          audioChannels: sampleOptions.audioChannels[0] ?? "",
+          edition: defaultEdition,
+        },
+    );
+  }, [defaultEdition, sampleOptions]);
+  const activeSample = sample ?? EMPTY_SAMPLE;
+  const preview = usePosterOverlayPreview(
+    templateDraft && sample ? templateDraft.svg : null,
+    activeSample,
+  );
 
   // A template edit invalidates the last validation result.
   const draftSvg = templateDraft?.svg;
@@ -144,6 +178,14 @@ export function SettingsPosterOverlaysContainer({
         onSaveTemplate={(event) => void saveTemplate(event)}
         onValidateTemplate={() => void validateTemplate()}
         validation={validation}
+        preview={preview}
+        sample={activeSample}
+        setSample={(update) =>
+          setSample((current) => {
+            const base = current ?? EMPTY_SAMPLE;
+            return typeof update === "function" ? update(base) : update;
+          })
+        }
       />
       <ConfirmDialog
         open={confirmRevert}

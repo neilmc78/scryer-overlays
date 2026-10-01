@@ -5,12 +5,12 @@ use chrono::Utc;
 use futures_util::StreamExt;
 use scryer_domain::{AppPermission, Id, User};
 
-use super::fields::{OverlayFields, blake3_hex, input_hash, template_version};
+use super::fields::{OverlayFields, OverlaySampleValues, blake3_hex, input_hash, template_version};
 use super::ports::{
     MAX_OVERLAY_PARALLELISM, MIN_OVERLAY_RECONCILE_INTERVAL_SECONDS, PosterOverlayEngine,
-    PosterOverlayLibraryConfig, PosterOverlayRenderRequest, PosterOverlayRepository,
-    PosterOverlaySettings, PosterOverlayState, PosterOverlayStatusCounts, PosterOverlayTemplate,
-    PosterOverlayVariant,
+    PosterOverlayLibraryConfig, PosterOverlayPreviewRequest, PosterOverlayRenderRequest,
+    PosterOverlayRepository, PosterOverlaySettings, PosterOverlayState, PosterOverlayStatusCounts,
+    PosterOverlayTemplate, PosterOverlayVariant,
 };
 use crate::{AppError, AppResult, AppUseCase};
 
@@ -262,6 +262,18 @@ pub struct PosterOverlayOverview {
     pub builtin_template: &'static str,
 }
 
+/// A template rendered for the editor.
+#[derive(Clone, Debug)]
+pub struct PosterOverlayPreview {
+    pub jpeg: Vec<u8>,
+    /// True when drawn on a poster from the library rather than the
+    /// neutral placeholder.
+    pub library_poster: bool,
+}
+
+/// Titles checked for a stored original to use as the preview background.
+const PREVIEW_BACKGROUND_CANDIDATES: usize = 8;
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PosterOverlayPassSummary {
     pub rendered: usize,
@@ -449,6 +461,49 @@ impl AppUseCase {
         self.require_poster_overlays()?
             .engine
             .validate_template(svg)
+    }
+
+    /// Render a draft template with sample values, for the editor. Draws on
+    /// a stored original from the library when one exists so contrast can
+    /// be judged; nothing is written.
+    pub async fn preview_poster_overlay_template(
+        &self,
+        actor: &User,
+        svg: &str,
+        sample: &OverlaySampleValues,
+    ) -> AppResult<PosterOverlayPreview> {
+        self.require_app_permission(actor, AppPermission::ManageCatalogSettings)
+            .await?;
+        let overlays = self.require_poster_overlays()?;
+        overlays.engine.validate_template(svg)?;
+        let values = OverlayFields::from_sample(sample)
+            .map_err(|message| AppError::Validation(format!("preview sample: {message}")))?
+            .template_values();
+
+        let mut background = None;
+        for title_id in overlays
+            .repository
+            .list_state_title_ids(None, PREVIEW_BACKGROUND_CANDIDATES)
+            .await?
+        {
+            if let Some(original) = overlays.engine.read_original(&title_id).await? {
+                background = Some(original);
+                break;
+            }
+        }
+        let library_poster = background.is_some();
+        let jpeg = overlays
+            .engine
+            .render_preview(PosterOverlayPreviewRequest {
+                background,
+                template_svg: svg.to_string(),
+                values,
+            })
+            .await?;
+        Ok(PosterOverlayPreview {
+            jpeg,
+            library_poster,
+        })
     }
 
     /// Queue a library-wide pass. Unchanged posters are skipped by hash.

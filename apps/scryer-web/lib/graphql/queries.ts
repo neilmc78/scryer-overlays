@@ -5616,7 +5616,17 @@ export const posterOverlaysQuery = `query PosterOverlays {
     builtinTemplate
     templateSpecVersion
     templateFields
+    sampleOptions {
+      resolutions { token label }
+      hdr { token label }
+      audio { token label }
+      audioChannels
+    }
   }
+}`;
+
+export const previewPosterOverlayTemplateQuery = `query PreviewPosterOverlayTemplate($input: PreviewPosterOverlayTemplateInput!) {
+  previewPosterOverlayTemplate(input: $input) { image libraryPoster error }
 }`;
 
 export const validatePosterOverlayTemplateQuery = `query ValidatePosterOverlayTemplate($svg: String!) {

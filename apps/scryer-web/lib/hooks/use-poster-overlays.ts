@@ -13,10 +13,13 @@ import {
 } from "@/lib/graphql/mutations";
 import {
   posterOverlaysQuery,
+  previewPosterOverlayTemplateQuery,
   validatePosterOverlayTemplateQuery,
 } from "@/lib/graphql/queries";
 import type {
   PosterOverlayOverview,
+  PosterOverlayPreviewState,
+  PosterOverlaySample,
   PosterOverlayTemplateDraft,
   PosterOverlayTemplateValidation,
 } from "@/lib/types/poster-overlays";
@@ -179,4 +182,70 @@ export function usePosterOverlays() {
     revertAll,
     validateTemplate,
   };
+}
+
+/** Pause after the last edit before rendering, so typing does not queue renders. */
+const PREVIEW_DEBOUNCE_MS = 250;
+
+/**
+ * Live preview of a draft template. Renders on the server after edits settle;
+ * a response that arrives after a newer request was sent is dropped, so the
+ * preview always matches the latest draft. The last good image stays on
+ * screen while a new one renders or when the draft is invalid.
+ */
+export function usePosterOverlayPreview(
+  svg: string | null,
+  sample: PosterOverlaySample,
+): PosterOverlayPreviewState {
+  const client = useClient();
+  const t = useTranslate();
+  const [state, setState] = React.useState<PosterOverlayPreviewState>({
+    image: null,
+    libraryPoster: false,
+    error: null,
+    loading: false,
+  });
+  const latestRequest = React.useRef(0);
+
+  React.useEffect(() => {
+    if (svg === null) {
+      return;
+    }
+    const request = ++latestRequest.current;
+    setState((current) => ({ ...current, loading: true }));
+    const timer = window.setTimeout(() => {
+      void client
+        .query(
+          previewPosterOverlayTemplateQuery,
+          { input: { svg, ...sample } },
+          { requestPolicy: "network-only" },
+        )
+        .toPromise()
+        .then((result) => {
+          if (request !== latestRequest.current) {
+            return;
+          }
+          const preview = result.data?.previewPosterOverlayTemplate as
+            | { image: string | null; libraryPoster: boolean; error: string | null }
+            | undefined;
+          if (result.error || !preview) {
+            setState((current) => ({
+              ...current,
+              loading: false,
+              error: result.error?.message || t("settings.posterOverlays.previewError"),
+            }));
+            return;
+          }
+          setState((current) => ({
+            image: preview.image ?? current.image,
+            libraryPoster: preview.image ? preview.libraryPoster : current.libraryPoster,
+            error: preview.error,
+            loading: false,
+          }));
+        });
+    }, PREVIEW_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [client, sample, svg, t]);
+
+  return state;
 }

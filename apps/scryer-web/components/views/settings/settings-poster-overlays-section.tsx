@@ -1,7 +1,8 @@
 import * as React from "react";
-import { Edit, Layers, Plus, RefreshCw, Trash2, Undo2 } from "lucide-react";
+import { Edit, Plus, RefreshCw, Trash2, Undo2 } from "lucide-react";
 
 import { AddNewButton } from "@/components/common/add-new-button";
+import { SettingsPosterOverlayTemplateEditor } from "@/components/views/settings/settings-poster-overlay-template-editor";
 import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
 import { Input } from "@/components/ui/input";
@@ -24,10 +25,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
 import { useTranslate } from "@/lib/context/translate-context";
 import type {
   PosterOverlayOverview,
+  PosterOverlayPreviewState,
+  PosterOverlaySample,
   PosterOverlayTemplateDraft,
   PosterOverlayTemplateValidation,
 } from "@/lib/types/poster-overlays";
@@ -66,6 +68,9 @@ type SettingsPosterOverlaysSectionProps = {
   onSaveTemplate: (event: React.FormEvent<HTMLFormElement>) => void;
   onValidateTemplate: () => void;
   validation: PosterOverlayTemplateValidation | null;
+  preview: PosterOverlayPreviewState;
+  sample: PosterOverlaySample;
+  setSample: React.Dispatch<React.SetStateAction<PosterOverlaySample>>;
 };
 
 export function SettingsPosterOverlaysSection({
@@ -88,6 +93,9 @@ export function SettingsPosterOverlaysSection({
   onSaveTemplate,
   onValidateTemplate,
   validation,
+  preview,
+  sample,
+  setSample,
 }: SettingsPosterOverlaysSectionProps) {
   const t = useTranslate();
 
@@ -332,84 +340,18 @@ export function SettingsPosterOverlaysSection({
         )}
 
         {templateDraft ? (
-          <form
-            id="settings-poster-overlays-template-form"
-            className={`${PANEL_BODY_CLASS} space-y-3 border-t border-[var(--scry-border3)]`}
-            onSubmit={onSaveTemplate}
-          >
-            <div className="space-y-1.5">
-              <Label htmlFor="settings-poster-overlays-template-name">
-                {t("settings.posterOverlays.templateName")}
-              </Label>
-              <Input
-                id="settings-poster-overlays-template-name"
-                value={templateDraft.name}
-                disabled={busy}
-                onChange={(event) =>
-                  setTemplateDraft((draft) =>
-                    draft ? { ...draft, name: event.target.value } : draft,
-                  )
-                }
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="settings-poster-overlays-template-svg">
-                {t("settings.posterOverlays.templateSvg")}
-              </Label>
-              <Textarea
-                id="settings-poster-overlays-template-svg"
-                className="min-h-[280px] font-mono text-xs"
-                spellCheck={false}
-                value={templateDraft.svg}
-                disabled={busy}
-                onChange={(event) =>
-                  setTemplateDraft((draft) =>
-                    draft ? { ...draft, svg: event.target.value } : draft,
-                  )
-                }
-              />
-              <p className={`text-xs ${MUTED_TEXT_CLASS}`}>
-                <Layers className="mr-1 inline size-3.5 align-[-2px]" />
-                {t("settings.posterOverlays.templateHelp", {
-                  version: overview.templateSpecVersion,
-                  fields: overview.templateFields.join(", "),
-                })}
-              </p>
-            </div>
-            {validation ? (
-              <p
-                id="settings-poster-overlays-template-validation"
-                className={validation.valid ? "text-emerald-500" : "text-destructive"}
-              >
-                {validation.valid
-                  ? t("settings.posterOverlays.templateValid")
-                  : validation.error}
-              </p>
-            ) : null}
-            <div className="flex flex-wrap gap-2">
-              <Button id="settings-poster-overlays-template-save" type="submit" disabled={busy}>
-                {t("label.save")}
-              </Button>
-              <Button
-                id="settings-poster-overlays-template-validate"
-                type="button"
-                variant="secondary"
-                disabled={busy}
-                onClick={onValidateTemplate}
-              >
-                {t("settings.posterOverlays.validate")}
-              </Button>
-              <Button
-                id="settings-poster-overlays-template-cancel"
-                type="button"
-                variant="ghost"
-                disabled={busy}
-                onClick={() => setTemplateDraft(null)}
-              >
-                {t("label.cancel")}
-              </Button>
-            </div>
-          </form>
+          <SettingsPosterOverlayTemplateEditor
+            overview={overview}
+            draft={templateDraft}
+            setDraft={setTemplateDraft}
+            busy={busy}
+            onSave={onSaveTemplate}
+            onValidate={onValidateTemplate}
+            validation={validation}
+            preview={preview}
+            sample={sample}
+            setSample={setSample}
+          />
         ) : null}
       </section>
     </div>

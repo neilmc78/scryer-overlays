@@ -39,6 +39,13 @@ pub enum OverlayResolution {
 }
 
 impl OverlayResolution {
+    /// Every value, best first: the options a template preview offers.
+    pub const ALL: [Self; 4] = [Self::Uhd2160, Self::Hd1080, Self::Hd720, Self::Sd];
+
+    pub fn from_token(token: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|value| value.token() == token)
+    }
+
     pub fn token(self) -> &'static str {
         match self {
             Self::Uhd2160 => "2160p",
@@ -111,6 +118,18 @@ pub enum OverlayHdr {
 }
 
 impl OverlayHdr {
+    pub const ALL: [Self; 5] = [
+        Self::DolbyVision,
+        Self::Hdr10Plus,
+        Self::Hdr10,
+        Self::Hlg,
+        Self::Sdr,
+    ];
+
+    pub fn from_token(token: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|value| value.token() == token)
+    }
+
     pub fn token(self) -> &'static str {
         match self {
             Self::DolbyVision => "dv",
@@ -166,6 +185,28 @@ pub enum OverlayAudio {
 }
 
 impl OverlayAudio {
+    pub const ALL: [Self; 15] = [
+        Self::DtsX,
+        Self::TrueHdAtmos,
+        Self::DdPlusAtmos,
+        Self::DtsHdMa,
+        Self::TrueHd,
+        Self::Pcm,
+        Self::Flac,
+        Self::DtsHdHra,
+        Self::Dts,
+        Self::DdPlus,
+        Self::Dd,
+        Self::Opus,
+        Self::Aac,
+        Self::Mp3,
+        Self::Other,
+    ];
+
+    pub fn from_token(token: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|value| value.token() == token)
+    }
+
     pub fn token(self) -> &'static str {
         match self {
             Self::DtsX => "dtsx",
@@ -364,6 +405,77 @@ impl OverlayFields {
             && self.hdr.is_none()
             && self.audio.is_none()
             && self.edition.is_none()
+    }
+}
+
+/// Channel layouts `audio_channels` takes for common channel counts.
+pub const CHANNEL_LAYOUTS: [&str; 6] = ["7.1", "6.1", "5.1", "2.1", "2.0", "1.0"];
+
+/// Longest edition a template preview accepts as a sample value.
+pub const MAX_SAMPLE_EDITION_CHARS: usize = 80;
+
+/// Sample values for previewing a template, as tokens. Empty or absent
+/// fields are left unset, exactly as for a title without that data.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OverlaySampleValues {
+    pub resolution: Option<String>,
+    pub hdr: Option<String>,
+    pub audio: Option<String>,
+    pub audio_channels: Option<String>,
+    pub edition: Option<String>,
+}
+
+impl OverlayFields {
+    /// Fields for a preview. Unknown tokens are rejected rather than ignored
+    /// so the preview never silently differs from what a title would show.
+    pub fn from_sample(sample: &OverlaySampleValues) -> Result<Self, String> {
+        fn present(value: &Option<String>) -> Option<&str> {
+            value
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        }
+        fn parse<T>(
+            value: &Option<String>,
+            field: &str,
+            from_token: fn(&str) -> Option<T>,
+        ) -> Result<Option<T>, String> {
+            present(value)
+                .map(|token| {
+                    from_token(token).ok_or_else(|| format!("unknown {field} \"{token}\""))
+                })
+                .transpose()
+        }
+        let audio_channels = present(&sample.audio_channels)
+            .map(|layout| {
+                CHANNEL_LAYOUTS
+                    .contains(&layout)
+                    .then(|| layout.to_string())
+                    .ok_or_else(|| format!("unknown audio_channels \"{layout}\""))
+            })
+            .transpose()?;
+        let edition = present(&sample.edition)
+            .map(|edition| {
+                if edition.chars().count() > MAX_SAMPLE_EDITION_CHARS {
+                    Err(format!(
+                        "edition must be at most {MAX_SAMPLE_EDITION_CHARS} characters"
+                    ))
+                } else {
+                    Ok(edition.to_string())
+                }
+            })
+            .transpose()?;
+        Ok(Self {
+            resolution: parse(
+                &sample.resolution,
+                "resolution",
+                OverlayResolution::from_token,
+            )?,
+            hdr: parse(&sample.hdr, "hdr", OverlayHdr::from_token)?,
+            audio: parse(&sample.audio, "audio_codec", OverlayAudio::from_token)?,
+            audio_channels,
+            edition,
+        })
     }
 }
 

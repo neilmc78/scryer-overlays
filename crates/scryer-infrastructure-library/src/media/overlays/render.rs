@@ -28,6 +28,10 @@ pub const MARKER_PREFIX: &[u8] = b"scryer-overlay:";
 const MARKER_VERSION: &str = "v1";
 
 const JPEG_QUALITY: u8 = 90;
+/// Editor previews: 2:3 like the template viewBox, so element positions in
+/// the editor line up with the image exactly.
+pub const PREVIEW_WIDTH: u32 = 500;
+pub const PREVIEW_HEIGHT: u32 = 750;
 /// Decoding bound for originals; a poster far larger than this is refused
 /// rather than allowed to exhaust memory during a library-wide rebuild.
 const MAX_DECODE_ALLOC: u64 = 256 * 1024 * 1024;
@@ -97,19 +101,7 @@ impl OverlayRenderer {
         input_hash: &str,
     ) -> AppResult<PosterOverlayRendered> {
         let mut base = decode_original(original)?;
-        let resolved = template::preprocess(template_svg, values)?;
-        let tree = usvg::Tree::from_str(&resolved, &self.options())
-            .map_err(|error| AppError::Validation(format!("overlay template: {error}")))?;
-
-        let (width, height) = base.dimensions();
-        let mut pixmap = tiny_skia::Pixmap::new(width, height)
-            .ok_or_else(|| AppError::Validation("poster has invalid dimensions".into()))?;
-        resvg::render(
-            &tree,
-            fit_transform(tree.size(), width, height),
-            &mut pixmap.as_mut(),
-        );
-        composite(&mut base, &pixmap);
+        self.draw(&mut base, template_svg, values)?;
 
         let full = DynamicImage::ImageRgba8(base).to_rgb8();
         let mut variants = Vec::with_capacity(PosterOverlayVariant::ALL.len());
@@ -136,6 +128,64 @@ impl OverlayRenderer {
             output_hash,
         })
     }
+}
+
+impl OverlayRenderer {
+    /// Draw a template onto `base` in place.
+    fn draw(
+        &self,
+        base: &mut RgbaImage,
+        template_svg: &str,
+        values: &BTreeMap<&'static str, String>,
+    ) -> AppResult<()> {
+        let resolved = template::preprocess(template_svg, values)?;
+        let tree = usvg::Tree::from_str(&resolved, &self.options())
+            .map_err(|error| AppError::Validation(format!("overlay template: {error}")))?;
+        let (width, height) = base.dimensions();
+        let mut pixmap = tiny_skia::Pixmap::new(width, height)
+            .ok_or_else(|| AppError::Validation("poster has invalid dimensions".into()))?;
+        resvg::render(
+            &tree,
+            fit_transform(tree.size(), width, height),
+            &mut pixmap.as_mut(),
+        );
+        composite(base, &pixmap);
+        Ok(())
+    }
+
+    /// Render a template for the editor at `PREVIEW_WIDTH` x
+    /// `PREVIEW_HEIGHT`. The background is cropped to fill; an unreadable or
+    /// absent one falls back to a neutral placeholder. The JPEG carries no
+    /// marker because it is never stored.
+    pub fn render_preview(
+        &self,
+        background: Option<&[u8]>,
+        template_svg: &str,
+        values: &BTreeMap<&'static str, String>,
+    ) -> AppResult<Vec<u8>> {
+        template::validate(template_svg)?;
+        let mut base = background
+            .and_then(|bytes| decode_original(bytes).ok())
+            .map(|image| {
+                DynamicImage::ImageRgba8(image)
+                    .resize_to_fill(PREVIEW_WIDTH, PREVIEW_HEIGHT, FilterType::Triangle)
+                    .to_rgba8()
+            })
+            .unwrap_or_else(placeholder_poster);
+        self.draw(&mut base, template_svg, values)?;
+        encode_jpeg(&DynamicImage::ImageRgba8(base).to_rgb8().into())
+    }
+}
+
+/// Neutral slate gradient standing in for a poster.
+fn placeholder_poster() -> RgbaImage {
+    const TOP: [f32; 3] = [58.0, 68.0, 92.0];
+    const BOTTOM: [f32; 3] = [16.0, 19.0, 28.0];
+    RgbaImage::from_fn(PREVIEW_WIDTH, PREVIEW_HEIGHT, |_, y| {
+        let t = y as f32 / (PREVIEW_HEIGHT - 1) as f32;
+        let channel = |index: usize| (TOP[index] + (BOTTOM[index] - TOP[index]) * t).round() as u8;
+        image::Rgba([channel(0), channel(1), channel(2), 255])
+    })
 }
 
 fn decode_original(bytes: &[u8]) -> AppResult<RgbaImage> {

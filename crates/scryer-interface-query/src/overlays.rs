@@ -1,11 +1,14 @@
 //! Poster overlay reads: settings, per-library enablement, templates and
-//! progress, plus template validation.
+//! progress, plus template validation and previews.
 
 use async_graphql::{Context, Object, Result as GqlResult};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use scryer_application::AppError;
 use scryer_interface_core::{actor_from_ctx, app_from_ctx, to_gql_error};
 use scryer_interface_media::types::{
-    PosterOverlayOverviewPayload, PosterOverlayTemplateValidationPayload,
+    PosterOverlayOverviewPayload, PosterOverlayTemplatePreviewPayload,
+    PosterOverlayTemplateValidationPayload, PreviewPosterOverlayTemplateInput,
 };
 
 #[derive(Default)]
@@ -29,7 +32,7 @@ impl PosterOverlayQueries {
     async fn validate_poster_overlay_template(
         &self,
         ctx: &Context<'_>,
-        svg: String,
+        #[graphql(desc = "The template SVG to check.")] svg: String,
     ) -> GqlResult<PosterOverlayTemplateValidationPayload> {
         let app = app_from_ctx(ctx)?;
         let actor = actor_from_ctx(ctx)?;
@@ -40,6 +43,37 @@ impl PosterOverlayQueries {
             }),
             Err(AppError::Validation(message)) => Ok(PosterOverlayTemplateValidationPayload {
                 valid: false,
+                error: Some(message),
+            }),
+            Err(error) => Err(to_gql_error(error)),
+        }
+    }
+
+    /// Render a draft template with sample values for the editor. Nothing
+    /// is saved. Requires catalog settings management.
+    async fn preview_poster_overlay_template(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(desc = "The draft template and the sample values to show.")]
+        input: PreviewPosterOverlayTemplateInput,
+    ) -> GqlResult<PosterOverlayTemplatePreviewPayload> {
+        let app = app_from_ctx(ctx)?;
+        let actor = actor_from_ctx(ctx)?;
+        match app
+            .preview_poster_overlay_template(&actor, &input.svg, &input.sample())
+            .await
+        {
+            Ok(preview) => Ok(PosterOverlayTemplatePreviewPayload {
+                image: Some(format!(
+                    "data:image/jpeg;base64,{}",
+                    BASE64.encode(&preview.jpeg)
+                )),
+                library_poster: preview.library_poster,
+                error: None,
+            }),
+            Err(AppError::Validation(message)) => Ok(PosterOverlayTemplatePreviewPayload {
+                image: None,
+                library_poster: false,
                 error: Some(message),
             }),
             Err(error) => Err(to_gql_error(error)),

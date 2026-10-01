@@ -225,3 +225,72 @@ fn template_fields_list_matches_the_values_produced() {
         .collect::<Vec<_>>();
     assert_eq!(keys, TEMPLATE_FIELDS);
 }
+
+#[test]
+fn sample_values_resolve_through_the_same_vocabulary_as_titles() {
+    let sample = OverlaySampleValues {
+        resolution: Some("2160p".into()),
+        hdr: Some("dv".into()),
+        audio: Some("truehd_atmos".into()),
+        audio_channels: Some("7.1".into()),
+        edition: Some("Director's Cut".into()),
+    };
+    let from_sample = OverlayFields::from_sample(&sample).expect("valid sample");
+    let from_title = OverlayFields::aggregate(&[OverlayMediaFacts {
+        edition: Some("Director's Cut".into()),
+        ..uhd_dv_atmos()
+    }]);
+    assert_eq!(from_sample.template_values(), from_title.template_values());
+}
+
+#[test]
+fn blank_sample_values_leave_fields_unset() {
+    let sample = OverlaySampleValues {
+        resolution: Some("  ".into()),
+        edition: Some(String::new()),
+        ..OverlaySampleValues::default()
+    };
+    let fields = OverlayFields::from_sample(&sample).expect("blank is allowed");
+    assert!(fields.is_empty());
+}
+
+#[test]
+fn unknown_sample_tokens_and_oversized_editions_are_rejected() {
+    for sample in [
+        OverlaySampleValues {
+            resolution: Some("8k".into()),
+            ..OverlaySampleValues::default()
+        },
+        OverlaySampleValues {
+            hdr: Some("DOLBY VISION".into()),
+            ..OverlaySampleValues::default()
+        },
+        OverlaySampleValues {
+            audio: Some("atmos".into()),
+            ..OverlaySampleValues::default()
+        },
+        OverlaySampleValues {
+            audio_channels: Some("9.2".into()),
+            ..OverlaySampleValues::default()
+        },
+        OverlaySampleValues {
+            edition: Some("x".repeat(MAX_SAMPLE_EDITION_CHARS + 1)),
+            ..OverlaySampleValues::default()
+        },
+    ] {
+        assert!(OverlayFields::from_sample(&sample).is_err(), "{sample:?}");
+    }
+}
+
+#[test]
+fn every_option_token_round_trips() {
+    for value in OverlayResolution::ALL {
+        assert_eq!(OverlayResolution::from_token(value.token()), Some(value));
+    }
+    for value in OverlayHdr::ALL {
+        assert_eq!(OverlayHdr::from_token(value.token()), Some(value));
+    }
+    for value in OverlayAudio::ALL {
+        assert_eq!(OverlayAudio::from_token(value.token()), Some(value));
+    }
+}

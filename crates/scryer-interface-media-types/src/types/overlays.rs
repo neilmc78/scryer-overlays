@@ -4,6 +4,7 @@
 use async_graphql::{ID, InputObject, SimpleObject};
 use chrono::{DateTime, Utc};
 use scryer_application::overlays::{
+    CHANNEL_LAYOUTS, OverlayAudio, OverlayHdr, OverlayResolution, OverlaySampleValues,
     PosterOverlayLibraryConfig, PosterOverlayOverview, PosterOverlaySettings,
     PosterOverlayStatusCounts, PosterOverlayTemplate, TEMPLATE_FIELDS, TEMPLATE_SPEC_VERSION,
 };
@@ -34,9 +35,13 @@ impl From<PosterOverlaySettings> for PosterOverlaySettingsPayload {
 #[derive(SimpleObject, Clone)]
 #[graphql(name = "PosterOverlayLibrary")]
 pub struct PosterOverlayLibraryPayload {
+    /// The library's identifier.
     pub library_id: ID,
+    /// The library's display name.
     pub library_name: String,
+    /// The library's media facet: `movie`, `series` or `anime`.
     pub facet: String,
+    /// Whether posters in this library carry overlays.
     pub enabled: bool,
     /// Null when the library uses the built-in template.
     pub template_id: Option<ID>,
@@ -59,11 +64,17 @@ impl From<PosterOverlayLibraryConfig> for PosterOverlayLibraryPayload {
 #[derive(SimpleObject, Clone)]
 #[graphql(name = "PosterOverlayTemplate")]
 pub struct PosterOverlayTemplatePayload {
+    /// The template's identifier.
     pub id: ID,
+    /// The template's display name.
     pub name: String,
+    /// The template SVG.
     pub svg: String,
+    /// blake3 of the SVG; posters rebuild when it changes.
     pub content_hash: String,
+    /// When the template was created.
     pub created_at: DateTime<Utc>,
+    /// When the template was last changed.
     pub updated_at: DateTime<Utc>,
 }
 
@@ -102,12 +113,17 @@ impl From<PosterOverlayStatusCounts> for PosterOverlayCountsPayload {
     }
 }
 
+/// Everything the poster overlay settings page shows.
 #[derive(SimpleObject, Clone)]
 #[graphql(name = "PosterOverlayOverview")]
 pub struct PosterOverlayOverviewPayload {
+    /// Render settings shared by every library.
     pub settings: PosterOverlaySettingsPayload,
+    /// Overlay enablement and template for every library.
     pub libraries: Vec<PosterOverlayLibraryPayload>,
+    /// Custom templates, by name.
     pub templates: Vec<PosterOverlayTemplatePayload>,
+    /// Render progress across enabled libraries.
     pub counts: PosterOverlayCountsPayload,
     /// The built-in template, a working example of the format.
     pub builtin_template: String,
@@ -115,6 +131,62 @@ pub struct PosterOverlayOverviewPayload {
     pub template_spec_version: i32,
     /// Every field a template may reference.
     pub template_fields: Vec<String>,
+    /// Values the template preview can be set to.
+    pub sample_options: PosterOverlaySampleOptionsPayload,
+}
+
+/// One value of a badge field: the token conditions match and the label
+/// placeholders show.
+#[derive(SimpleObject, Clone)]
+#[graphql(name = "PosterOverlaySampleOption")]
+pub struct PosterOverlaySampleOptionPayload {
+    /// The value conditions such as `data-scryer-if="hdr=dv"` match.
+    pub token: String,
+    /// The text the matching `_label` placeholder shows.
+    pub label: String,
+}
+
+/// Every value each badge field can take, best first.
+#[derive(SimpleObject, Clone)]
+#[graphql(name = "PosterOverlaySampleOptions")]
+pub struct PosterOverlaySampleOptionsPayload {
+    /// Values of `resolution` and `resolution_label`.
+    pub resolutions: Vec<PosterOverlaySampleOptionPayload>,
+    /// Values of `hdr` and `hdr_label`.
+    pub hdr: Vec<PosterOverlaySampleOptionPayload>,
+    /// Values of `audio_codec` and `audio_label`.
+    pub audio: Vec<PosterOverlaySampleOptionPayload>,
+    /// Common values of `audio_channels`.
+    pub audio_channels: Vec<String>,
+}
+
+impl PosterOverlaySampleOptionsPayload {
+    fn current() -> Self {
+        fn option(token: &str, label: &str) -> PosterOverlaySampleOptionPayload {
+            PosterOverlaySampleOptionPayload {
+                token: token.to_string(),
+                label: label.to_string(),
+            }
+        }
+        Self {
+            resolutions: OverlayResolution::ALL
+                .iter()
+                .map(|value| option(value.token(), value.label()))
+                .collect(),
+            hdr: OverlayHdr::ALL
+                .iter()
+                .map(|value| option(value.token(), value.label()))
+                .collect(),
+            audio: OverlayAudio::ALL
+                .iter()
+                .map(|value| option(value.token(), value.label()))
+                .collect(),
+            audio_channels: CHANNEL_LAYOUTS
+                .iter()
+                .map(|layout| layout.to_string())
+                .collect(),
+        }
+    }
 }
 
 impl From<PosterOverlayOverview> for PosterOverlayOverviewPayload {
@@ -130,6 +202,7 @@ impl From<PosterOverlayOverview> for PosterOverlayOverviewPayload {
                 .iter()
                 .map(|field| field.to_string())
                 .collect(),
+            sample_options: PosterOverlaySampleOptionsPayload::current(),
         }
     }
 }
@@ -138,32 +211,87 @@ impl From<PosterOverlayOverview> for PosterOverlayOverviewPayload {
 #[derive(SimpleObject, Clone)]
 #[graphql(name = "PosterOverlayTemplateValidation")]
 pub struct PosterOverlayTemplateValidationPayload {
+    /// Whether the template can be saved.
     pub valid: bool,
     /// Why the template was rejected; null when valid.
     pub error: Option<String>,
 }
 
+/// Overlay enablement and template for one library.
 #[derive(InputObject)]
 #[graphql(name = "SetPosterOverlayLibraryInput")]
 pub struct SetPosterOverlayLibraryInput {
+    /// The library to change.
     pub library_id: ID,
+    /// Whether posters in the library carry overlays.
     pub enabled: bool,
     /// Null selects the built-in template.
     pub template_id: Option<ID>,
 }
 
+/// New render settings, shared by every library.
 #[derive(InputObject)]
 #[graphql(name = "UpdatePosterOverlaySettingsInput")]
 pub struct UpdatePosterOverlaySettingsInput {
+    /// Posters rendered at once.
     pub parallelism: i32,
+    /// Seconds between safety-net passes.
     pub reconcile_interval_seconds: i64,
 }
 
+/// A custom template to create or replace.
 #[derive(InputObject)]
 #[graphql(name = "SavePosterOverlayTemplateInput")]
 pub struct SavePosterOverlayTemplateInput {
     /// Null creates a new template.
     pub id: Option<ID>,
+    /// The template's display name.
     pub name: String,
+    /// The template SVG; it must pass validation.
     pub svg: String,
+}
+
+/// A draft template and the sample values to preview it with. Empty or
+/// absent values leave that field unset, as for a title without the data.
+#[derive(InputObject)]
+#[graphql(name = "PreviewPosterOverlayTemplateInput")]
+pub struct PreviewPosterOverlayTemplateInput {
+    /// The draft template SVG.
+    pub svg: String,
+    /// A resolution token from `sampleOptions.resolutions`.
+    pub resolution: Option<String>,
+    /// An HDR token from `sampleOptions.hdr`.
+    pub hdr: Option<String>,
+    /// An audio token from `sampleOptions.audio`.
+    pub audio: Option<String>,
+    /// A layout from `sampleOptions.audioChannels`.
+    pub audio_channels: Option<String>,
+    /// Free text, as an edition would appear on a release.
+    pub edition: Option<String>,
+}
+
+impl PreviewPosterOverlayTemplateInput {
+    pub fn sample(&self) -> OverlaySampleValues {
+        OverlaySampleValues {
+            resolution: self.resolution.clone(),
+            hdr: self.hdr.clone(),
+            audio: self.audio.clone(),
+            audio_channels: self.audio_channels.clone(),
+            edition: self.edition.clone(),
+        }
+    }
+}
+
+/// A rendered template preview, or why it could not be rendered.
+#[derive(SimpleObject, Clone)]
+#[graphql(name = "PosterOverlayTemplatePreview")]
+pub struct PosterOverlayTemplatePreviewPayload {
+    /// `data:image/jpeg;base64,...`; null when the template or sample was
+    /// rejected.
+    pub image: Option<String>,
+    /// True when drawn on a poster from the library rather than a neutral
+    /// placeholder.
+    pub library_poster: bool,
+    /// Why the template or sample was rejected; null on success.
+    pub error: Option<String>,
 }
