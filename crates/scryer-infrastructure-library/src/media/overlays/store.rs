@@ -6,8 +6,8 @@ use async_trait::async_trait;
 use chrono::Utc;
 use scryer_application::overlays::{
     MAX_OVERLAY_PARALLELISM, OverlayMediaFacts, PosterOverlayInputs, PosterOverlayLibraryConfig,
-    PosterOverlayRepository, PosterOverlaySettings, PosterOverlayState, PosterOverlayStatusCounts,
-    PosterOverlayTemplate,
+    PosterOverlayPreviewPoster, PosterOverlayRepository, PosterOverlaySettings, PosterOverlayState,
+    PosterOverlayStatusCounts, PosterOverlayTemplate,
 };
 use scryer_application::{AppResult, TitleImageKind};
 
@@ -236,7 +236,8 @@ impl PosterOverlayRepository for PosterOverlayStore {
         let files = SqlRuntime::fetch_all(
             self.read(),
             "SELECT video_width, video_height, resolution, video_hdr_format,
-                    audio_codec, audio_profile, audio_channels, edition, file_path, role
+                    audio_codec, audio_profile, audio_channels, edition, file_path, role,
+                    video_codec, video_codec_parsed, source_type
                FROM media_files
               WHERE title_id = {} AND role IN ('primary', 'additional')
               ORDER BY id",
@@ -255,6 +256,9 @@ impl PosterOverlayRepository for PosterOverlayStore {
                 audio_channels: row.opt_i64("audio_channels")?,
                 edition: row.opt_text("edition")?,
                 file_path: row.opt_text("file_path")?,
+                video_codec: row.opt_text("video_codec")?,
+                video_codec_parsed: row.opt_text("video_codec_parsed")?,
+                source_type: row.opt_text("source_type")?,
                 additional: row.opt_text("role")?.as_deref() == Some("additional"),
             })
         })
@@ -323,6 +327,59 @@ impl PosterOverlayRepository for PosterOverlayStore {
         .iter()
         .map(|row| row.text("title_id"))
         .collect()
+    }
+
+    async fn preview_posters(
+        &self,
+        facet: Option<&str>,
+        title_id: Option<&str>,
+        limit: usize,
+    ) -> AppResult<Vec<PosterOverlayPreviewPoster>> {
+        let decode = |rows: Vec<SqlRow>| {
+            rows.iter()
+                .map(|row| {
+                    Ok(PosterOverlayPreviewPoster {
+                        title_id: row.text("id")?,
+                        name: row.text("name")?,
+                    })
+                })
+                .collect::<AppResult<Vec<_>>>()
+        };
+        if let Some(title_id) = title_id {
+            let pinned = decode(
+                SqlRuntime::fetch_all(
+                    self.read(),
+                    "SELECT t.id, t.name
+                       FROM titles t
+                       JOIN poster_overlay_state s ON s.title_id = t.id
+                      WHERE t.id = {} AND s.original_path IS NOT NULL",
+                    &[SqlArg::Text(title_id.to_string())],
+                )
+                .await?,
+            )?;
+            if !pinned.is_empty() {
+                return Ok(pinned);
+            }
+        }
+        let facet = facet.unwrap_or("").to_string();
+        decode(
+            SqlRuntime::fetch_all(
+                self.read(),
+                "SELECT t.id, t.name
+                   FROM poster_overlay_state s
+                   JOIN titles t ON t.id = s.title_id
+                  WHERE s.original_path IS NOT NULL
+                    AND ({} = '' OR t.facet = {})
+                  ORDER BY RANDOM()
+                  LIMIT {}",
+                &[
+                    SqlArg::Text(facet.clone()),
+                    SqlArg::Text(facet),
+                    SqlArg::I64(limit as i64),
+                ],
+            )
+            .await?,
+        )
     }
 
     async fn get_state(&self, title_id: &str) -> AppResult<Option<PosterOverlayState>> {

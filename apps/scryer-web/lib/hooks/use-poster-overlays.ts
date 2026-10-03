@@ -18,6 +18,7 @@ import {
 } from "@/lib/graphql/queries";
 import type {
   PosterOverlayOverview,
+  PosterOverlayPreviewFacet,
   PosterOverlayPreviewState,
   PosterOverlaySample,
   PosterOverlayTemplateDraft,
@@ -192,20 +193,32 @@ const PREVIEW_DEBOUNCE_MS = 250;
  * a response that arrives after a newer request was sent is dropped, so the
  * preview always matches the latest draft. The last good image stays on
  * screen while a new one renders or when the draft is invalid.
+ *
+ * The first preview draws on a random poster from `facet`'s libraries; that
+ * title is then kept so the poster does not change between edits, until
+ * `shuffle` asks for another or the facet changes.
  */
 export function usePosterOverlayPreview(
   svg: string | null,
   sample: PosterOverlaySample,
-): PosterOverlayPreviewState {
+  facet: PosterOverlayPreviewFacet,
+): { preview: PosterOverlayPreviewState; shuffle: () => void } {
   const client = useClient();
   const t = useTranslate();
   const [state, setState] = React.useState<PosterOverlayPreviewState>({
     image: null,
     libraryPoster: false,
+    posterTitleName: null,
     error: null,
     loading: false,
   });
   const latestRequest = React.useRef(0);
+  const pinnedTitle = React.useRef<{ facet: PosterOverlayPreviewFacet; id: string } | null>(null);
+  const [shuffles, setShuffles] = React.useState(0);
+  const shuffle = React.useCallback(() => {
+    pinnedTitle.current = null;
+    setShuffles((count) => count + 1);
+  }, []);
 
   React.useEffect(() => {
     if (svg === null) {
@@ -213,11 +226,12 @@ export function usePosterOverlayPreview(
     }
     const request = ++latestRequest.current;
     setState((current) => ({ ...current, loading: true }));
+    const pinned = pinnedTitle.current?.facet === facet ? pinnedTitle.current.id : null;
     const timer = window.setTimeout(() => {
       void client
         .query(
           previewPosterOverlayTemplateQuery,
-          { input: { svg, ...sample } },
+          { input: { svg, ...sample, posterFacet: facet, posterTitleId: pinned } },
           { requestPolicy: "network-only" },
         )
         .toPromise()
@@ -226,7 +240,13 @@ export function usePosterOverlayPreview(
             return;
           }
           const preview = result.data?.previewPosterOverlayTemplate as
-            | { image: string | null; libraryPoster: boolean; error: string | null }
+            | {
+                image: string | null;
+                libraryPoster: boolean;
+                posterTitleId: string | null;
+                posterTitleName: string | null;
+                error: string | null;
+              }
             | undefined;
           if (result.error || !preview) {
             setState((current) => ({
@@ -236,16 +256,24 @@ export function usePosterOverlayPreview(
             }));
             return;
           }
-          setState((current) => ({
-            image: preview.image ?? current.image,
-            libraryPoster: preview.image ? preview.libraryPoster : current.libraryPoster,
-            error: preview.error,
-            loading: false,
-          }));
+          if (preview.posterTitleId) {
+            pinnedTitle.current = { facet, id: preview.posterTitleId };
+          }
+          setState((current) =>
+            preview.image
+              ? {
+                  image: preview.image,
+                  libraryPoster: preview.libraryPoster,
+                  posterTitleName: preview.posterTitleName,
+                  error: preview.error,
+                  loading: false,
+                }
+              : { ...current, error: preview.error, loading: false },
+          );
         });
     }, PREVIEW_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
-  }, [client, sample, svg, t]);
+  }, [client, facet, sample, shuffles, svg, t]);
 
-  return state;
+  return { preview: state, shuffle };
 }

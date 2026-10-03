@@ -1,7 +1,7 @@
 //! Poster overlay reads: settings, per-library enablement, templates and
 //! progress, plus template validation and previews.
 
-use async_graphql::{Context, Object, Result as GqlResult};
+use async_graphql::{Context, ID, Object, Result as GqlResult};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use scryer_application::AppError;
@@ -60,7 +60,12 @@ impl PosterOverlayQueries {
         let app = app_from_ctx(ctx)?;
         let actor = actor_from_ctx(ctx)?;
         match app
-            .preview_poster_overlay_template(&actor, &input.svg, &input.sample())
+            .preview_poster_overlay_template(
+                &actor,
+                &input.svg,
+                &input.sample(),
+                &input.poster_choice(),
+            )
             .await
         {
             Ok(preview) => Ok(PosterOverlayTemplatePreviewPayload {
@@ -68,12 +73,19 @@ impl PosterOverlayQueries {
                     "data:image/jpeg;base64,{}",
                     BASE64.encode(&preview.jpeg)
                 )),
-                library_poster: preview.library_poster,
+                library_poster: preview.poster.is_some(),
+                poster_title_id: preview
+                    .poster
+                    .as_ref()
+                    .map(|poster| ID(poster.title_id.clone())),
+                poster_title_name: preview.poster.map(|poster| poster.name),
                 error: None,
             }),
             Err(AppError::Validation(message)) => Ok(PosterOverlayTemplatePreviewPayload {
                 image: None,
                 library_poster: false,
+                poster_title_id: None,
+                poster_title_name: None,
                 error: Some(message),
             }),
             Err(error) => Err(to_gql_error(error)),

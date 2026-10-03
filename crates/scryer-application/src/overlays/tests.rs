@@ -307,6 +307,8 @@ fn sample_values_resolve_through_the_same_vocabulary_as_titles() {
         audio_channels: Some("7.1".into()),
         edition: Some("Director's Cut".into()),
         series_status: None,
+        video_codec: None,
+        source: None,
     };
     let from_sample = OverlayFields::from_sample(&sample).expect("valid sample");
     let from_title = OverlayFields::aggregate(&[OverlayMediaFacts {
@@ -447,5 +449,101 @@ fn only_title_poster_proxy_sources_carry_overlays() {
         source(Some("title"), Some(""), "poster"),
     ] {
         assert_eq!(overlay_title_for_proxy_source(&other), None, "{other:?}");
+    }
+}
+
+#[test]
+fn video_codec_comes_from_the_probe_then_the_release_name() {
+    let codec = |probed: Option<&str>, parsed: Option<&str>| {
+        OverlayFields::aggregate(&[OverlayMediaFacts {
+            video_codec: probed.map(str::to_string),
+            video_codec_parsed: parsed.map(str::to_string),
+            ..facts()
+        }])
+        .video_codec
+    };
+    assert_eq!(
+        codec(Some("hevc"), Some("x264")),
+        Some(OverlayVideoCodec::H265)
+    );
+    assert_eq!(codec(Some("h264"), None), Some(OverlayVideoCodec::H264));
+    assert_eq!(codec(Some("av1"), None), Some(OverlayVideoCodec::Av1));
+    assert_eq!(
+        codec(Some("mpeg2video"), None),
+        Some(OverlayVideoCodec::Mpeg2)
+    );
+    assert_eq!(codec(None, Some("x265")), Some(OverlayVideoCodec::H265));
+    assert_eq!(codec(None, Some("H.264")), Some(OverlayVideoCodec::H264));
+    assert_eq!(codec(Some("prores"), None), None);
+    assert_eq!(codec(None, None), None);
+
+    let fields = OverlayFields::aggregate(&[OverlayMediaFacts {
+        video_codec: Some("hevc".into()),
+        ..facts()
+    }]);
+    let values = fields.template_values();
+    assert_eq!(values["video_codec"], "h265");
+    assert_eq!(values["video_codec_label"], "H.265");
+}
+
+#[test]
+fn a_series_shows_its_most_modern_codec_and_additional_cuts_do_not_count() {
+    let file = |codec: &str, additional: bool| OverlayMediaFacts {
+        video_codec: Some(codec.into()),
+        additional,
+        ..facts()
+    };
+    assert_eq!(
+        OverlayFields::aggregate(&[file("h264", false), file("hevc", false)]).video_codec,
+        Some(OverlayVideoCodec::H265)
+    );
+    assert_eq!(
+        OverlayFields::aggregate(&[file("h264", false), file("av1", true)]).video_codec,
+        Some(OverlayVideoCodec::H264)
+    );
+    for value in OverlayVideoCodec::ALL {
+        assert_eq!(OverlayVideoCodec::from_token(value.token()), Some(value));
+    }
+}
+
+#[test]
+fn source_is_the_best_release_source_of_the_primary_files() {
+    let file = |source: &str, additional: bool| OverlayMediaFacts {
+        source_type: Some(source.into()),
+        additional,
+        ..facts()
+    };
+    for (raw, expected) in [
+        ("BluRay", OverlaySource::BluRay),
+        ("Remux", OverlaySource::Remux),
+        ("WEB-DL", OverlaySource::WebDl),
+        ("WEBRip", OverlaySource::WebRip),
+        ("DVD", OverlaySource::Dvd),
+        ("HDTV", OverlaySource::Hdtv),
+        ("BRDISK", OverlaySource::BrDisk),
+    ] {
+        assert_eq!(
+            OverlayFields::aggregate(&[file(raw, false)]).source,
+            Some(expected),
+            "{raw}"
+        );
+    }
+    assert_eq!(
+        OverlayFields::aggregate(&[file("WEB-DL", false), file("BluRay", false)]).source,
+        Some(OverlaySource::BluRay)
+    );
+    assert_eq!(
+        OverlayFields::aggregate(&[file("DVD", false), file("Remux", true)]).source,
+        Some(OverlaySource::Dvd)
+    );
+    assert_eq!(
+        OverlayFields::aggregate(&[file("nonsense", false)]).source,
+        None
+    );
+    let values = OverlayFields::aggregate(&[file("BluRay", false)]).template_values();
+    assert_eq!(values["source"], "bluray");
+    assert_eq!(values["source_label"], "BLURAY");
+    for value in OverlaySource::ALL {
+        assert_eq!(OverlaySource::from_token(value.token()), Some(value));
     }
 }

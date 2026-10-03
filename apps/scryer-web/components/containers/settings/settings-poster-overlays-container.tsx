@@ -6,6 +6,7 @@ import { useGlobalStatus } from "@/lib/context/global-status-context";
 import { useTranslate } from "@/lib/context/translate-context";
 import { usePosterOverlayPreview, usePosterOverlays } from "@/lib/hooks/use-poster-overlays";
 import type {
+  PosterOverlayPreviewFacet,
   PosterOverlaySample,
   PosterOverlayTemplateDraft,
   PosterOverlayTemplateValidation,
@@ -20,6 +21,8 @@ const EMPTY_SAMPLE: PosterOverlaySample = {
   audioChannels: "",
   edition: "",
   seriesStatus: "",
+  videoCodec: "",
+  source: "",
 };
 
 type SettingsPosterOverlaysContainerProps = {
@@ -78,13 +81,31 @@ export function SettingsPosterOverlaysContainer({
           audioChannels: sampleOptions.audioChannels[0] ?? "",
           edition: defaultEdition,
           seriesStatus: sampleOptions.seriesStatus[0]?.token ?? "",
+          // The commonest values rather than the newest, so the first
+          // preview looks like a typical library title.
+          videoCodec:
+            sampleOptions.videoCodec.find((option) => option.token === "h265")?.token ??
+            sampleOptions.videoCodec[0]?.token ??
+            "",
+          source:
+            sampleOptions.source.find((option) => option.token === "bluray")?.token ??
+            sampleOptions.source[0]?.token ??
+            "",
         },
     );
   }, [defaultEdition, sampleOptions]);
   const activeSample = sample ?? EMPTY_SAMPLE;
-  const preview = usePosterOverlayPreview(
+  // Preview on a poster from the first enabled library's kind, so a series
+  // template is checked against a series poster.
+  const firstEnabledFacet = overview?.libraries.find((library) => library.enabled)?.facet;
+  const [previewFacet, setPreviewFacet] = React.useState<PosterOverlayPreviewFacet | null>(null);
+  const activePreviewFacet: PosterOverlayPreviewFacet =
+    previewFacet ??
+    (firstEnabledFacet === "series" || firstEnabledFacet === "anime" ? firstEnabledFacet : "movie");
+  const { preview, shuffle: shufflePreview } = usePosterOverlayPreview(
     templateDraft && sample ? templateDraft.svg : null,
     activeSample,
+    activePreviewFacet,
   );
 
   // A template edit invalidates the last validation result.
@@ -181,6 +202,9 @@ export function SettingsPosterOverlaysContainer({
         onValidateTemplate={() => void validateTemplate()}
         validation={validation}
         preview={preview}
+        previewFacet={activePreviewFacet}
+        onPreviewFacetChange={setPreviewFacet}
+        onShufflePreview={shufflePreview}
         sample={activeSample}
         setSample={(update) =>
           setSample((current) => {

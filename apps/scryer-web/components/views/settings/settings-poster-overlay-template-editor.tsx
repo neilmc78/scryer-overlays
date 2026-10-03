@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ChevronDown, Layers, Loader2, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, Layers, Loader2, Plus, Shuffle, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -18,6 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useTranslate } from "@/lib/context/translate-context";
 import type {
   PosterOverlayOverview,
+  PosterOverlayPreviewFacet,
   PosterOverlayPreviewState,
   PosterOverlaySample,
   PosterOverlaySampleOptions,
@@ -67,6 +68,9 @@ type SettingsPosterOverlayTemplateEditorProps = {
   onValidate: () => void;
   validation: PosterOverlayTemplateValidation | null;
   preview: PosterOverlayPreviewState;
+  previewFacet: PosterOverlayPreviewFacet;
+  onPreviewFacetChange: (facet: PosterOverlayPreviewFacet) => void;
+  onShufflePreview: () => void;
   sample: PosterOverlaySample;
   setSample: React.Dispatch<React.SetStateAction<PosterOverlaySample>>;
 };
@@ -80,6 +84,9 @@ export function SettingsPosterOverlayTemplateEditor({
   onValidate,
   validation,
   preview,
+  previewFacet,
+  onPreviewFacetChange,
+  onShufflePreview,
   sample,
   setSample,
 }: SettingsPosterOverlayTemplateEditorProps) {
@@ -143,6 +150,10 @@ export function SettingsPosterOverlayTemplateEditor({
         return t("settings.posterOverlays.badgeKindEdition");
       case "status":
         return t("settings.posterOverlays.badgeKindStatus");
+      case "codec":
+        return t("settings.posterOverlays.badgeKindCodec");
+      case "source":
+        return t("settings.posterOverlays.badgeKindSource");
       default:
         return t("settings.posterOverlays.badgeKindCustom");
     }
@@ -312,6 +323,9 @@ export function SettingsPosterOverlayTemplateEditor({
           onSelect={setSelected}
           onMove={(index, x, y) => updateElement(index, { x, y }, true)}
           preview={preview}
+          previewFacet={previewFacet}
+          onPreviewFacetChange={onPreviewFacetChange}
+          onShufflePreview={onShufflePreview}
           sample={sample}
           setSample={setSample}
           overview={overview}
@@ -550,6 +564,10 @@ function conditionOptions(
       return sampleOptions.audioChannels.map((layout) => ({ value: layout, label: layout }));
     case "series_status":
       return labelled(sampleOptions.seriesStatus);
+    case "video_codec":
+      return labelled(sampleOptions.videoCodec);
+    case "source":
+      return labelled(sampleOptions.source);
     default:
       return null;
   }
@@ -625,6 +643,10 @@ function BadgeConditionFields({
         return t("settings.posterOverlays.sampleChannels");
       case "series_status":
         return t("settings.posterOverlays.badgeKindStatus");
+      case "video_codec":
+        return t("settings.posterOverlays.badgeKindCodec");
+      case "source":
+        return t("settings.posterOverlays.badgeKindSource");
       default:
         return t("settings.posterOverlays.badgeKindEdition");
     }
@@ -851,6 +873,9 @@ type PreviewPanelProps = {
   onSelect: (index: number) => void;
   onMove: (index: number, x: number, y: number) => void;
   preview: PosterOverlayPreviewState;
+  previewFacet: PosterOverlayPreviewFacet;
+  onPreviewFacetChange: (facet: PosterOverlayPreviewFacet) => void;
+  onShufflePreview: () => void;
   sample: PosterOverlaySample;
   setSample: React.Dispatch<React.SetStateAction<PosterOverlaySample>>;
   overview: PosterOverlayOverview;
@@ -872,6 +897,9 @@ function PreviewPanel({
   onSelect,
   onMove,
   preview,
+  previewFacet,
+  onPreviewFacetChange,
+  onShufflePreview,
   sample,
   setSample,
   overview,
@@ -909,6 +937,35 @@ function PreviewPanel({
             aria-label={t("settings.posterOverlays.previewRendering")}
           />
         ) : null}
+      </div>
+      <div className="flex items-center gap-2">
+        <Select
+          value={previewFacet}
+          onValueChange={(value) => onPreviewFacetChange(value as PosterOverlayPreviewFacet)}
+        >
+          <SelectTrigger
+            id="settings-poster-overlays-preview-facet"
+            className="h-8 flex-1 text-xs"
+            aria-label={t("settings.posterOverlays.previewOn")}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="movie">{t("settings.posterOverlays.previewOnMovies")}</SelectItem>
+            <SelectItem value="series">{t("settings.posterOverlays.previewOnSeries")}</SelectItem>
+            <SelectItem value="anime">{t("settings.posterOverlays.previewOnAnime")}</SelectItem>
+          </SelectContent>
+        </Select>
+        <Button
+          id="settings-poster-overlays-preview-shuffle"
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={onShufflePreview}
+        >
+          <Shuffle className="size-3.5" />
+          {t("settings.posterOverlays.previewShuffle")}
+        </Button>
       </div>
       <div className="relative mx-auto aspect-[2/3] w-full max-w-[340px] overflow-hidden rounded-[10px] border border-[var(--scry-border3)] bg-[#141823]">
         {preview.image ? (
@@ -987,9 +1044,13 @@ function PreviewPanel({
         </p>
       ) : (
         <p className={`text-xs ${MUTED_TEXT_CLASS}`}>
-          {preview.libraryPoster
-            ? t("settings.posterOverlays.previewLibraryPoster")
-            : t("settings.posterOverlays.previewPlaceholder")}
+          {preview.libraryPoster && preview.posterTitleName
+            ? t("settings.posterOverlays.previewLibraryPosterTitle", {
+                title: preview.posterTitleName,
+              })
+            : preview.libraryPoster
+              ? t("settings.posterOverlays.previewLibraryPoster")
+              : t("settings.posterOverlays.previewPlaceholder")}
         </p>
       )}
 
@@ -1038,6 +1099,26 @@ function PreviewPanel({
               label: option.label,
             }))}
             onChange={setSampleField("seriesStatus")}
+          />
+          <SampleSelect
+            id="settings-poster-overlays-sample-codec"
+            label={t("settings.posterOverlays.badgeKindCodec")}
+            value={sample.videoCodec}
+            options={options.videoCodec.map((option) => ({
+              value: option.token,
+              label: option.label,
+            }))}
+            onChange={setSampleField("videoCodec")}
+          />
+          <SampleSelect
+            id="settings-poster-overlays-sample-source"
+            label={t("settings.posterOverlays.badgeKindSource")}
+            value={sample.source}
+            options={options.source.map((option) => ({
+              value: option.token,
+              label: option.label,
+            }))}
+            onChange={setSampleField("source")}
           />
         </div>
         <div className="space-y-1.5">

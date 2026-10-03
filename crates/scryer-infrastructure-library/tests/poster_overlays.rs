@@ -440,6 +440,35 @@ async fn renders_from_the_title_poster_url_when_the_image_cache_is_empty(
     let counts = store.status_counts().await.unwrap();
     assert_eq!((counts.rendered, counts.no_artwork), (1, 0));
 
+    // Template previews draw on stored originals from the chosen kind of
+    // library, keeping a pinned title while it is usable.
+    let pick = |facet: Option<&'static str>, title_id: Option<&'static str>| {
+        let store = store.clone();
+        async move {
+            store
+                .preview_posters(facet, title_id, 8)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|poster| (poster.title_id, poster.name))
+                .collect::<Vec<_>>()
+        }
+    };
+    let fixture = vec![(TITLE.to_string(), "Fixture".to_string())];
+    assert_eq!(pick(Some("movie"), None).await, fixture);
+    assert_eq!(pick(None, None).await, fixture);
+    assert!(pick(Some("series"), None).await.is_empty());
+    assert_eq!(
+        pick(Some("series"), Some(TITLE)).await,
+        fixture,
+        "a pinned title is kept"
+    );
+    assert_eq!(
+        pick(Some("movie"), Some("no-such-title")).await,
+        fixture,
+        "an unusable pin falls back to a random poster"
+    );
+
     // The catalog reaches posters through the image proxy: register the
     // title's poster exactly as the GraphQL mapper does, then follow its
     // token back to the overlay the media route serves.

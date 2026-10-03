@@ -21496,6 +21496,14 @@ type PosterOverlaySampleOptions {
 	Values of `series_status` and `series_status_label`.
 	"""
 	seriesStatus: [PosterOverlaySampleOption!]!
+	"""
+	Values of `video_codec` and `video_codec_label`.
+	"""
+	videoCodec: [PosterOverlaySampleOption!]!
+	"""
+	Values of `source` and `source_label`.
+	"""
+	source: [PosterOverlaySampleOption!]!
 }
 
 """
@@ -21559,6 +21567,15 @@ type PosterOverlayTemplatePreview {
 	placeholder.
 	"""
 	libraryPoster: Boolean!
+	"""
+	The title whose poster the preview is drawn on; pass it back as
+	`posterTitleId` to keep the same poster while editing.
+	"""
+	posterTitleId: ID
+	"""
+	That title's name.
+	"""
+	posterTitleName: String
 	"""
 	Why the template or sample was rejected; null on success.
 	"""
@@ -21703,6 +21720,24 @@ input PreviewPosterOverlayTemplateInput {
 	A status token from `sampleOptions.seriesStatus`.
 	"""
 	seriesStatus: String
+	"""
+	A codec token from `sampleOptions.videoCodec`.
+	"""
+	videoCodec: String
+	"""
+	A source token from `sampleOptions.source`.
+	"""
+	source: String
+	"""
+	Draw on a poster from this kind of library: `movie`, `series` or
+	`anime`. Any library when null.
+	"""
+	posterFacet: String
+	"""
+	Keep drawing on this title's poster (from a previous preview's
+	`posterTitleId`); a random one is picked when null.
+	"""
+	posterTitleId: ID
 }
 
 """

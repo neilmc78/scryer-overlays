@@ -5,7 +5,8 @@ use async_graphql::{ID, InputObject, SimpleObject};
 use chrono::{DateTime, Utc};
 use scryer_application::overlays::{
     CHANNEL_LAYOUTS, OverlayAudio, OverlayHdr, OverlayResolution, OverlaySampleValues,
-    OverlaySeriesStatus, PosterOverlayLibraryConfig, PosterOverlayOverview, PosterOverlaySettings,
+    OverlaySeriesStatus, OverlaySource, OverlayVideoCodec, PosterOverlayLibraryConfig,
+    PosterOverlayOverview, PosterOverlayPreviewChoice, PosterOverlaySettings,
     PosterOverlayStatusCounts, PosterOverlayTemplate, TEMPLATE_FIELDS, TEMPLATE_SPEC_VERSION,
 };
 
@@ -163,6 +164,10 @@ pub struct PosterOverlaySampleOptionsPayload {
     pub audio_channels: Vec<String>,
     /// Values of `series_status` and `series_status_label`.
     pub series_status: Vec<PosterOverlaySampleOptionPayload>,
+    /// Values of `video_codec` and `video_codec_label`.
+    pub video_codec: Vec<PosterOverlaySampleOptionPayload>,
+    /// Values of `source` and `source_label`.
+    pub source: Vec<PosterOverlaySampleOptionPayload>,
 }
 
 impl PosterOverlaySampleOptionsPayload {
@@ -183,6 +188,14 @@ impl PosterOverlaySampleOptionsPayload {
                 .map(|value| option(value.token(), value.label()))
                 .collect(),
             audio: OverlayAudio::ALL
+                .iter()
+                .map(|value| option(value.token(), value.label()))
+                .collect(),
+            source: OverlaySource::ALL
+                .iter()
+                .map(|value| option(value.token(), value.label()))
+                .collect(),
+            video_codec: OverlayVideoCodec::ALL
                 .iter()
                 .map(|value| option(value.token(), value.label()))
                 .collect(),
@@ -279,9 +292,26 @@ pub struct PreviewPosterOverlayTemplateInput {
     pub edition: Option<String>,
     /// A status token from `sampleOptions.seriesStatus`.
     pub series_status: Option<String>,
+    /// A codec token from `sampleOptions.videoCodec`.
+    pub video_codec: Option<String>,
+    /// A source token from `sampleOptions.source`.
+    pub source: Option<String>,
+    /// Draw on a poster from this kind of library: `movie`, `series` or
+    /// `anime`. Any library when null.
+    pub poster_facet: Option<String>,
+    /// Keep drawing on this title's poster (from a previous preview's
+    /// `posterTitleId`); a random one is picked when null.
+    pub poster_title_id: Option<ID>,
 }
 
 impl PreviewPosterOverlayTemplateInput {
+    pub fn poster_choice(&self) -> PosterOverlayPreviewChoice {
+        PosterOverlayPreviewChoice {
+            facet: self.poster_facet.clone(),
+            title_id: self.poster_title_id.as_ref().map(|id| id.to_string()),
+        }
+    }
+
     pub fn sample(&self) -> OverlaySampleValues {
         OverlaySampleValues {
             resolution: self.resolution.clone(),
@@ -290,6 +320,8 @@ impl PreviewPosterOverlayTemplateInput {
             audio_channels: self.audio_channels.clone(),
             edition: self.edition.clone(),
             series_status: self.series_status.clone(),
+            video_codec: self.video_codec.clone(),
+            source: self.source.clone(),
         }
     }
 }
@@ -304,6 +336,11 @@ pub struct PosterOverlayTemplatePreviewPayload {
     /// True when drawn on a poster from the library rather than a neutral
     /// placeholder.
     pub library_poster: bool,
+    /// The title whose poster the preview is drawn on; pass it back as
+    /// `posterTitleId` to keep the same poster while editing.
+    pub poster_title_id: Option<ID>,
+    /// That title's name.
+    pub poster_title_name: Option<String>,
     /// Why the template or sample was rejected; null on success.
     pub error: Option<String>,
 }

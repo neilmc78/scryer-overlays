@@ -5622,12 +5622,20 @@ export const posterOverlaysQuery = `query PosterOverlays {
       audio { token label }
       audioChannels
       seriesStatus { token label }
+      videoCodec { token label }
+      source { token label }
     }
   }
 }`;
 
 export const previewPosterOverlayTemplateQuery = `query PreviewPosterOverlayTemplate($input: PreviewPosterOverlayTemplateInput!) {
-  previewPosterOverlayTemplate(input: $input) { image libraryPoster error }
+  previewPosterOverlayTemplate(input: $input) {
+    image
+    libraryPoster
+    posterTitleId
+    posterTitleName
+    error
+  }
 }`;
 
 export const validatePosterOverlayTemplateQuery = `query ValidatePosterOverlayTemplate($svg: String!) {

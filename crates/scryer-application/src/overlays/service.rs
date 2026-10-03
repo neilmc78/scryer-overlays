@@ -8,9 +8,9 @@ use scryer_domain::{AppPermission, Id, User};
 use super::fields::{OverlayFields, OverlaySampleValues, blake3_hex, input_hash, template_version};
 use super::ports::{
     MAX_OVERLAY_PARALLELISM, MIN_OVERLAY_RECONCILE_INTERVAL_SECONDS, PosterOverlayEngine,
-    PosterOverlayLibraryConfig, PosterOverlayPreviewRequest, PosterOverlayRenderRequest,
-    PosterOverlayRepository, PosterOverlaySettings, PosterOverlayState, PosterOverlayStatusCounts,
-    PosterOverlayTemplate, PosterOverlayVariant,
+    PosterOverlayLibraryConfig, PosterOverlayPreviewPoster, PosterOverlayPreviewRequest,
+    PosterOverlayRenderRequest, PosterOverlayRepository, PosterOverlaySettings, PosterOverlayState,
+    PosterOverlayStatusCounts, PosterOverlayTemplate, PosterOverlayVariant,
 };
 use crate::{AppError, AppResult, AppUseCase, ImageProxyKind, ImageProxySourceRecord};
 
@@ -273,9 +273,18 @@ pub struct PosterOverlayOverview {
 #[derive(Clone, Debug)]
 pub struct PosterOverlayPreview {
     pub jpeg: Vec<u8>,
-    /// True when drawn on a poster from the library rather than the
-    /// neutral placeholder.
-    pub library_poster: bool,
+    /// The library title drawn on; `None` for the neutral placeholder.
+    pub poster: Option<PosterOverlayPreviewPoster>,
+}
+
+/// Which library poster a preview is drawn on.
+#[derive(Clone, Debug, Default)]
+pub struct PosterOverlayPreviewChoice {
+    /// `movie`, `series` or `anime`; any title when absent.
+    pub facet: Option<String>,
+    /// Keep drawing on this title, so the poster does not change between
+    /// edits. A random one from `facet` is used when absent or unusable.
+    pub title_id: Option<String>,
 }
 
 /// The title whose poster an image-proxy source stands for, if any. Only
@@ -492,6 +501,7 @@ impl AppUseCase {
         actor: &User,
         svg: &str,
         sample: &OverlaySampleValues,
+        choice: &PosterOverlayPreviewChoice,
     ) -> AppResult<PosterOverlayPreview> {
         self.require_app_permission(actor, AppPermission::ManageCatalogSettings)
             .await?;
@@ -501,18 +511,35 @@ impl AppUseCase {
             .map_err(|message| AppError::Validation(format!("preview sample: {message}")))?
             .template_values();
 
+        let facet = choice
+            .facet
+            .as_deref()
+            .map(str::trim)
+            .filter(|facet| !facet.is_empty());
+        if let Some(facet) = facet
+            && !matches!(facet, "movie" | "series" | "anime")
+        {
+            return Err(AppError::Validation(format!(
+                "preview facet must be movie, series or anime, not \"{facet}\""
+            )));
+        }
         let mut background = None;
-        for title_id in overlays
+        let mut poster = None;
+        for candidate in overlays
             .repository
-            .list_state_title_ids(None, PREVIEW_BACKGROUND_CANDIDATES)
+            .preview_posters(
+                facet,
+                choice.title_id.as_deref(),
+                PREVIEW_BACKGROUND_CANDIDATES,
+            )
             .await?
         {
-            if let Some(original) = overlays.engine.read_original(&title_id).await? {
+            if let Some(original) = overlays.engine.read_original(&candidate.title_id).await? {
                 background = Some(original);
+                poster = Some(candidate);
                 break;
             }
         }
-        let library_poster = background.is_some();
         let jpeg = overlays
             .engine
             .render_preview(PosterOverlayPreviewRequest {
@@ -521,10 +548,7 @@ impl AppUseCase {
                 values,
             })
             .await?;
-        Ok(PosterOverlayPreview {
-            jpeg,
-            library_poster,
-        })
+        Ok(PosterOverlayPreview { jpeg, poster })
     }
 
     /// Queue a library-wide pass. Unchanged posters are skipped by hash.

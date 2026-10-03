@@ -22,6 +22,13 @@ pub struct OverlayMediaFacts {
     pub audio_profile: Option<String>,
     pub audio_channels: Option<i64>,
     pub edition: Option<String>,
+    /// Probed codec name (`hevc`, `h264`, ...).
+    pub video_codec: Option<String>,
+    /// Release-name codec (`H.265`, `x264`, ...), used when not probed.
+    pub video_codec_parsed: Option<String>,
+    /// Release source from the file's release name (`BluRay`, `WEB-DL`,
+    /// `Remux`, ...).
+    pub source_type: Option<String>,
     /// The file's path; its `{edition-...}` tag names the edition when the
     /// parsed `edition` is empty.
     pub file_path: Option<String>,
@@ -319,6 +326,203 @@ impl OverlayAudio {
     }
 }
 
+/// Video codec. Ordered oldest to newest, so `max` picks the most modern.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum OverlayVideoCodec {
+    Mpeg2,
+    Divx,
+    Xvid,
+    Mpeg4,
+    Vc1,
+    H264,
+    Vp9,
+    H265,
+    Av1,
+    Vvc,
+}
+
+impl OverlayVideoCodec {
+    /// Newest first: the options a template preview offers.
+    pub const ALL: [Self; 10] = [
+        Self::Vvc,
+        Self::Av1,
+        Self::H265,
+        Self::Vp9,
+        Self::H264,
+        Self::Vc1,
+        Self::Mpeg4,
+        Self::Xvid,
+        Self::Divx,
+        Self::Mpeg2,
+    ];
+
+    pub fn token(self) -> &'static str {
+        match self {
+            Self::Vvc => "h266",
+            Self::Av1 => "av1",
+            Self::H265 => "h265",
+            Self::Vp9 => "vp9",
+            Self::H264 => "h264",
+            Self::Vc1 => "vc1",
+            Self::Mpeg4 => "mpeg4",
+            Self::Xvid => "xvid",
+            Self::Divx => "divx",
+            Self::Mpeg2 => "mpeg2",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Vvc => "H.266",
+            Self::Av1 => "AV1",
+            Self::H265 => "H.265",
+            Self::Vp9 => "VP9",
+            Self::H264 => "H.264",
+            Self::Vc1 => "VC-1",
+            Self::Mpeg4 => "MPEG-4",
+            Self::Xvid => "XVID",
+            Self::Divx => "DIVX",
+            Self::Mpeg2 => "MPEG-2",
+        }
+    }
+
+    pub fn from_token(token: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|value| value.token() == token)
+    }
+
+    /// A probe or release-name codec name, through the release parser's
+    /// vocabulary (`hevc`, `x265` and `H.265` are all H.265). ffprobe's
+    /// `mpeg2video` style names lose their `video` suffix first.
+    fn parse(raw: &str) -> Option<Self> {
+        use crate::VideoCodec;
+        let raw = raw.trim();
+        let parsed = VideoCodec::parse(raw).or_else(|| {
+            raw.to_ascii_lowercase()
+                .strip_suffix("video")
+                .and_then(VideoCodec::parse)
+        })?;
+        Some(match parsed {
+            VideoCodec::H264 => Self::H264,
+            VideoCodec::H265 => Self::H265,
+            VideoCodec::Av1 => Self::Av1,
+            VideoCodec::Vp9 => Self::Vp9,
+            VideoCodec::Vc1 => Self::Vc1,
+            VideoCodec::Mpeg2 => Self::Mpeg2,
+            VideoCodec::Mpeg4 => Self::Mpeg4,
+            VideoCodec::Xvid => Self::Xvid,
+            VideoCodec::Divx => Self::Divx,
+            VideoCodec::Vvc => Self::Vvc,
+        })
+    }
+
+    fn resolve(facts: &OverlayMediaFacts) -> Option<Self> {
+        facts
+            .video_codec
+            .as_deref()
+            .and_then(Self::parse)
+            .or_else(|| facts.video_codec_parsed.as_deref().and_then(Self::parse))
+    }
+}
+
+/// Release source. Ordered worst to best, so `max` picks the best copy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum OverlaySource {
+    Workprint,
+    Cam,
+    Telesync,
+    Telecine,
+    DvdScr,
+    Dvd,
+    Hdtv,
+    WebRip,
+    WebDl,
+    BluRay,
+    BrDisk,
+    Remux,
+}
+
+impl OverlaySource {
+    /// Best first: the options a template preview offers.
+    pub const ALL: [Self; 12] = [
+        Self::Remux,
+        Self::BrDisk,
+        Self::BluRay,
+        Self::WebDl,
+        Self::WebRip,
+        Self::Hdtv,
+        Self::Dvd,
+        Self::DvdScr,
+        Self::Telecine,
+        Self::Telesync,
+        Self::Cam,
+        Self::Workprint,
+    ];
+
+    pub fn token(self) -> &'static str {
+        match self {
+            Self::Remux => "remux",
+            Self::BrDisk => "brdisk",
+            Self::BluRay => "bluray",
+            Self::WebDl => "webdl",
+            Self::WebRip => "webrip",
+            Self::Hdtv => "hdtv",
+            Self::Dvd => "dvd",
+            Self::DvdScr => "dvdscr",
+            Self::Telecine => "telecine",
+            Self::Telesync => "telesync",
+            Self::Cam => "cam",
+            Self::Workprint => "workprint",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Remux => "REMUX",
+            Self::BrDisk => "BR-DISK",
+            Self::BluRay => "BLURAY",
+            Self::WebDl => "WEB-DL",
+            Self::WebRip => "WEBRIP",
+            Self::Hdtv => "HDTV",
+            Self::Dvd => "DVD",
+            Self::DvdScr => "DVDSCR",
+            Self::Telecine => "TELECINE",
+            Self::Telesync => "TELESYNC",
+            Self::Cam => "CAM",
+            Self::Workprint => "WORKPRINT",
+        }
+    }
+
+    pub fn from_token(token: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|value| value.token() == token)
+    }
+
+    /// A stored `source_type`: `Remux`, or a release parser source name.
+    fn parse(raw: &str) -> Option<Self> {
+        use crate::ReleaseSource;
+        let raw = raw.trim();
+        if raw.eq_ignore_ascii_case("remux") {
+            return Some(Self::Remux);
+        }
+        Some(match ReleaseSource::parse(raw)? {
+            ReleaseSource::WebDl => Self::WebDl,
+            ReleaseSource::WebRip => Self::WebRip,
+            ReleaseSource::BluRay => Self::BluRay,
+            ReleaseSource::BrDisk => Self::BrDisk,
+            ReleaseSource::Dvd => Self::Dvd,
+            ReleaseSource::Hdtv => Self::Hdtv,
+            ReleaseSource::Cam => Self::Cam,
+            ReleaseSource::Telesync => Self::Telesync,
+            ReleaseSource::Telecine => Self::Telecine,
+            ReleaseSource::DvdScr => Self::DvdScr,
+            ReleaseSource::Workprint => Self::Workprint,
+        })
+    }
+
+    fn resolve(facts: &OverlayMediaFacts) -> Option<Self> {
+        facts.source_type.as_deref().and_then(Self::parse)
+    }
+}
+
 /// A series' airing status. Metadata arrives TVDB-style (`Continuing`,
 /// `Ended`, `Upcoming`); TMDB's statuses are folded onto the same four so a
 /// template keeps working whichever source the metadata gateway uses.
@@ -389,6 +593,8 @@ pub struct OverlayFields {
     /// Every distinct edition present, primary first.
     pub editions: Vec<String>,
     pub series_status: Option<OverlaySeriesStatus>,
+    pub video_codec: Option<OverlayVideoCodec>,
+    pub source: Option<OverlaySource>,
 }
 
 impl OverlayFields {
@@ -417,6 +623,16 @@ impl OverlayFields {
             .iter()
             .copied()
             .filter_map(OverlayHdr::resolve)
+            .max();
+        let video_codec = quality
+            .iter()
+            .copied()
+            .filter_map(OverlayVideoCodec::resolve)
+            .max();
+        let source = quality
+            .iter()
+            .copied()
+            .filter_map(OverlaySource::resolve)
             .max();
         let best_audio = quality
             .iter()
@@ -455,6 +671,8 @@ impl OverlayFields {
             audio_channels,
             editions,
             series_status: None,
+            video_codec,
+            source,
         }
     }
 
@@ -506,6 +724,13 @@ impl OverlayFields {
             "series_status_label",
             token(self.series_status.map(|v| v.label())),
         );
+        values.insert("source", token(self.source.map(|v| v.token())));
+        values.insert("source_label", token(self.source.map(|v| v.label())));
+        values.insert("video_codec", token(self.video_codec.map(|v| v.token())));
+        values.insert(
+            "video_codec_label",
+            token(self.video_codec.map(|v| v.label())),
+        );
         values
     }
 
@@ -527,6 +752,8 @@ impl OverlayFields {
             && self.audio.is_none()
             && self.editions.is_empty()
             && self.series_status.is_none()
+            && self.video_codec.is_none()
+            && self.source.is_none()
     }
 }
 
@@ -559,6 +786,22 @@ pub fn condition_values(field: &str) -> Option<Vec<&'static str>> {
         "series_status" => OverlaySeriesStatus::ALL
             .iter()
             .map(|value| value.token())
+            .collect(),
+        "source" => OverlaySource::ALL
+            .iter()
+            .map(|value| value.token())
+            .collect(),
+        "source_label" => OverlaySource::ALL
+            .iter()
+            .map(|value| value.label())
+            .collect(),
+        "video_codec" => OverlayVideoCodec::ALL
+            .iter()
+            .map(|value| value.token())
+            .collect(),
+        "video_codec_label" => OverlayVideoCodec::ALL
+            .iter()
+            .map(|value| value.label())
             .collect(),
         "series_status_label" => OverlaySeriesStatus::ALL
             .iter()
@@ -600,6 +843,8 @@ pub struct OverlaySampleValues {
     pub audio_channels: Option<String>,
     pub edition: Option<String>,
     pub series_status: Option<String>,
+    pub video_codec: Option<String>,
+    pub source: Option<String>,
 }
 
 impl OverlayFields {
@@ -666,6 +911,12 @@ impl OverlayFields {
                 "series_status",
                 OverlaySeriesStatus::from_token,
             )?,
+            video_codec: parse(
+                &sample.video_codec,
+                "video_codec",
+                OverlayVideoCodec::from_token,
+            )?,
+            source: parse(&sample.source, "source", OverlaySource::from_token)?,
         })
     }
 }
@@ -749,6 +1000,10 @@ pub const TEMPLATE_FIELDS: &[&str] = &[
     "resolution_label",
     "series_status",
     "series_status_label",
+    "source",
+    "source_label",
+    "video_codec",
+    "video_codec_label",
 ];
 
 /// Version of the template contract this build understands.

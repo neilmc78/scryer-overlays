@@ -28,6 +28,7 @@ import {
 import { useTranslate } from "@/lib/context/translate-context";
 import type {
   PosterOverlayOverview,
+  PosterOverlayPreviewFacet,
   PosterOverlayPreviewState,
   PosterOverlaySample,
   PosterOverlayTemplateDraft,
@@ -69,6 +70,9 @@ type SettingsPosterOverlaysSectionProps = {
   onValidateTemplate: () => void;
   validation: PosterOverlayTemplateValidation | null;
   preview: PosterOverlayPreviewState;
+  previewFacet: PosterOverlayPreviewFacet;
+  onPreviewFacetChange: (facet: PosterOverlayPreviewFacet) => void;
+  onShufflePreview: () => void;
   sample: PosterOverlaySample;
   setSample: React.Dispatch<React.SetStateAction<PosterOverlaySample>>;
 };
@@ -94,6 +98,9 @@ export function SettingsPosterOverlaysSection({
   onValidateTemplate,
   validation,
   preview,
+  previewFacet,
+  onPreviewFacetChange,
+  onShufflePreview,
   sample,
   setSample,
 }: SettingsPosterOverlaysSectionProps) {
@@ -354,6 +361,9 @@ export function SettingsPosterOverlaysSection({
             onValidate={onValidateTemplate}
             validation={validation}
             preview={preview}
+            previewFacet={previewFacet}
+            onPreviewFacetChange={onPreviewFacetChange}
+            onShufflePreview={onShufflePreview}
             sample={sample}
             setSample={setSample}
           />

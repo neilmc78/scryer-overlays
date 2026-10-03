@@ -132,6 +132,16 @@ pub trait PosterOverlayRepository: Send + Sync {
         limit: usize,
     ) -> AppResult<Vec<String>>;
 
+    /// Titles with a stored original that can stand behind a template
+    /// preview: `title_id` alone when given and usable, otherwise up to
+    /// `limit` at random, limited to `facet` when given.
+    async fn preview_posters(
+        &self,
+        facet: Option<&str>,
+        title_id: Option<&str>,
+        limit: usize,
+    ) -> AppResult<Vec<PosterOverlayPreviewPoster>>;
+
     async fn get_state(&self, title_id: &str) -> AppResult<Option<PosterOverlayState>>;
     async fn save_state(&self, state: &PosterOverlayState) -> AppResult<()>;
     async fn delete_state(&self, title_id: &str) -> AppResult<()>;
@@ -206,6 +216,13 @@ pub struct PosterOverlayRendered {
     pub variants: Vec<(PosterOverlayVariant, Vec<u8>)>,
     /// blake3 of the full-size output.
     pub output_hash: String,
+}
+
+/// A title whose stored original a template preview is drawn on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PosterOverlayPreviewPoster {
+    pub title_id: String,
+    pub name: String,
 }
 
 /// A template rendered on a sample poster for the editor. Nothing is

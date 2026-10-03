@@ -17,7 +17,8 @@ export const MAX_FONT_SIZE = 400;
 
 export type OverlayTextAlign = "start" | "middle" | "end";
 
-export type OverlayBadgeKind = "resolution" | "hdr" | "audio" | "edition" | "status" | "custom";
+export type OverlayBadgeKind =
+  "resolution" | "hdr" | "codec" | "source" | "audio" | "edition" | "status" | "custom";
 
 export type OverlayElement = {
   /** Client-side identity for React keys and selection; never serialised. */
@@ -49,6 +50,8 @@ type BadgePreset = { showWhen: string; hideWhen: string; text: string };
 export const BADGE_PRESETS: Record<Exclude<OverlayBadgeKind, "custom">, BadgePreset> = {
   resolution: { showWhen: "resolution", hideWhen: "", text: "{{resolution_label}}" },
   hdr: { showWhen: "hdr", hideWhen: "hdr=sdr", text: "{{hdr_label}}" },
+  codec: { showWhen: "video_codec", hideWhen: "", text: "{{video_codec_label}}" },
+  source: { showWhen: "source", hideWhen: "", text: "{{source_label}}" },
   audio: {
     showWhen: "audio_codec",
     hideWhen: "audio_codec=other",
@@ -61,6 +64,8 @@ export const BADGE_PRESETS: Record<Exclude<OverlayBadgeKind, "custom">, BadgePre
 export const BADGE_KINDS: OverlayBadgeKind[] = [
   "resolution",
   "hdr",
+  "codec",
+  "source",
   "audio",
   "edition",
   "status",
@@ -74,6 +79,8 @@ const KIND_DEFAULT_BOX: Record<
 > = {
   resolution: { x: 40, y: 40, width: 270, height: 110, fontSize: 62 },
   hdr: { x: 610, y: 40, width: 350, height: 110, fontSize: 48 },
+  codec: { x: 40, y: 170, width: 270, height: 90, fontSize: 48 },
+  source: { x: 690, y: 170, width: 270, height: 90, fontSize: 44 },
   audio: { x: 460, y: 1350, width: 500, height: 110, fontSize: 50 },
   edition: { x: 40, y: 180, width: 420, height: 72, fontSize: 32 },
   status: { x: 40, y: 1350, width: 380, height: 90, fontSize: 40 },
@@ -94,6 +101,10 @@ export function badgeKind(element: Pick<OverlayElement, "showWhen">): OverlayBad
       return "edition";
     case "series_status":
       return "status";
+    case "video_codec":
+      return "codec";
+    case "source":
+      return "source";
     default:
       return "custom";
   }
@@ -381,6 +392,8 @@ export const CONDITION_FIELDS = [
   "audio_channels",
   "edition",
   "series_status",
+  "video_codec",
+  "source",
 ] as const;
 export type ConditionField = (typeof CONDITION_FIELDS)[number];
 

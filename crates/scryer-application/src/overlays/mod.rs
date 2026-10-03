@@ -12,21 +12,22 @@ mod tests;
 pub use fields::{
     CHANNEL_LAYOUTS, EDITION_LABEL_SEPARATOR, EDITION_TOKEN_SEPARATOR, MAX_SAMPLE_EDITION_CHARS,
     OverlayAudio, OverlayFields, OverlayHdr, OverlayMediaFacts, OverlayResolution,
-    OverlaySampleValues, OverlaySeriesStatus, RENDERER_REVISION, TEMPLATE_FIELDS,
-    TEMPLATE_SPEC_VERSION, blake3_hex, condition_value_set, condition_values,
+    OverlaySampleValues, OverlaySeriesStatus, OverlaySource, OverlayVideoCodec, RENDERER_REVISION,
+    TEMPLATE_FIELDS, TEMPLATE_SPEC_VERSION, blake3_hex, condition_value_set, condition_values,
     edition_from_file_name, edition_token, input_hash, is_possible_condition_value,
     template_version,
 };
 pub use ports::{
     DEFAULT_OVERLAY_PARALLELISM, DEFAULT_OVERLAY_RECONCILE_INTERVAL_SECONDS,
     MAX_OVERLAY_PARALLELISM, MIN_OVERLAY_RECONCILE_INTERVAL_SECONDS, PosterOverlayEngine,
-    PosterOverlayInputs, PosterOverlayLibraryConfig, PosterOverlayPreviewRequest,
-    PosterOverlayRenderRequest, PosterOverlayRendered, PosterOverlayRepository,
-    PosterOverlaySettings, PosterOverlayState, PosterOverlayStatusCounts, PosterOverlayTemplate,
-    PosterOverlayVariant,
+    PosterOverlayInputs, PosterOverlayLibraryConfig, PosterOverlayPreviewPoster,
+    PosterOverlayPreviewRequest, PosterOverlayRenderRequest, PosterOverlayRendered,
+    PosterOverlayRepository, PosterOverlaySettings, PosterOverlayState, PosterOverlayStatusCounts,
+    PosterOverlayTemplate, PosterOverlayVariant,
 };
 pub use runtime::{drain_overlay_events, start_poster_overlay_worker};
 pub use service::{
     AppPosterOverlayServices, PosterOverlayImage, PosterOverlayOutcome, PosterOverlayOverview,
-    PosterOverlayPassSummary, PosterOverlayPreview, overlay_title_for_proxy_source,
+    PosterOverlayPassSummary, PosterOverlayPreview, PosterOverlayPreviewChoice,
+    overlay_title_for_proxy_source,
 };

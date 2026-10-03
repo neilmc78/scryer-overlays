@@ -51,6 +51,8 @@ export type PosterOverlaySampleOptions = {
   audio: PosterOverlaySampleOption[];
   audioChannels: string[];
   seriesStatus: PosterOverlaySampleOption[];
+  videoCodec: PosterOverlaySampleOption[];
+  source: PosterOverlaySampleOption[];
 };
 
 /** Values the template preview shows. Empty strings leave a field unset. */
@@ -61,13 +63,20 @@ export type PosterOverlaySample = {
   audioChannels: string;
   edition: string;
   seriesStatus: string;
+  videoCodec: string;
+  source: string;
 };
+
+/** The kind of library the preview poster comes from. */
+export type PosterOverlayPreviewFacet = "movie" | "series" | "anime";
 
 export type PosterOverlayPreviewState = {
   /** `data:` URL of the last rendered preview. */
   image: string | null;
   /** True when drawn on a poster from the library. */
   libraryPoster: boolean;
+  /** The library title the preview is drawn on. */
+  posterTitleName: string | null;
   error: string | null;
   loading: boolean;
 };
