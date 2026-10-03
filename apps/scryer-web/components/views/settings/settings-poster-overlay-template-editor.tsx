@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { IconButton } from "@/components/ui/icon-button";
 import { Input } from "@/components/ui/input";
+import { MultiSelectDropdown } from "@/components/ui/multi-select-dropdown";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -19,19 +20,26 @@ import type {
   PosterOverlayOverview,
   PosterOverlayPreviewState,
   PosterOverlaySample,
+  PosterOverlaySampleOptions,
   PosterOverlayTemplateDraft,
   PosterOverlayTemplateValidation,
 } from "@/lib/types/poster-overlays";
 import { selectorId } from "@/lib/utils/dom-ids";
 import {
   BADGE_KINDS,
+  CONDITION_FIELDS,
   OVERLAY_CANVAS_HEIGHT,
   OVERLAY_CANVAS_WIDTH,
   badgeKind,
   clampElement,
+  editionToken,
+  formatBadgeCondition,
   newElement,
+  parseBadgeCondition,
   parseOverlay,
   serializeOverlay,
+  type BadgeCondition,
+  type ConditionField,
   type OverlayBadgeKind,
   type OverlayElement,
   type OverlayTextAlign,
@@ -218,6 +226,7 @@ export function SettingsPosterOverlayTemplateEditor({
                   index={selectedIndex}
                   busy={busy}
                   title={kindLabel(badgeKind(selectedElement))}
+                  sampleOptions={overview.sampleOptions}
                   onChange={(patch, clamp) => updateElement(selectedIndex, patch, clamp)}
                   onRemove={() => removeElement(selectedIndex)}
                 />
@@ -359,11 +368,20 @@ type BadgeFieldsProps = {
   index: number;
   busy: boolean;
   title: string;
+  sampleOptions: PosterOverlaySampleOptions;
   onChange: (patch: Partial<OverlayElement>, clamp?: boolean) => void;
   onRemove: () => void;
 };
 
-function BadgeFields({ element, index, busy, title, onChange, onRemove }: BadgeFieldsProps) {
+function BadgeFields({
+  element,
+  index,
+  busy,
+  title,
+  sampleOptions,
+  onChange,
+  onRemove,
+}: BadgeFieldsProps) {
   const t = useTranslate();
   const id = (field: string) =>
     selectorId("settings-poster-overlays-badge-field", `${index}-${field}`);
@@ -395,33 +413,13 @@ function BadgeFields({ element, index, busy, title, onChange, onRemove }: BadgeF
         </p>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="space-y-1.5">
-          <Label htmlFor={id("show")}>{t("settings.posterOverlays.showWhen")}</Label>
-          <Input
-            id={id("show")}
-            value={element.showWhen}
-            disabled={busy}
-            spellCheck={false}
-            className="font-mono text-xs"
-            onChange={(event) => onChange({ showWhen: event.target.value })}
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor={id("hide")}>{t("settings.posterOverlays.hideWhen")}</Label>
-          <Input
-            id={id("hide")}
-            value={element.hideWhen}
-            disabled={busy}
-            spellCheck={false}
-            className="font-mono text-xs"
-            onChange={(event) => onChange({ hideWhen: event.target.value })}
-          />
-        </div>
-      </div>
-      <p className={`-mt-1 text-xs ${MUTED_TEXT_CLASS}`}>
-        {t("settings.posterOverlays.conditionHelp")}
-      </p>
+      <BadgeConditionFields
+        element={element}
+        sampleOptions={sampleOptions}
+        busy={busy}
+        id={id}
+        onChange={onChange}
+      />
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <NumberField
@@ -523,6 +521,270 @@ function BadgeFields({ element, index, busy, title, onChange, onRemove }: BadgeF
           </Select>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Radix Select forbids an empty value, so "no field" needs a token. */
+const NO_FIELD_VALUE = "__always__";
+
+type ConditionOption = { value: string; label: string };
+
+/** Values each field can take, labelled as the badge prints them. */
+function conditionOptions(
+  field: ConditionField,
+  sampleOptions: PosterOverlaySampleOptions,
+): ConditionOption[] | null {
+  const labelled = (options: { token: string; label: string }[]) =>
+    options.map((option) => ({ value: option.token, label: `${option.label} (${option.token})` }));
+  switch (field) {
+    case "resolution":
+      return labelled(sampleOptions.resolutions);
+    case "hdr":
+      return labelled(sampleOptions.hdr);
+    case "audio_codec":
+      return labelled(sampleOptions.audio);
+    case "audio_channels":
+      return sampleOptions.audioChannels.map((layout) => ({ value: layout, label: layout }));
+    default:
+      return null;
+  }
+}
+
+type BadgeConditionFieldsProps = {
+  element: OverlayElement;
+  sampleOptions: PosterOverlaySampleOptions;
+  busy: boolean;
+  id: (field: string) => string;
+  onChange: (patch: Partial<OverlayElement>) => void;
+};
+
+/**
+ * Show when / Hide when as dropdowns: pick the field, then the values to show
+ * for ("All" means any value) and the values to hide for. Hide wins. Conditions
+ * the dropdowns cannot express stay editable as text.
+ */
+function BadgeConditionFields({
+  element,
+  sampleOptions,
+  busy,
+  id,
+  onChange,
+}: BadgeConditionFieldsProps) {
+  const t = useTranslate();
+  const condition = parseBadgeCondition(element.showWhen, element.hideWhen);
+
+  if (!condition) {
+    return (
+      <div className="space-y-1.5">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor={id("show")}>{t("settings.posterOverlays.showWhen")}</Label>
+            <Input
+              id={id("show")}
+              value={element.showWhen}
+              disabled={busy}
+              spellCheck={false}
+              className="font-mono text-xs"
+              onChange={(event) => onChange({ showWhen: event.target.value })}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor={id("hide")}>{t("settings.posterOverlays.hideWhen")}</Label>
+            <Input
+              id={id("hide")}
+              value={element.hideWhen}
+              disabled={busy}
+              spellCheck={false}
+              className="font-mono text-xs"
+              onChange={(event) => onChange({ hideWhen: event.target.value })}
+            />
+          </div>
+        </div>
+        <p className={`text-xs ${MUTED_TEXT_CLASS}`}>
+          {t("settings.posterOverlays.conditionTextOnly")}
+        </p>
+      </div>
+    );
+  }
+
+  const write = (next: BadgeCondition) => onChange(formatBadgeCondition(next));
+  const fieldLabel = (field: ConditionField): string => {
+    switch (field) {
+      case "resolution":
+        return t("settings.posterOverlays.badgeKindResolution");
+      case "hdr":
+        return t("settings.posterOverlays.badgeKindHdr");
+      case "audio_codec":
+        return t("settings.posterOverlays.badgeKindAudio");
+      case "audio_channels":
+        return t("settings.posterOverlays.sampleChannels");
+      default:
+        return t("settings.posterOverlays.badgeKindEdition");
+    }
+  };
+  const options = condition.field ? conditionOptions(condition.field, sampleOptions) : null;
+  const summarise = (values: string[], empty: string) =>
+    values.length === 0
+      ? empty
+      : values
+          .map((value) => options?.find((option) => option.value === value)?.label ?? value)
+          .join(", ");
+
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1.5">
+        <Label htmlFor={id("condition-field")}>{t("settings.posterOverlays.conditionField")}</Label>
+        <Select
+          value={condition.field ?? NO_FIELD_VALUE}
+          disabled={busy}
+          onValueChange={(value) =>
+            write({
+              field: value === NO_FIELD_VALUE ? null : (value as ConditionField),
+              show: "all",
+              hide: [],
+            })
+          }
+        >
+          <SelectTrigger id={id("condition-field")} className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={NO_FIELD_VALUE}>
+              {t("settings.posterOverlays.conditionFieldNone")}
+            </SelectItem>
+            {CONDITION_FIELDS.map((field) => (
+              <SelectItem key={field} value={field}>
+                {fieldLabel(field)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {condition.field && options ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor={id("show")}>{t("settings.posterOverlays.showWhen")}</Label>
+            <MultiSelectDropdown
+              id={id("show")}
+              options={options}
+              selectedValues={condition.show === "all" ? [] : condition.show}
+              onSelectedValuesChange={(values) =>
+                write({ ...condition, show: values.length > 0 ? values : "all" })
+              }
+              allOption={{
+                label: t("settings.posterOverlays.conditionAll"),
+                selected: condition.show === "all",
+                onSelect: () => write({ ...condition, show: "all" }),
+                id: `${id("show")}-all`,
+              }}
+              triggerLabel={
+                condition.show === "all"
+                  ? t("settings.posterOverlays.conditionAll")
+                  : summarise(condition.show, t("settings.posterOverlays.conditionAll"))
+              }
+              disabled={busy}
+              optionIdPrefix={`${id("show")}-option`}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor={id("hide")}>{t("settings.posterOverlays.hideWhen")}</Label>
+            <MultiSelectDropdown
+              id={id("hide")}
+              options={options}
+              selectedValues={condition.hide}
+              onSelectedValuesChange={(values) => write({ ...condition, hide: values })}
+              triggerLabel={summarise(condition.hide, t("settings.posterOverlays.conditionNever"))}
+              disabled={busy}
+              optionIdPrefix={`${id("hide")}-option`}
+            />
+          </div>
+        </div>
+      ) : null}
+
+      {condition.field === "edition" ? (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <EditionValuesField
+            id={id("show")}
+            label={t("settings.posterOverlays.showWhen")}
+            placeholder={t("settings.posterOverlays.conditionAll")}
+            values={condition.show === "all" ? [] : condition.show}
+            busy={busy}
+            onChange={(values) => write({ ...condition, show: values.length > 0 ? values : "all" })}
+          />
+          <EditionValuesField
+            id={id("hide")}
+            label={t("settings.posterOverlays.hideWhen")}
+            placeholder={t("settings.posterOverlays.conditionNever")}
+            values={condition.hide}
+            busy={busy}
+            onChange={(values) => write({ ...condition, hide: values })}
+          />
+        </div>
+      ) : null}
+
+      <p className={`text-xs ${MUTED_TEXT_CLASS}`}>
+        {condition.field === "edition"
+          ? t("settings.posterOverlays.editionValuesHelp")
+          : t("settings.posterOverlays.conditionHelp")}
+      </p>
+    </div>
+  );
+}
+
+type EditionValuesFieldProps = {
+  id: string;
+  label: string;
+  placeholder: string;
+  values: string[];
+  busy: boolean;
+  onChange: (values: string[]) => void;
+};
+
+/**
+ * Edition names, comma separated. Converted to condition values when the box
+ * loses focus, so typing "Director's" is not rewritten under the cursor.
+ */
+function EditionValuesField({
+  id,
+  label,
+  placeholder,
+  values,
+  busy,
+  onChange,
+}: EditionValuesFieldProps) {
+  const [text, setText] = React.useState(values.join(", "));
+  const [focused, setFocused] = React.useState(false);
+  const joined = values.join(", ");
+  React.useEffect(() => {
+    if (!focused) {
+      setText(joined);
+    }
+  }, [focused, joined]);
+
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <Input
+        id={id}
+        value={text}
+        placeholder={placeholder}
+        disabled={busy}
+        onFocus={() => setFocused(true)}
+        onChange={(event) => setText(event.target.value)}
+        onBlur={() => {
+          setFocused(false);
+          onChange([
+            ...new Set(
+              text
+                .split(",")
+                .map(editionToken)
+                .filter((value) => value.length > 0),
+            ),
+          ]);
+        }}
+      />
     </div>
   );
 }

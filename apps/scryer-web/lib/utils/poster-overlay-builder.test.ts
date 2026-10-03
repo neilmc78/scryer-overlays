@@ -8,7 +8,10 @@ import {
   OVERLAY_CANVAS_WIDTH,
   badgeKind,
   clampElement,
+  editionToken,
+  formatBadgeCondition,
   newElement,
+  parseBadgeCondition,
   parseOverlay,
   serializeOverlay,
   type OverlayElement,
@@ -100,4 +103,58 @@ test("badges are kept inside the poster with usable sizes", () => {
   assert.equal(clamped.fontSize, 400);
   assert.equal(clamped.radius, 0.5);
   assert.equal(clamped.backgroundOpacity, 1);
+});
+
+test("badge conditions round-trip through the dropdown model", () => {
+  for (const [showWhen, hideWhen, expected] of [
+    ["", "", { field: null, show: "all", hide: [] }],
+    ["resolution", "", { field: "resolution", show: "all", hide: [] }],
+    ["resolution", "resolution=2160p", { field: "resolution", show: "all", hide: ["2160p"] }],
+    [
+      "hdr=hdr10plus|hdr10|hlg",
+      "",
+      { field: "hdr", show: ["hdr10plus", "hdr10", "hlg"], hide: [] },
+    ],
+    ["audio_codec", "audio_codec=other", { field: "audio_codec", show: "all", hide: ["other"] }],
+  ] as const) {
+    const parsed = parseBadgeCondition(showWhen, hideWhen);
+    assert.deepEqual(parsed, expected, `${showWhen} / ${hideWhen}`);
+    assert.deepEqual(formatBadgeCondition(parsed!), { showWhen, hideWhen });
+  }
+});
+
+test("hide is written as a separate condition so it overrides show", () => {
+  assert.deepEqual(formatBadgeCondition({ field: "resolution", show: "all", hide: ["2160p"] }), {
+    showWhen: "resolution",
+    hideWhen: "resolution=2160p",
+  });
+  assert.deepEqual(formatBadgeCondition({ field: "hdr", show: ["dv", "hdr10"], hide: [] }), {
+    showWhen: "hdr=dv|hdr10",
+    hideWhen: "",
+  });
+  // Nothing ticked under Show means every value, never "show nothing".
+  assert.deepEqual(formatBadgeCondition({ field: "hdr", show: [], hide: [] }), {
+    showWhen: "hdr",
+    hideWhen: "",
+  });
+});
+
+test("conditions the dropdowns cannot express stay as text", () => {
+  for (const [showWhen, hideWhen] of [
+    ["resolution=2160p;hdr=dv", ""],
+    ["hdr!=sdr", ""],
+    ["resolution", "hdr=sdr"],
+    ["resolution_label=4K", ""],
+    ["", "resolution"],
+    ["", "edition=extended"],
+  ]) {
+    assert.equal(parseBadgeCondition(showWhen!, hideWhen!), null, `${showWhen} / ${hideWhen}`);
+  }
+});
+
+test("edition names become the same condition values the server uses", () => {
+  assert.equal(editionToken("Director's Cut"), "directors_cut");
+  assert.equal(editionToken("  Extended  Edition "), "extended_edition");
+  assert.equal(editionToken("IMAX: Enhanced"), "imax_enhanced");
+  assert.equal(editionToken("Director’s Cut"), "directors_cut");
 });

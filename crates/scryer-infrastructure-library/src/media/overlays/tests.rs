@@ -483,3 +483,43 @@ fn preview_rejects_templates_that_break_the_contract() {
         .expect_err("unknown field");
     assert!(error.to_string().contains("unknown field"), "{error}");
 }
+
+#[test]
+fn conditions_on_values_a_field_never_takes_are_rejected() {
+    for (condition, message) in [
+        ("resolution=4K", "use one of 2160p, 1080p, 720p, sd"),
+        ("resolution!=4k", "resolution is never \"4k\""),
+        ("hdr=dv|dolby", "hdr is never \"dolby\""),
+        ("audio_codec=atmos", "truehd_atmos"),
+        ("resolution=2160p;hdr=HDR10", "hdr is never \"HDR10\""),
+        ("audio_channels=9.2", "or a count such as 10ch"),
+        ("edition=Director's Cut", "\"directors_cut\""),
+    ] {
+        let svg = template(&format!(
+            r#"<g data-scryer-if="{condition}"><text>x</text></g>"#
+        ));
+        let error = validate(&svg).expect_err(condition).to_string();
+        assert!(error.contains(message), "{condition}: {error}");
+    }
+}
+
+#[test]
+fn conditions_on_real_values_tokens_and_labels_are_accepted() {
+    for condition in [
+        "resolution",
+        "resolution=2160p",
+        "resolution=2160p|1080p",
+        "resolution_label=4K",
+        "hdr=hdr10plus|hdr10|hlg",
+        "hdr_label=DOLBY VISION",
+        "audio_codec!=other",
+        "audio_label=DD+ ATMOS",
+        "audio_channels=7.1|10ch",
+        "edition=directors_cut",
+    ] {
+        let svg = template(&format!(
+            r#"<g data-scryer-if="{condition}" data-scryer-unless="resolution=sd"><text>x</text></g>"#
+        ));
+        validate(&svg).unwrap_or_else(|error| panic!("{condition}: {error}"));
+    }
+}

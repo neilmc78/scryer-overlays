@@ -26,6 +26,9 @@ const UNLESS_ATTR: &str = "data-scryer-unless";
 const FORBIDDEN_ELEMENTS: &[&str] = &["image", "foreignObject", "script", "feImage"];
 
 pub use scryer_application::overlays::TEMPLATE_FIELDS;
+use scryer_application::overlays::{
+    CHANNEL_LAYOUTS, condition_values, edition_token, is_possible_condition_value,
+};
 
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::Validation(format!("overlay template: {}", message.into()))
@@ -127,6 +130,7 @@ pub fn validate(svg: &str) -> AppResult<()> {
                     let key = attribute.key.0;
                     if key == IF_ATTR || key == UNLESS_ATTR {
                         evaluate_condition(&attribute.value, &values)?;
+                        check_condition_values(&attribute.value)?;
                     } else {
                         substitute(&attribute.value, &values)?;
                     }
@@ -244,6 +248,46 @@ pub fn evaluate_condition(raw: &str, values: &BTreeMap<&'static str, String>) ->
         return Err(invalid("empty condition"));
     }
     Ok(result)
+}
+
+/// Reject a condition that compares a field against a value it can never
+/// take, such as `resolution=4K` (the token is `2160p`; `4K` is the label).
+/// Without this the template saves fine and the badge silently never shows.
+fn check_condition_values(raw: &str) -> AppResult<()> {
+    for clause in raw
+        .split(';')
+        .map(str::trim)
+        .filter(|clause| !clause.is_empty())
+    {
+        let Some((field, options)) = clause.split_once("!=").or_else(|| clause.split_once('='))
+        else {
+            continue;
+        };
+        let field = field.trim();
+        for option in options.split('|').map(str::trim) {
+            if is_possible_condition_value(field, option) {
+                continue;
+            }
+            let expected = match (condition_values(field), field) {
+                (Some(values), _) => format!("use one of {}", values.join(", ")),
+                (None, "audio_channels") => {
+                    format!(
+                        "use one of {}, or a count such as 10ch",
+                        CHANNEL_LAYOUTS.join(", ")
+                    )
+                }
+                (None, "edition") => format!(
+                    "editions are lowercase slugs, for example \"{}\"",
+                    edition_token(option)
+                ),
+                _ => String::new(),
+            };
+            return Err(invalid(format!(
+                "{field} is never \"{option}\"; {expected}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn split_options(options: &str) -> AppResult<impl Iterator<Item = &str>> {

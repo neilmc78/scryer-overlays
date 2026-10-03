@@ -361,3 +361,128 @@ export function parseOverlay(svg: string, makeKey: () => string): OverlayElement
   }
   return elements;
 }
+
+/** Fields a badge's Show when / Hide when can be set from the editor. */
+export const CONDITION_FIELDS = [
+  "resolution",
+  "hdr",
+  "audio_codec",
+  "audio_channels",
+  "edition",
+] as const;
+export type ConditionField = (typeof CONDITION_FIELDS)[number];
+
+/**
+ * A badge's conditions in the shape the editor offers: one field, shown for
+ * all of its values or a chosen few, and hidden for some. Hide wins over show,
+ * exactly as `data-scryer-unless` wins over `data-scryer-if`.
+ */
+export type BadgeCondition = {
+  /** Null: the badge has no conditions and always shows. */
+  field: ConditionField | null;
+  /** `"all"`: any value of the field (the field is not empty). */
+  show: "all" | string[];
+  hide: string[];
+};
+
+function isConditionField(value: string): value is ConditionField {
+  return (CONDITION_FIELDS as readonly string[]).includes(value);
+}
+
+/** One clause, `field` or `field=a|b`; null for anything richer. */
+function parseClause(raw: string): { field: ConditionField; values: string[] | null } | null {
+  const clause = raw.trim();
+  if (clause.includes(";") || clause.includes("!=")) {
+    return null;
+  }
+  const [field, options] = clause.includes("=")
+    ? (clause.split("=", 2) as [string, string])
+    : [clause, null];
+  const name = field.trim();
+  if (!isConditionField(name)) {
+    return null;
+  }
+  if (options === null) {
+    return { field: name, values: null };
+  }
+  const values = options
+    .split("|")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return values.length > 0 ? { field: name, values } : null;
+}
+
+/**
+ * The editor's view of a badge's conditions, or null when they use syntax the
+ * dropdowns cannot show (several clauses, `!=`, two different fields, or a
+ * label field). Those stay editable as text.
+ */
+export function parseBadgeCondition(showWhen: string, hideWhen: string): BadgeCondition | null {
+  const show = showWhen.trim();
+  const hide = hideWhen.trim();
+  if (!show && !hide) {
+    return { field: null, show: "all", hide: [] };
+  }
+  // "Always show, but hide for X" has no dropdown form: "All" means the field
+  // has a value, which would quietly hide the badge when it is empty.
+  if (!show) {
+    return null;
+  }
+  const showClause = show ? parseClause(show) : null;
+  const hideClause = hide ? parseClause(hide) : null;
+  if ((show && !showClause) || (hide && !hideClause)) {
+    return null;
+  }
+  if (hideClause && hideClause.values === null) {
+    return null;
+  }
+  const field = showClause?.field ?? hideClause?.field ?? null;
+  if (showClause && hideClause && showClause.field !== hideClause.field) {
+    return null;
+  }
+  return {
+    field,
+    show: showClause?.values ?? "all",
+    hide: hideClause?.values ?? [],
+  };
+}
+
+/** The `showWhen` / `hideWhen` strings for a condition chosen in the editor. */
+export function formatBadgeCondition(condition: BadgeCondition): {
+  showWhen: string;
+  hideWhen: string;
+} {
+  if (condition.field === null) {
+    return { showWhen: "", hideWhen: "" };
+  }
+  const showWhen =
+    condition.show === "all" || condition.show.length === 0
+      ? condition.field
+      : `${condition.field}=${condition.show.join("|")}`;
+  const hideWhen =
+    condition.hide.length > 0 ? `${condition.field}=${condition.hide.join("|")}` : "";
+  return { showWhen, hideWhen };
+}
+
+/**
+ * The condition value for an edition name, matching the server's
+ * `edition_token`: `Director's Cut` becomes `directors_cut`.
+ */
+export function editionToken(edition: string): string {
+  let out = "";
+  let pendingSeparator = false;
+  for (const ch of edition.trim()) {
+    if (/^[A-Za-z0-9]$/.test(ch)) {
+      if (pendingSeparator && out.length > 0) {
+        out += "_";
+      }
+      pendingSeparator = false;
+      out += ch.toLowerCase();
+    } else if (ch === "'" || ch === "’") {
+      continue;
+    } else {
+      pendingSeparator = true;
+    }
+  }
+  return out;
+}

@@ -411,6 +411,52 @@ impl OverlayFields {
 /// Channel layouts `audio_channels` takes for common channel counts.
 pub const CHANNEL_LAYOUTS: [&str; 6] = ["7.1", "6.1", "5.1", "2.1", "2.0", "1.0"];
 
+/// Values a template condition may compare a field against, or `None` when
+/// the field takes free-form values. A condition naming any other value can
+/// never hold, so validation rejects it instead of saving a dead badge.
+pub fn condition_values(field: &str) -> Option<Vec<&'static str>> {
+    Some(match field {
+        "resolution" => OverlayResolution::ALL
+            .iter()
+            .map(|value| value.token())
+            .collect(),
+        "resolution_label" => OverlayResolution::ALL
+            .iter()
+            .map(|value| value.label())
+            .collect(),
+        "hdr" => OverlayHdr::ALL.iter().map(|value| value.token()).collect(),
+        "hdr_label" => OverlayHdr::ALL.iter().map(|value| value.label()).collect(),
+        "audio_codec" => OverlayAudio::ALL
+            .iter()
+            .map(|value| value.token())
+            .collect(),
+        "audio_label" => OverlayAudio::ALL
+            .iter()
+            .map(|value| value.label())
+            .collect(),
+        _ => return None,
+    })
+}
+
+/// Whether `value` is something `field` can ever resolve to. Closed fields
+/// use `condition_values`; `audio_channels` also allows `Nch` for layouts
+/// beyond 7.1, and `edition` is a lowercase slug as `edition_token` makes.
+pub fn is_possible_condition_value(field: &str, value: &str) -> bool {
+    if let Some(values) = condition_values(field) {
+        return values.contains(&value);
+    }
+    match field {
+        "audio_channels" => {
+            CHANNEL_LAYOUTS.contains(&value)
+                || value.strip_suffix("ch").is_some_and(|count| {
+                    !count.is_empty() && count.bytes().all(|b| b.is_ascii_digit())
+                })
+        }
+        "edition" => !value.is_empty() && edition_token(value) == value,
+        _ => true,
+    }
+}
+
 /// Longest edition a template preview accepts as a sample value.
 pub const MAX_SAMPLE_EDITION_CHARS: usize = 80;
 
