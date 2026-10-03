@@ -234,6 +234,7 @@ fn sample_values_resolve_through_the_same_vocabulary_as_titles() {
         audio: Some("truehd_atmos".into()),
         audio_channels: Some("7.1".into()),
         edition: Some("Director's Cut".into()),
+        series_status: None,
     };
     let from_sample = OverlayFields::from_sample(&sample).expect("valid sample");
     let from_title = OverlayFields::aggregate(&[OverlayMediaFacts {
@@ -293,4 +294,58 @@ fn every_option_token_round_trips() {
     for value in OverlayAudio::ALL {
         assert_eq!(OverlayAudio::from_token(value.token()), Some(value));
     }
+}
+
+#[test]
+fn series_status_maps_tvdb_and_tmdb_statuses_for_series_only() {
+    for (facet, raw, expected) in [
+        (
+            "series",
+            "Continuing",
+            Some(OverlaySeriesStatus::Continuing),
+        ),
+        ("series", "Ended", Some(OverlaySeriesStatus::Ended)),
+        ("anime", "Upcoming", Some(OverlaySeriesStatus::Upcoming)),
+        (
+            "series",
+            "Returning Series",
+            Some(OverlaySeriesStatus::Continuing),
+        ),
+        (
+            "series",
+            "In Production",
+            Some(OverlaySeriesStatus::Upcoming),
+        ),
+        ("series", "Planned", Some(OverlaySeriesStatus::Upcoming)),
+        ("series", "Pilot", Some(OverlaySeriesStatus::Upcoming)),
+        ("series", "Canceled", Some(OverlaySeriesStatus::Canceled)),
+        ("series", "cancelled", Some(OverlaySeriesStatus::Canceled)),
+        ("series", "something new", None),
+        // A movie's release state uses some of the same words; it is not a
+        // series status.
+        ("movie", "Canceled", None),
+        ("movie", "Planned", None),
+    ] {
+        assert_eq!(
+            OverlaySeriesStatus::resolve(Some(facet), Some(raw)),
+            expected,
+            "{facet} {raw}"
+        );
+    }
+    assert_eq!(OverlaySeriesStatus::resolve(Some("series"), None), None);
+}
+
+#[test]
+fn series_status_reaches_template_values_and_the_input_hash() {
+    let continuing =
+        OverlayFields::aggregate(&[hd_sdr_ac3()]).with_title(Some("series"), Some("Continuing"));
+    let ended = OverlayFields::aggregate(&[hd_sdr_ac3()]).with_title(Some("series"), Some("Ended"));
+    let values = ended.template_values();
+    assert_eq!(values["series_status"], "ended");
+    assert_eq!(values["series_status_label"], "ENDED");
+    // A status change must change the hash, so the next reconcile re-renders.
+    assert_ne!(
+        input_hash("original", "v1", &continuing),
+        input_hash("original", "v1", &ended)
+    );
 }

@@ -302,6 +302,66 @@ impl OverlayAudio {
     }
 }
 
+/// A series' airing status. Metadata arrives TVDB-style (`Continuing`,
+/// `Ended`, `Upcoming`); TMDB's statuses are folded onto the same four so a
+/// template keeps working whichever source the metadata gateway uses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OverlaySeriesStatus {
+    Continuing,
+    Upcoming,
+    Ended,
+    Canceled,
+}
+
+impl OverlaySeriesStatus {
+    pub const ALL: [Self; 4] = [
+        Self::Continuing,
+        Self::Upcoming,
+        Self::Ended,
+        Self::Canceled,
+    ];
+
+    pub fn token(self) -> &'static str {
+        match self {
+            Self::Continuing => "continuing",
+            Self::Upcoming => "upcoming",
+            Self::Ended => "ended",
+            Self::Canceled => "canceled",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Continuing => "CONTINUING",
+            Self::Upcoming => "UPCOMING",
+            Self::Ended => "ENDED",
+            Self::Canceled => "CANCELED",
+        }
+    }
+
+    pub fn from_token(token: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|value| value.token() == token)
+    }
+
+    /// The status for a title's stored `content_status`. Only series and
+    /// anime have one: movies use some of the same words (`Planned`,
+    /// `Canceled`) for their release state, which is not this field.
+    pub fn resolve(facet: Option<&str>, content_status: Option<&str>) -> Option<Self> {
+        if !matches!(facet, Some("series" | "anime")) {
+            return None;
+        }
+        match content_status?.trim().to_ascii_lowercase().as_str() {
+            "continuing" | "returning" | "returning series" | "airing" => Some(Self::Continuing),
+            "upcoming" | "planned" | "pilot" | "in production" | "in development" => {
+                Some(Self::Upcoming)
+            }
+            "ended" | "finished" => Some(Self::Ended),
+            "canceled" | "cancelled" => Some(Self::Canceled),
+            _ => None,
+        }
+    }
+}
+
 /// The resolved badge fields for one title.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct OverlayFields {
@@ -310,6 +370,7 @@ pub struct OverlayFields {
     pub audio: Option<OverlayAudio>,
     pub audio_channels: Option<String>,
     pub edition: Option<String>,
+    pub series_status: Option<OverlaySeriesStatus>,
 }
 
 impl OverlayFields {
@@ -350,7 +411,14 @@ impl OverlayFields {
             audio,
             audio_channels,
             edition,
+            series_status: None,
         }
+    }
+
+    /// Add the title-level fields that do not come from its files.
+    pub fn with_title(mut self, facet: Option<&str>, content_status: Option<&str>) -> Self {
+        self.series_status = OverlaySeriesStatus::resolve(facet, content_status);
+        self
     }
 
     /// Placeholder values in a stable order. Absent fields map to the empty
@@ -385,6 +453,14 @@ impl OverlayFields {
                 .map(|edition| edition.to_uppercase())
                 .unwrap_or_default(),
         );
+        values.insert(
+            "series_status",
+            token(self.series_status.map(|v| v.token())),
+        );
+        values.insert(
+            "series_status_label",
+            token(self.series_status.map(|v| v.label())),
+        );
         values
     }
 
@@ -405,6 +481,7 @@ impl OverlayFields {
             && self.hdr.is_none()
             && self.audio.is_none()
             && self.edition.is_none()
+            && self.series_status.is_none()
     }
 }
 
@@ -431,6 +508,14 @@ pub fn condition_values(field: &str) -> Option<Vec<&'static str>> {
             .map(|value| value.token())
             .collect(),
         "audio_label" => OverlayAudio::ALL
+            .iter()
+            .map(|value| value.label())
+            .collect(),
+        "series_status" => OverlaySeriesStatus::ALL
+            .iter()
+            .map(|value| value.token())
+            .collect(),
+        "series_status_label" => OverlaySeriesStatus::ALL
             .iter()
             .map(|value| value.label())
             .collect(),
@@ -469,6 +554,7 @@ pub struct OverlaySampleValues {
     pub audio: Option<String>,
     pub audio_channels: Option<String>,
     pub edition: Option<String>,
+    pub series_status: Option<String>,
 }
 
 impl OverlayFields {
@@ -521,6 +607,11 @@ impl OverlayFields {
             audio: parse(&sample.audio, "audio_codec", OverlayAudio::from_token)?,
             audio_channels,
             edition,
+            series_status: parse(
+                &sample.series_status,
+                "series_status",
+                OverlaySeriesStatus::from_token,
+            )?,
         })
     }
 }
@@ -571,6 +662,8 @@ pub const TEMPLATE_FIELDS: &[&str] = &[
     "hdr_label",
     "resolution",
     "resolution_label",
+    "series_status",
+    "series_status_label",
 ];
 
 /// Version of the template contract this build understands.

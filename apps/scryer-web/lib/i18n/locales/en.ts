@@ -2324,6 +2324,7 @@ const en: LocaleDictionary = {
   "settings.posterOverlays.badgeKindHdr": "HDR",
   "settings.posterOverlays.badgeKindAudio": "Audio",
   "settings.posterOverlays.badgeKindEdition": "Edition",
+  "settings.posterOverlays.badgeKindStatus": "Series status",
   "settings.posterOverlays.badgeKindCustom": "Text",
   "settings.posterOverlays.badgeText": "Text",
   "settings.posterOverlays.badgeTextHelp": "Fixed text and field placeholders, for example {{example}}.",

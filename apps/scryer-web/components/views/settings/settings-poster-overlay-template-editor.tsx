@@ -141,6 +141,8 @@ export function SettingsPosterOverlayTemplateEditor({
         return t("settings.posterOverlays.badgeKindAudio");
       case "edition":
         return t("settings.posterOverlays.badgeKindEdition");
+      case "status":
+        return t("settings.posterOverlays.badgeKindStatus");
       default:
         return t("settings.posterOverlays.badgeKindCustom");
     }
@@ -546,6 +548,8 @@ function conditionOptions(
       return labelled(sampleOptions.audio);
     case "audio_channels":
       return sampleOptions.audioChannels.map((layout) => ({ value: layout, label: layout }));
+    case "series_status":
+      return labelled(sampleOptions.seriesStatus);
     default:
       return null;
   }
@@ -619,6 +623,8 @@ function BadgeConditionFields({
         return t("settings.posterOverlays.badgeKindAudio");
       case "audio_channels":
         return t("settings.posterOverlays.sampleChannels");
+      case "series_status":
+        return t("settings.posterOverlays.badgeKindStatus");
       default:
         return t("settings.posterOverlays.badgeKindEdition");
     }
@@ -1022,6 +1028,16 @@ function PreviewPanel({
             value={sample.audioChannels}
             options={options.audioChannels.map((layout) => ({ value: layout, label: layout }))}
             onChange={setSampleField("audioChannels")}
+          />
+          <SampleSelect
+            id="settings-poster-overlays-sample-status"
+            label={t("settings.posterOverlays.badgeKindStatus")}
+            value={sample.seriesStatus}
+            options={options.seriesStatus.map((option) => ({
+              value: option.token,
+              label: option.label,
+            }))}
+            onChange={setSampleField("seriesStatus")}
           />
         </div>
         <div className="space-y-1.5">

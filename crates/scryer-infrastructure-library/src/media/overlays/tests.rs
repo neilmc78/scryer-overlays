@@ -523,3 +523,26 @@ fn conditions_on_real_values_tokens_and_labels_are_accepted() {
         validate(&svg).unwrap_or_else(|error| panic!("{condition}: {error}"));
     }
 }
+
+#[test]
+fn series_status_conditions_use_tokens_or_labels() {
+    for condition in [
+        "series_status=ended|canceled",
+        "series_status_label=CONTINUING",
+    ] {
+        validate(&template(&format!(
+            r#"<g data-scryer-if="{condition}"><text>{{{{series_status_label}}}}</text></g>"#
+        )))
+        .unwrap_or_else(|error| panic!("{condition}: {error}"));
+    }
+    let error = validate(&template(
+        r#"<g data-scryer-if="series_status=Ended"><text>x</text></g>"#,
+    ))
+    .expect_err("label used as token");
+    assert!(
+        error
+            .to_string()
+            .contains("use one of continuing, upcoming, ended, canceled"),
+        "{error}"
+    );
+}

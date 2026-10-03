@@ -11,9 +11,9 @@ mod tests;
 
 pub use fields::{
     CHANNEL_LAYOUTS, MAX_SAMPLE_EDITION_CHARS, OverlayAudio, OverlayFields, OverlayHdr,
-    OverlayMediaFacts, OverlayResolution, OverlaySampleValues, RENDERER_REVISION, TEMPLATE_FIELDS,
-    TEMPLATE_SPEC_VERSION, blake3_hex, condition_values, edition_token, input_hash,
-    is_possible_condition_value, template_version,
+    OverlayMediaFacts, OverlayResolution, OverlaySampleValues, OverlaySeriesStatus,
+    RENDERER_REVISION, TEMPLATE_FIELDS, TEMPLATE_SPEC_VERSION, blake3_hex, condition_values,
+    edition_token, input_hash, is_possible_condition_value, template_version,
 };
 pub use ports::{
     DEFAULT_OVERLAY_PARALLELISM, DEFAULT_OVERLAY_RECONCILE_INTERVAL_SECONDS,

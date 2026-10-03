@@ -5,6 +5,7 @@ use async_graphql::{ID, InputObject, SimpleObject};
 use chrono::{DateTime, Utc};
 use scryer_application::overlays::{
     CHANNEL_LAYOUTS, OverlayAudio, OverlayHdr, OverlayResolution, OverlaySampleValues,
+    OverlaySeriesStatus,
     PosterOverlayLibraryConfig, PosterOverlayOverview, PosterOverlaySettings,
     PosterOverlayStatusCounts, PosterOverlayTemplate, TEMPLATE_FIELDS, TEMPLATE_SPEC_VERSION,
 };
@@ -158,6 +159,8 @@ pub struct PosterOverlaySampleOptionsPayload {
     pub audio: Vec<PosterOverlaySampleOptionPayload>,
     /// Common values of `audio_channels`.
     pub audio_channels: Vec<String>,
+    /// Values of `series_status` and `series_status_label`.
+    pub series_status: Vec<PosterOverlaySampleOptionPayload>,
 }
 
 impl PosterOverlaySampleOptionsPayload {
@@ -178,6 +181,10 @@ impl PosterOverlaySampleOptionsPayload {
                 .map(|value| option(value.token(), value.label()))
                 .collect(),
             audio: OverlayAudio::ALL
+                .iter()
+                .map(|value| option(value.token(), value.label()))
+                .collect(),
+            series_status: OverlaySeriesStatus::ALL
                 .iter()
                 .map(|value| option(value.token(), value.label()))
                 .collect(),
@@ -268,6 +275,8 @@ pub struct PreviewPosterOverlayTemplateInput {
     pub audio_channels: Option<String>,
     /// Free text, as an edition would appear on a release.
     pub edition: Option<String>,
+    /// A status token from `sampleOptions.seriesStatus`.
+    pub series_status: Option<String>,
 }
 
 impl PreviewPosterOverlayTemplateInput {
@@ -278,6 +287,7 @@ impl PreviewPosterOverlayTemplateInput {
             audio: self.audio.clone(),
             audio_channels: self.audio_channels.clone(),
             edition: self.edition.clone(),
+            series_status: self.series_status.clone(),
         }
     }
 }

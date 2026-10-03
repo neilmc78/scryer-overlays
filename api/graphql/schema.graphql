@@ -21488,6 +21488,10 @@ type PosterOverlaySampleOptions {
 	Common values of `audio_channels`.
 	"""
 	audioChannels: [String!]!
+	"""
+	Values of `series_status` and `series_status_label`.
+	"""
+	seriesStatus: [PosterOverlaySampleOption!]!
 }
 
 """
@@ -21691,6 +21695,10 @@ input PreviewPosterOverlayTemplateInput {
 	Free text, as an edition would appear on a release.
 	"""
 	edition: String
+	"""
+	A status token from `sampleOptions.seriesStatus`.
+	"""
+	seriesStatus: String
 }
 
 """

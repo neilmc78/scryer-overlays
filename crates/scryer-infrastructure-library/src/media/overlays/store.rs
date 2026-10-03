@@ -216,7 +216,7 @@ impl PosterOverlayRepository for PosterOverlayStore {
     async fn load_inputs(&self, title_id: &str) -> AppResult<Option<PosterOverlayInputs>> {
         let Some(title) = SqlRuntime::fetch_optional(
             self.read(),
-            "SELECT t.id, t.library_id, pol.enabled, pol.template_id,
+            "SELECT t.id, t.library_id, t.facet, t.content_status, pol.enabled, pol.template_id,
                     ti.source_url, ti.source_etag
                FROM titles t
                LEFT JOIN poster_overlay_libraries pol ON pol.library_id = t.library_id
@@ -259,6 +259,8 @@ impl PosterOverlayRepository for PosterOverlayStore {
             template_id: title.opt_text("template_id")?,
             poster_source_url: title.opt_text("source_url")?,
             poster_source_etag: title.opt_text("source_etag")?,
+            facet: title.opt_text("facet")?,
+            content_status: title.opt_text("content_status")?,
             files,
         }))
     }

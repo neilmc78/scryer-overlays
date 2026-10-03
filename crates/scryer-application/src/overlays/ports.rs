@@ -73,6 +73,10 @@ pub struct PosterOverlayInputs {
     /// The poster Scryer currently presents, from `title_images`.
     pub poster_source_url: Option<String>,
     pub poster_source_etag: Option<String>,
+    /// `titles.facet`; series status only applies to series and anime.
+    pub facet: Option<String>,
+    /// `titles.content_status`, as metadata supplied it.
+    pub content_status: Option<String>,
     pub files: Vec<OverlayMediaFacts>,
 }
 

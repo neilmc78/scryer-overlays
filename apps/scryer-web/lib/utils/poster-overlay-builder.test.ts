@@ -158,3 +158,17 @@ test("edition names become the same condition values the server uses", () => {
   assert.equal(editionToken("IMAX: Enhanced"), "imax_enhanced");
   assert.equal(editionToken("Director’s Cut"), "directors_cut");
 });
+
+test("series status badges open in the dropdowns", () => {
+  const status = newElement("status", "s");
+  assert.equal(badgeKind(status), "status");
+  assert.deepEqual(parseBadgeCondition(status.showWhen, status.hideWhen), {
+    field: "series_status",
+    show: "all",
+    hide: [],
+  });
+  assert.deepEqual(
+    formatBadgeCondition({ field: "series_status", show: ["ended", "canceled"], hide: [] }),
+    { showWhen: "series_status=ended|canceled", hideWhen: "" },
+  );
+});

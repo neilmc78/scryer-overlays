@@ -17,7 +17,7 @@ export const MAX_FONT_SIZE = 400;
 
 export type OverlayTextAlign = "start" | "middle" | "end";
 
-export type OverlayBadgeKind = "resolution" | "hdr" | "audio" | "edition" | "custom";
+export type OverlayBadgeKind = "resolution" | "hdr" | "audio" | "edition" | "status" | "custom";
 
 export type OverlayElement = {
   /** Client-side identity for React keys and selection; never serialised. */
@@ -55,9 +55,17 @@ export const BADGE_PRESETS: Record<Exclude<OverlayBadgeKind, "custom">, BadgePre
     text: "{{audio_label}} {{audio_channels}}",
   },
   edition: { showWhen: "edition", hideWhen: "", text: "{{edition_label}}" },
+  status: { showWhen: "series_status", hideWhen: "", text: "{{series_status_label}}" },
 };
 
-export const BADGE_KINDS: OverlayBadgeKind[] = ["resolution", "hdr", "audio", "edition", "custom"];
+export const BADGE_KINDS: OverlayBadgeKind[] = [
+  "resolution",
+  "hdr",
+  "audio",
+  "edition",
+  "status",
+  "custom",
+];
 
 /** Where a newly added badge of each kind lands. */
 const KIND_DEFAULT_BOX: Record<
@@ -68,6 +76,7 @@ const KIND_DEFAULT_BOX: Record<
   hdr: { x: 610, y: 40, width: 350, height: 110, fontSize: 48 },
   audio: { x: 460, y: 1350, width: 500, height: 110, fontSize: 50 },
   edition: { x: 40, y: 180, width: 420, height: 72, fontSize: 32 },
+  status: { x: 40, y: 1350, width: 380, height: 90, fontSize: 40 },
   custom: { x: 350, y: 700, width: 300, height: 100, fontSize: 48 },
 };
 
@@ -83,6 +92,8 @@ export function badgeKind(element: Pick<OverlayElement, "showWhen">): OverlayBad
       return "audio";
     case "edition":
       return "edition";
+    case "series_status":
+      return "status";
     default:
       return "custom";
   }
@@ -369,6 +380,7 @@ export const CONDITION_FIELDS = [
   "audio_codec",
   "audio_channels",
   "edition",
+  "series_status",
 ] as const;
 export type ConditionField = (typeof CONDITION_FIELDS)[number];
 

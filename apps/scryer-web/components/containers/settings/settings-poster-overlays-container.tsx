@@ -19,6 +19,7 @@ const EMPTY_SAMPLE: PosterOverlaySample = {
   audio: "",
   audioChannels: "",
   edition: "",
+  seriesStatus: "",
 };
 
 type SettingsPosterOverlaysContainerProps = {
@@ -76,6 +77,7 @@ export function SettingsPosterOverlaysContainer({
           audio: sampleOptions.audio[0]?.token ?? "",
           audioChannels: sampleOptions.audioChannels[0] ?? "",
           edition: defaultEdition,
+          seriesStatus: sampleOptions.seriesStatus[0]?.token ?? "",
         },
     );
   }, [defaultEdition, sampleOptions]);

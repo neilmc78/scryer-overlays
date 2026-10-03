@@ -5621,6 +5621,7 @@ export const posterOverlaysQuery = `query PosterOverlays {
       hdr { token label }
       audio { token label }
       audioChannels
+      seriesStatus { token label }
     }
   }
 }`;

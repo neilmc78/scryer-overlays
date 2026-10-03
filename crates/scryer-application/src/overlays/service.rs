@@ -611,7 +611,8 @@ async fn process_title(
         None => engine.builtin_template().to_string(),
     };
     let version = template_version(&template_svg);
-    let fields = OverlayFields::aggregate(&inputs.files);
+    let fields = OverlayFields::aggregate(&inputs.files)
+        .with_title(inputs.facet.as_deref(), inputs.content_status.as_deref());
     let input = input_hash(&original_hash, &version, &fields);
 
     let outputs_present = engine

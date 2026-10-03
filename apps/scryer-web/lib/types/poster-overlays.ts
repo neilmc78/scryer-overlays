@@ -49,6 +49,7 @@ export type PosterOverlaySampleOptions = {
   hdr: PosterOverlaySampleOption[];
   audio: PosterOverlaySampleOption[];
   audioChannels: string[];
+  seriesStatus: PosterOverlaySampleOption[];
 };
 
 /** Values the template preview shows. Empty strings leave a field unset. */
@@ -58,6 +59,7 @@ export type PosterOverlaySample = {
   audio: string;
   audioChannels: string;
   edition: string;
+  seriesStatus: string;
 };
 
 export type PosterOverlayPreviewState = {
