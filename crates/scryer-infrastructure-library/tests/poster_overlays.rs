@@ -11,12 +11,14 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use chrono::Utc;
 use image::{ImageFormat, Rgb, RgbImage};
-use scryer_application::AppResult;
 use scryer_application::overlays::{
     AppPosterOverlayServices, PosterOverlayOutcome, PosterOverlayRepository,
+    overlay_title_for_proxy_source,
 };
+use scryer_application::{AppResult, ImageProxyKind, ImageProxyRegistration, ImageProxyRepository};
 use scryer_infrastructure_datastore::postgres::PostgresServices;
 use scryer_infrastructure_datastore::{MigrationMode, SqliteServices};
+use scryer_infrastructure_library::images::ImageProxyStore;
 use scryer_infrastructure_library::overlays::{
     OverlayEngine, OverlaySourceFetch, PosterOverlayStore, add_marker, has_marker,
 };
@@ -413,6 +415,45 @@ async fn renders_from_the_title_poster_url_when_the_image_cache_is_empty(
     );
     let counts = store.status_counts().await.unwrap();
     assert_eq!((counts.rendered, counts.no_artwork), (1, 0));
+
+    // The catalog reaches posters through the image proxy: register the
+    // title's poster exactly as the GraphQL mapper does, then follow its
+    // token back to the overlay the media route serves.
+    let proxy = ImageProxyStore::new(datastore.clone());
+    let register = |owner_type: &str, kind: ImageProxyKind| {
+        proxy.register_image_source(ImageProxyRegistration {
+            upstream_url: Some("https://image.tmdb.org/t/p/w500/b.jpg".into()),
+            owner_type: Some(owner_type.into()),
+            owner_id: Some(TITLE.into()),
+            image_kind: kind,
+            fallback_class: "portrait".into(),
+            default_variant: "w250".into(),
+        })
+    };
+    let token_of = |url: String| url.split('/').rev().nth(1).unwrap().to_string();
+    let poster_token = token_of(register("title", ImageProxyKind::Poster));
+    let fanart_token = token_of(register("title", ImageProxyKind::Fanart));
+    let movie_token = token_of(register("movie", ImageProxyKind::Poster));
+    proxy.flush_image_proxy_sources().await.unwrap();
+    proxy.clear_image_proxy_memory();
+    let source = proxy
+        .get_image_proxy_source(&poster_token)
+        .await
+        .unwrap()
+        .expect("registered source persists");
+    let title_id = overlay_title_for_proxy_source(&source).expect("title poster token");
+    assert_eq!(title_id, TITLE);
+    assert!(
+        overlays
+            .image(title_id, "w250")
+            .await
+            .unwrap()
+            .is_some_and(|image| has_marker(&image.bytes))
+    );
+    for other in [fanart_token, movie_token] {
+        let source = proxy.get_image_proxy_source(&other).await.unwrap().unwrap();
+        assert_eq!(overlay_title_for_proxy_source(&source), None);
+    }
 
     // No artwork anywhere: reported as such, not silently skipped, and the
     // last good overlay keeps being served.

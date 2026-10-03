@@ -349,3 +349,31 @@ fn series_status_reaches_template_values_and_the_input_hash() {
         input_hash("original", "v1", &ended)
     );
 }
+
+#[test]
+fn only_title_poster_proxy_sources_carry_overlays() {
+    let source = |owner_type: Option<&str>, owner_id: Option<&str>, kind: &str| {
+        crate::ImageProxySourceRecord {
+            token: "token".into(),
+            upstream_url: Some("https://image.tmdb.org/t/p/w500/a.jpg".into()),
+            owner_type: owner_type.map(str::to_string),
+            owner_id: owner_id.map(str::to_string),
+            image_kind: kind.into(),
+            fallback_class: "portrait".into(),
+            last_seen_at: chrono::Utc::now(),
+        }
+    };
+    assert_eq!(
+        overlay_title_for_proxy_source(&source(Some("title"), Some("t-1"), "poster")),
+        Some("t-1")
+    );
+    for other in [
+        source(Some("title"), Some("t-1"), "fanart"),
+        source(Some("movie"), Some("m-1"), "poster"),
+        source(Some("media_request"), Some("r-1"), "poster"),
+        source(None, None, "poster"),
+        source(Some("title"), Some(""), "poster"),
+    ] {
+        assert_eq!(overlay_title_for_proxy_source(&other), None, "{other:?}");
+    }
+}

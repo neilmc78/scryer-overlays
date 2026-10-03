@@ -2211,7 +2211,10 @@ async fn bootstrap_application(
         )
         .route(
             "/images/media/{token}/{variant}",
-            get(image_proxy_handler).with_state(image_proxy_runtime),
+            get(media_image_route_handler).with_state(MediaImageRouteState {
+                runtime: image_proxy_runtime,
+                app: app_use_case.clone(),
+            }),
         )
         .route(
             "/api/media-server-avatars/{connection_id}/{user_id}/{image_tag}",
@@ -2286,6 +2289,42 @@ async fn bootstrap_application(
     }
 
     Ok(app)
+}
+
+/// The image proxy route. Title posters reach the client through it, so a
+/// title whose library has overlays enabled gets its rendered poster here;
+/// everything else is proxied unchanged.
+#[derive(Clone)]
+struct MediaImageRouteState {
+    runtime: Arc<ImageProxyRuntime>,
+    app: AppUseCase,
+}
+
+async fn media_image_route_handler(
+    State(state): State<MediaImageRouteState>,
+    headers: HeaderMap,
+    path: AxumPath<(String, String)>,
+) -> Response {
+    let AxumPath((token, variant)) = &path;
+    match state
+        .app
+        .poster_overlay_image_for_media_token(token, variant)
+        .await
+    {
+        // Overlays change when media does, so unlike proxied originals they
+        // are revalidated on every load: an unchanged poster costs a 304.
+        Ok(Some(image)) => {
+            return title_image_response(image.bytes, "image/jpeg", &image.etag, None, &headers);
+        }
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "failed to read poster overlay; serving the proxied poster"
+            );
+        }
+    }
+    image_proxy_handler(State(state.runtime), headers, path).await
 }
 
 async fn image_proxy_handler(

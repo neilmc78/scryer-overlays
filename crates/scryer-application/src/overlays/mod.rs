@@ -26,5 +26,5 @@ pub use ports::{
 pub use runtime::{drain_overlay_events, start_poster_overlay_worker};
 pub use service::{
     AppPosterOverlayServices, PosterOverlayImage, PosterOverlayOutcome, PosterOverlayOverview,
-    PosterOverlayPassSummary, PosterOverlayPreview,
+    PosterOverlayPassSummary, PosterOverlayPreview, overlay_title_for_proxy_source,
 };

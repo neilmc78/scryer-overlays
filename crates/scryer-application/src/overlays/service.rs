@@ -12,7 +12,7 @@ use super::ports::{
     PosterOverlayRepository, PosterOverlaySettings, PosterOverlayState, PosterOverlayStatusCounts,
     PosterOverlayTemplate, PosterOverlayVariant,
 };
-use crate::{AppError, AppResult, AppUseCase};
+use crate::{AppError, AppResult, AppUseCase, ImageProxyKind, ImageProxySourceRecord};
 
 /// Keyset page size for library-wide passes.
 pub(crate) const OVERLAY_PASS_PAGE: usize = 200;
@@ -278,6 +278,17 @@ pub struct PosterOverlayPreview {
     pub library_poster: bool,
 }
 
+/// The title whose poster an image-proxy source stands for, if any. Only
+/// title posters carry overlays: movie entities, requests, people and
+/// backgrounds are proxied unchanged.
+pub fn overlay_title_for_proxy_source(source: &ImageProxySourceRecord) -> Option<&str> {
+    (source.owner_type.as_deref() == Some("title")
+        && source.image_kind == ImageProxyKind::Poster.as_str())
+    .then_some(source.owner_id.as_deref())
+    .flatten()
+    .filter(|title_id| !title_id.is_empty())
+}
+
 /// Titles checked for a stored original to use as the preview background.
 const PREVIEW_BACKGROUND_CANDIDATES: usize = 8;
 
@@ -541,6 +552,35 @@ impl AppUseCase {
     ) -> AppResult<Option<PosterOverlayImage>> {
         match self.poster_overlays() {
             Some(overlays) => overlays.image(title_id, variant).await,
+            None => Ok(None),
+        }
+    }
+
+    /// The overlaid poster behind a `/images/media/{token}` URL. Title posters
+    /// reach the client through the image proxy, keyed by a token that
+    /// records the owning title; when that title has an overlay it is served
+    /// in place of the proxied original.
+    pub async fn poster_overlay_image_for_media_token(
+        &self,
+        token: &str,
+        variant: &str,
+    ) -> AppResult<Option<PosterOverlayImage>> {
+        let Some(overlays) = self.poster_overlays() else {
+            return Ok(None);
+        };
+        // Installs without overlays never pay for the token lookup.
+        if !overlays.any_library_enabled.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+        let Some(source) = self
+            .image_proxy_repository()
+            .get_image_proxy_source(token)
+            .await?
+        else {
+            return Ok(None);
+        };
+        match overlay_title_for_proxy_source(&source) {
+            Some(title_id) => overlays.image(title_id, variant).await,
             None => Ok(None),
         }
     }
