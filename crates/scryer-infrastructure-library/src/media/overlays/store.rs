@@ -236,9 +236,9 @@ impl PosterOverlayRepository for PosterOverlayStore {
         let files = SqlRuntime::fetch_all(
             self.read(),
             "SELECT video_width, video_height, resolution, video_hdr_format,
-                    audio_codec, audio_profile, audio_channels, edition
+                    audio_codec, audio_profile, audio_channels, edition, file_path, role
                FROM media_files
-              WHERE title_id = {} AND role = 'primary'
+              WHERE title_id = {} AND role IN ('primary', 'additional')
               ORDER BY id",
             &[SqlArg::Text(title_id.to_string())],
         )
@@ -254,6 +254,8 @@ impl PosterOverlayRepository for PosterOverlayStore {
                 audio_profile: row.opt_text("audio_profile")?,
                 audio_channels: row.opt_i64("audio_channels")?,
                 edition: row.opt_text("edition")?,
+                file_path: row.opt_text("file_path")?,
+                additional: row.opt_text("role")?.as_deref() == Some("additional"),
             })
         })
         .collect::<AppResult<Vec<_>>>()?;

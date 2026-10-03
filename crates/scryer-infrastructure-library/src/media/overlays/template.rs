@@ -27,7 +27,8 @@ const FORBIDDEN_ELEMENTS: &[&str] = &["image", "foreignObject", "script", "feIma
 
 pub use scryer_application::overlays::TEMPLATE_FIELDS;
 use scryer_application::overlays::{
-    CHANNEL_LAYOUTS, condition_values, edition_token, is_possible_condition_value,
+    CHANNEL_LAYOUTS, condition_value_set, condition_values, edition_token,
+    is_possible_condition_value,
 };
 
 fn invalid(message: impl Into<String>) -> AppError {
@@ -233,12 +234,16 @@ pub fn evaluate_condition(raw: &str, values: &BTreeMap<&'static str, String>) ->
         .filter(|clause| !clause.is_empty())
     {
         clauses += 1;
+        // Multi-valued fields (a title's editions) match when any of their
+        // values does; every other field holds exactly one value.
         let holds = if let Some((field, options)) = clause.split_once("!=") {
-            let value = field_value(field.trim(), values)?;
-            !split_options(options)?.any(|option| option == value)
+            let field = field.trim();
+            let present = condition_value_set(field, field_value(field, values)?);
+            !split_options(options)?.any(|option| present.contains(&option))
         } else if let Some((field, options)) = clause.split_once('=') {
-            let value = field_value(field.trim(), values)?;
-            split_options(options)?.any(|option| option == value)
+            let field = field.trim();
+            let present = condition_value_set(field, field_value(field, values)?);
+            split_options(options)?.any(|option| present.contains(&option))
         } else {
             !field_value(clause, values)?.is_empty()
         };

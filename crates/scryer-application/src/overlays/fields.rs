@@ -22,9 +22,26 @@ pub struct OverlayMediaFacts {
     pub audio_profile: Option<String>,
     pub audio_channels: Option<i64>,
     pub edition: Option<String>,
+    /// The file's path; its `{edition-...}` tag names the edition when the
+    /// parsed `edition` is empty.
+    pub file_path: Option<String>,
+    /// An additional version beside the primary file (another cut in the
+    /// same folder). It contributes its edition, not its quality.
+    pub additional: bool,
 }
 
 impl OverlayMediaFacts {
+    /// This file's edition: the parsed value, else the Plex/Radarr-style
+    /// `{edition-Name}` tag in the file name.
+    pub fn edition_name(&self) -> Option<String> {
+        self.edition
+            .as_deref()
+            .map(str::trim)
+            .filter(|edition| !edition.is_empty())
+            .map(str::to_string)
+            .or_else(|| self.file_path.as_deref().and_then(edition_from_file_name))
+    }
+
     fn is_probed(&self) -> bool {
         self.video_width.is_some() || self.video_height.is_some()
     }
@@ -369,21 +386,41 @@ pub struct OverlayFields {
     pub hdr: Option<OverlayHdr>,
     pub audio: Option<OverlayAudio>,
     pub audio_channels: Option<String>,
-    pub edition: Option<String>,
+    /// Every distinct edition present, primary first.
+    pub editions: Vec<String>,
     pub series_status: Option<OverlaySeriesStatus>,
 }
 
 impl OverlayFields {
-    /// Best available value per field across every file of the title. For a
-    /// series this is the best quality present in any episode.
+    /// Best available value per field across the title's primary files. For
+    /// a series this is the best quality present in any episode.
     ///
-    /// Edition belongs to a single cut, so it is taken only when every file
-    /// that carries one agrees.
+    /// Editions come from every file, additional versions included, so a
+    /// folder holding a theatrical cut and a director's cut lists both.
     pub fn aggregate(files: &[OverlayMediaFacts]) -> Self {
-        let resolution = files.iter().filter_map(OverlayResolution::resolve).max();
-        let hdr = files.iter().filter_map(OverlayHdr::resolve).max();
-        let best_audio = files
+        let primary = files
             .iter()
+            .filter(|facts| !facts.additional)
+            .collect::<Vec<_>>();
+        // A title whose only files are additional still gets quality badges.
+        let quality = if primary.is_empty() {
+            files.iter().collect::<Vec<_>>()
+        } else {
+            primary
+        };
+        let resolution = quality
+            .iter()
+            .copied()
+            .filter_map(OverlayResolution::resolve)
+            .max();
+        let hdr = quality
+            .iter()
+            .copied()
+            .filter_map(OverlayHdr::resolve)
+            .max();
+        let best_audio = quality
+            .iter()
+            .copied()
             .filter_map(|facts| OverlayAudio::resolve(facts).map(|audio| (audio, facts)))
             .max_by(|(left, left_facts), (right, right_facts)| {
                 left.rank()
@@ -394,23 +431,29 @@ impl OverlayFields {
         let audio_channels = best_audio
             .and_then(|(_, facts)| facts.audio_channels)
             .and_then(channel_layout);
-        let mut editions = files
+        // Primary files first, then additional versions; one entry per
+        // distinct edition.
+        let mut editions: Vec<String> = Vec::new();
+        for facts in files
             .iter()
-            .filter_map(|facts| facts.edition.as_deref())
-            .map(str::trim)
-            .filter(|edition| !edition.is_empty());
-        let edition = match editions.next() {
-            Some(first) if editions.all(|other| other.eq_ignore_ascii_case(first)) => {
-                Some(first.to_string())
+            .filter(|facts| !facts.additional)
+            .chain(files.iter().filter(|facts| facts.additional))
+        {
+            if let Some(name) = facts.edition_name()
+                && !edition_token(&name).is_empty()
+                && !editions
+                    .iter()
+                    .any(|known| edition_token(known) == edition_token(&name))
+            {
+                editions.push(name);
             }
-            _ => None,
-        };
+        }
         Self {
             resolution,
             hdr,
             audio,
             audio_channels,
-            edition,
+            editions,
             series_status: None,
         }
     }
@@ -441,17 +484,19 @@ impl OverlayFields {
         );
         values.insert(
             "edition",
-            self.edition
-                .as_deref()
-                .map(edition_token)
-                .unwrap_or_default(),
+            self.editions
+                .iter()
+                .map(|edition| edition_token(edition))
+                .collect::<Vec<_>>()
+                .join(EDITION_TOKEN_SEPARATOR),
         );
         values.insert(
             "edition_label",
-            self.edition
-                .as_deref()
+            self.editions
+                .iter()
                 .map(|edition| edition.to_uppercase())
-                .unwrap_or_default(),
+                .collect::<Vec<_>>()
+                .join(EDITION_LABEL_SEPARATOR),
         );
         values.insert(
             "series_status",
@@ -480,7 +525,7 @@ impl OverlayFields {
         self.resolution.is_none()
             && self.hdr.is_none()
             && self.audio.is_none()
-            && self.edition.is_none()
+            && self.editions.is_empty()
             && self.series_status.is_none()
     }
 }
@@ -606,7 +651,16 @@ impl OverlayFields {
             hdr: parse(&sample.hdr, "hdr", OverlayHdr::from_token)?,
             audio: parse(&sample.audio, "audio_codec", OverlayAudio::from_token)?,
             audio_channels,
-            edition,
+            editions: edition
+                .map(|edition| {
+                    edition
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|name| !edition_token(name).is_empty())
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
             series_status: parse(
                 &sample.series_status,
                 "series_status",
@@ -627,6 +681,37 @@ fn channel_layout(channels: i64) -> Option<String> {
         n if n > 8 => Some(format!("{n}ch")),
         _ => None,
     }
+}
+
+/// `edition` holds every edition's token, comma separated; a condition
+/// matches when any of them equals a listed value.
+pub const EDITION_TOKEN_SEPARATOR: &str = ",";
+/// `edition_label` joins the display names.
+pub const EDITION_LABEL_SEPARATOR: &str = " / ";
+
+/// The values a condition compares against for one field: each edition
+/// separately for the multi-valued edition fields, the whole value
+/// otherwise.
+pub fn condition_value_set<'v>(field: &str, value: &'v str) -> Vec<&'v str> {
+    if value.is_empty() {
+        return Vec::new();
+    }
+    match field {
+        "edition" => value.split(EDITION_TOKEN_SEPARATOR).collect(),
+        "edition_label" => value.split(EDITION_LABEL_SEPARATOR).collect(),
+        _ => vec![value],
+    }
+}
+
+/// The name in a `{edition-Name}` tag (Plex and Radarr naming) in the file
+/// name of `path`.
+pub fn edition_from_file_name(path: &str) -> Option<String> {
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    let lower = name.to_ascii_lowercase();
+    let start = lower.find("{edition-")? + "{edition-".len();
+    let end = start + lower[start..].find('}')?;
+    let edition = name[start..end].trim();
+    (!edition.is_empty()).then(|| edition.to_string())
 }
 
 /// Lowercase ASCII slug for an edition, for conditional matching:

@@ -152,21 +152,93 @@ fn series_aggregate_takes_the_best_value_per_field_across_episodes() {
 }
 
 #[test]
-fn edition_is_kept_only_when_every_file_agrees() {
-    let cut = |edition: &str| OverlayMediaFacts {
+fn every_distinct_edition_is_listed_primary_first() {
+    let cut = |edition: &str, additional: bool| OverlayMediaFacts {
         edition: Some(edition.into()),
+        additional,
         ..facts()
     };
+    let fields = OverlayFields::aggregate(&[
+        cut("Theatrical", true),
+        cut("Director's Cut", false),
+        cut("director's cut", false),
+        facts(),
+    ]);
+    assert_eq!(fields.editions, vec!["Director's Cut", "Theatrical"]);
+    let values = fields.template_values();
+    assert_eq!(values["edition"], "directors_cut,theatrical");
+    assert_eq!(values["edition_label"], "DIRECTOR'S CUT / THEATRICAL");
+}
+
+#[test]
+fn edition_tags_in_file_names_fill_in_unparsed_editions() {
+    let file = |path: &str| OverlayMediaFacts {
+        file_path: Some(path.into()),
+        ..facts()
+    };
+    for (path, expected) in [
+        (
+            "/mnt/media/Movies/Alien (1979)/Alien 1979 - {edition-Directors Cut}[Bluray-1080p].mkv",
+            Some("Directors Cut"),
+        ),
+        (
+            "/media/2001 A Space Odyssey 1968 - {Edition-Remastered}[Bluray-1080p].mkv",
+            Some("Remastered"),
+        ),
+        ("/media/Movie {edition-}.mkv", None),
+        ("/media/{edition-Cut}/Movie.mkv", None),
+        ("/media/Movie (2001).mkv", None),
+    ] {
+        assert_eq!(file(path).edition_name().as_deref(), expected, "{path}");
+    }
+    // The parsed value wins over the file name.
+    let parsed = OverlayMediaFacts {
+        edition: Some("IMAX".into()),
+        file_path: Some("/m/Movie {edition-Theatrical}.mkv".into()),
+        ..facts()
+    };
+    assert_eq!(parsed.edition_name().as_deref(), Some("IMAX"));
     assert_eq!(
-        OverlayFields::aggregate(&[cut("Director's Cut"), cut("director's cut"), facts()])
-            .edition
-            .as_deref(),
-        Some("Director's Cut")
+        edition_from_file_name("C:\\Movies\\Film {edition-Extended}.mkv").as_deref(),
+        Some("Extended")
+    );
+}
+
+#[test]
+fn additional_versions_add_editions_but_not_quality() {
+    let primary = OverlayMediaFacts {
+        file_path: Some("/m/Alien 1979 - {edition-Directors Cut}[Bluray-1080p].mkv".into()),
+        ..hd_sdr_ac3()
+    };
+    let additional = OverlayMediaFacts {
+        file_path: Some("/m/Alien 1979 - {edition-Theatrical}[Remux-2160p].mkv".into()),
+        additional: true,
+        ..uhd_dv_atmos()
+    };
+    let fields = OverlayFields::aggregate(&[primary, additional.clone()]);
+    assert_eq!(fields.resolution, Some(OverlayResolution::Hd1080));
+    assert_eq!(fields.hdr, Some(OverlayHdr::Sdr));
+    assert_eq!(fields.editions, vec!["Directors Cut", "Theatrical"]);
+    // With no primary file, the additional versions supply quality too.
+    let only_additional = OverlayFields::aggregate(&[additional]);
+    assert_eq!(only_additional.resolution, Some(OverlayResolution::Uhd2160));
+}
+
+#[test]
+fn edition_conditions_test_each_edition() {
+    assert_eq!(
+        condition_value_set("edition", "directors_cut,theatrical"),
+        vec!["directors_cut", "theatrical"]
     );
     assert_eq!(
-        OverlayFields::aggregate(&[cut("Director's Cut"), cut("IMAX")]).edition,
-        None
+        condition_value_set("edition_label", "DIRECTOR'S CUT / THEATRICAL"),
+        vec!["DIRECTOR'S CUT", "THEATRICAL"]
     );
+    assert_eq!(
+        condition_value_set("audio_label", "DD+ ATMOS"),
+        vec!["DD+ ATMOS"]
+    );
+    assert!(condition_value_set("edition", "").is_empty());
 }
 
 #[test]

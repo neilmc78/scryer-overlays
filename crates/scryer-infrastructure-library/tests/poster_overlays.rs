@@ -404,8 +404,32 @@ async fn renders_from_the_title_poster_url_when_the_image_cache_is_empty(
     );
     store.set_library_config(LIBRARY, true, None).await.unwrap();
 
+    // A second cut beside the primary file: its edition comes only from the
+    // `{edition-...}` tag in its name.
+    exec(
+        &datastore,
+        "INSERT INTO media_files (id, title_id, file_path, size_bytes, created_at,
+                                  video_width, video_height, audio_codec, role)
+         VALUES ('file-2', {}, '/overlay-fixture/Fixture {edition-Theatrical}.mkv', 10, {},
+                 3840, 2160, 'aac', 'additional')",
+        vec![SqlArg::Text(TITLE.into()), SqlArg::Timestamp(Utc::now())],
+    )
+    .await;
+
     let rendered = rendered_hash(overlays.process_title(TITLE).await);
     assert_eq!(fetch.fetches(), 1);
+    let fields = store
+        .get_state(TITLE)
+        .await
+        .unwrap()
+        .unwrap()
+        .fields_json
+        .unwrap();
+    assert!(fields.contains("\"edition\":\"theatrical\""), "{fields}");
+    assert!(
+        fields.contains("\"resolution\":\"1080p\""),
+        "the additional 4K cut must not raise the primary's resolution: {fields}"
+    );
     assert!(
         overlays
             .image(TITLE, "w250")

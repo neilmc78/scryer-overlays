@@ -546,3 +546,30 @@ fn series_status_conditions_use_tokens_or_labels() {
         "{error}"
     );
 }
+
+#[test]
+fn edition_conditions_match_any_of_a_titles_editions() {
+    let both = values(&[
+        ("edition", "directors_cut,theatrical"),
+        ("edition_label", "DIRECTOR'S CUT / THEATRICAL"),
+    ]);
+    for (condition, expected) in [
+        ("edition", true),
+        ("edition=theatrical", true),
+        ("edition=extended|directors_cut", true),
+        ("edition=extended", false),
+        ("edition!=theatrical", false),
+        ("edition!=extended", true),
+        ("edition_label=THEATRICAL", true),
+    ] {
+        assert_eq!(
+            evaluate_condition(condition, &both).unwrap(),
+            expected,
+            "{condition}"
+        );
+    }
+    let none = empty_values();
+    assert!(!evaluate_condition("edition", &none).unwrap());
+    assert!(!evaluate_condition("edition=theatrical", &none).unwrap());
+    assert!(evaluate_condition("edition!=theatrical", &none).unwrap());
+}
