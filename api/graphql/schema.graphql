@@ -21387,6 +21387,10 @@ type PosterOverlayCounts {
 	Of those, titles whose last render failed.
 	"""
 	failed: Int!
+	"""
+	Of those, titles with no poster artwork to draw on yet.
+	"""
+	noArtwork: Int!
 }
 
 """

@@ -186,6 +186,12 @@ impl AppPosterOverlayServices {
                 "poster overlay reconcile finished"
             );
         }
+        if summary.no_artwork > 0 {
+            tracing::warn!(
+                titles = summary.no_artwork,
+                "poster overlays skipped titles with no poster artwork to draw on"
+            );
+        }
         Ok(summary)
     }
 
@@ -239,9 +245,10 @@ pub enum PosterOverlayOutcome {
         output_hash: String,
     },
     Unchanged,
-    /// The title's library does not have overlays enabled, or it has no
-    /// poster yet.
+    /// The title's library does not have overlays enabled.
     Skipped,
+    /// The title has no poster artwork to draw on yet.
+    NoArtwork,
     /// The title no longer exists; its outputs were removed.
     Removed,
     Failed(String),
@@ -279,6 +286,7 @@ pub struct PosterOverlayPassSummary {
     pub rendered: usize,
     pub unchanged: usize,
     pub skipped: usize,
+    pub no_artwork: usize,
     pub failed: usize,
 }
 
@@ -287,6 +295,7 @@ impl PosterOverlayPassSummary {
         self.rendered += other.rendered;
         self.unchanged += other.unchanged;
         self.skipped += other.skipped;
+        self.no_artwork += other.no_artwork;
         self.failed += other.failed;
     }
 
@@ -295,6 +304,7 @@ impl PosterOverlayPassSummary {
             PosterOverlayOutcome::Rendered { .. } => self.rendered += 1,
             PosterOverlayOutcome::Unchanged => self.unchanged += 1,
             PosterOverlayOutcome::Skipped | PosterOverlayOutcome::Removed => self.skipped += 1,
+            PosterOverlayOutcome::NoArtwork => self.no_artwork += 1,
             PosterOverlayOutcome::Failed(_) => self.failed += 1,
         }
     }
@@ -567,7 +577,7 @@ async fn process_title(
     let (Some(source_url), Some(source_identity)) =
         (inputs.poster_source_url.clone(), inputs.source_identity())
     else {
-        return Ok(PosterOverlayOutcome::Skipped);
+        return Ok(PosterOverlayOutcome::NoArtwork);
     };
 
     let mut state = repository

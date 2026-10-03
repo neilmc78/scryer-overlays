@@ -25,6 +25,7 @@ export type PosterOverlayCounts = {
   enabledTitles: number;
   rendered: number;
   failed: number;
+  noArtwork: number;
 };
 
 export type PosterOverlayOverview = {

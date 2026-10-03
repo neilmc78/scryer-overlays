@@ -5,8 +5,7 @@ use async_graphql::{ID, InputObject, SimpleObject};
 use chrono::{DateTime, Utc};
 use scryer_application::overlays::{
     CHANNEL_LAYOUTS, OverlayAudio, OverlayHdr, OverlayResolution, OverlaySampleValues,
-    OverlaySeriesStatus,
-    PosterOverlayLibraryConfig, PosterOverlayOverview, PosterOverlaySettings,
+    OverlaySeriesStatus, PosterOverlayLibraryConfig, PosterOverlayOverview, PosterOverlaySettings,
     PosterOverlayStatusCounts, PosterOverlayTemplate, TEMPLATE_FIELDS, TEMPLATE_SPEC_VERSION,
 };
 
@@ -102,6 +101,8 @@ pub struct PosterOverlayCountsPayload {
     pub rendered: i64,
     /// Of those, titles whose last render failed.
     pub failed: i64,
+    /// Of those, titles with no poster artwork to draw on yet.
+    pub no_artwork: i64,
 }
 
 impl From<PosterOverlayStatusCounts> for PosterOverlayCountsPayload {
@@ -110,6 +111,7 @@ impl From<PosterOverlayStatusCounts> for PosterOverlayCountsPayload {
             enabled_titles: value.enabled_titles,
             rendered: value.rendered,
             failed: value.failed,
+            no_artwork: value.no_artwork,
         }
     }
 }

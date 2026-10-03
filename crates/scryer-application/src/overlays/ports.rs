@@ -96,6 +96,8 @@ pub struct PosterOverlayStatusCounts {
     pub enabled_titles: i64,
     pub rendered: i64,
     pub failed: i64,
+    /// Enabled titles with no poster artwork to draw on yet.
+    pub no_artwork: i64,
 }
 
 #[async_trait]

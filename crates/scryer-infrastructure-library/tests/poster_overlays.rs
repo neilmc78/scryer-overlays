@@ -325,3 +325,123 @@ async fn render_then_rebuild_only_when_inputs_change(
             .all(|library| !library.enabled)
     );
 }
+
+#[tokio::test]
+async fn renders_from_the_title_poster_url_when_the_image_cache_is_empty_sqlite() {
+    let dir = tempfile::tempdir().unwrap();
+    let services = SqliteServices::new(dir.path().join("scryer.db").to_string_lossy())
+        .await
+        .expect("sqlite services");
+    renders_from_the_title_poster_url_when_the_image_cache_is_empty(
+        services.datastore(),
+        dir.path(),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn renders_from_the_title_poster_url_when_the_image_cache_is_empty_postgres() {
+    let Some(admin_url) = std::env::var("SCRYER_TEST_POSTGRES_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+    else {
+        eprintln!("skipping PostgreSQL poster overlay test; SCRYER_TEST_POSTGRES_URL is not set");
+        return;
+    };
+    let database = format!("scryer_overlay_{}", uuid::Uuid::new_v4().simple());
+    let admin = sqlx::PgPool::connect(&admin_url)
+        .await
+        .expect("postgres admin");
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {database}")))
+        .execute(&admin)
+        .await
+        .expect("create test database");
+    let mut url = url::Url::parse(&admin_url).expect("postgres url");
+    url.set_path(&format!("/{database}"));
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let services = PostgresServices::new_with_mode(url.as_str(), MigrationMode::Apply)
+            .await
+            .expect("postgres services");
+        renders_from_the_title_poster_url_when_the_image_cache_is_empty(
+            services.datastore(),
+            dir.path(),
+        )
+        .await;
+    }
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE {database} WITH (FORCE)"
+    )))
+    .execute(&admin)
+    .await
+    .expect("drop test database");
+}
+
+/// After a backup restore the image cache (`title_images`) is empty until
+/// metadata refreshes it; the title row still names its upstream poster.
+async fn renders_from_the_title_poster_url_when_the_image_cache_is_empty(
+    datastore: StoreDatastore,
+    data_dir: &std::path::Path,
+) {
+    seed(&datastore).await;
+    exec(&datastore, "DELETE FROM title_image_variants", vec![]).await;
+    exec(&datastore, "DELETE FROM title_images", vec![]).await;
+    exec(
+        &datastore,
+        "UPDATE titles SET poster_url = 'https://image.tmdb.org/t/p/w500/b.jpg', poster_local_path = NULL",
+        vec![],
+    )
+    .await;
+
+    let fetch = Arc::new(ScriptedFetch::default());
+    fetch.serve(poster(40));
+    let store = Arc::new(PosterOverlayStore::new(datastore.clone()));
+    let overlays = AppPosterOverlayServices::new(
+        store.clone(),
+        Arc::new(OverlayEngine::new(data_dir, fetch.clone()).unwrap()),
+    );
+    store.set_library_config(LIBRARY, true, None).await.unwrap();
+
+    let rendered = rendered_hash(overlays.process_title(TITLE).await);
+    assert_eq!(fetch.fetches(), 1);
+    assert!(
+        overlays
+            .image(TITLE, "w250")
+            .await
+            .unwrap()
+            .is_some_and(|image| has_marker(&image.bytes))
+    );
+    let counts = store.status_counts().await.unwrap();
+    assert_eq!((counts.rendered, counts.no_artwork), (1, 0));
+
+    // No artwork anywhere: reported as such, not silently skipped, and the
+    // last good overlay keeps being served.
+    exec(&datastore, "UPDATE titles SET poster_url = NULL", vec![]).await;
+    assert_eq!(
+        overlays.process_title(TITLE).await,
+        PosterOverlayOutcome::NoArtwork
+    );
+    assert_eq!(store.status_counts().await.unwrap().no_artwork, 1);
+    assert!(overlays.image(TITLE, "w250").await.unwrap().is_some());
+
+    // A local path is not a download source.
+    exec(
+        &datastore,
+        "UPDATE titles SET poster_url = '/images/titles/title-1/poster/w250'",
+        vec![],
+    )
+    .await;
+    assert_eq!(
+        overlays.process_title(TITLE).await,
+        PosterOverlayOutcome::NoArtwork
+    );
+
+    // Revert with no cached image to point back at: the overlay path is
+    // cleared so the catalog falls back to the upstream poster.
+    assert_eq!(overlays.revert_all().await.unwrap(), 1);
+    let local_path = text(&datastore, "SELECT poster_local_path AS value FROM titles").await;
+    assert_eq!(
+        local_path, None,
+        "overlay path {rendered} must not survive revert"
+    );
+}

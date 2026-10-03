@@ -32,6 +32,11 @@ impl PosterOverlayStore {
     }
 }
 
+fn is_remote_url(url: &str) -> bool {
+    let url = url.trim();
+    url.starts_with("https://") || url.starts_with("http://")
+}
+
 fn overlay_poster_path(title_id: &str, version: &str) -> String {
     format!("/images/titles/{title_id}/poster/{PRESENTED_VARIANT}?v={version}")
 }
@@ -216,8 +221,8 @@ impl PosterOverlayRepository for PosterOverlayStore {
     async fn load_inputs(&self, title_id: &str) -> AppResult<Option<PosterOverlayInputs>> {
         let Some(title) = SqlRuntime::fetch_optional(
             self.read(),
-            "SELECT t.id, t.library_id, t.facet, t.content_status, pol.enabled, pol.template_id,
-                    ti.source_url, ti.source_etag
+            "SELECT t.id, t.library_id, t.facet, t.content_status, t.poster_url,
+                    pol.enabled, pol.template_id, ti.source_url, ti.source_etag
                FROM titles t
                LEFT JOIN poster_overlay_libraries pol ON pol.library_id = t.library_id
                LEFT JOIN title_images ti ON ti.title_id = t.id AND ti.kind = 'poster'
@@ -257,7 +262,15 @@ impl PosterOverlayRepository for PosterOverlayStore {
             library_id: title.opt_text("library_id")?,
             overlay_enabled: title.opt_bool("enabled")?.unwrap_or(false),
             template_id: title.opt_text("template_id")?,
-            poster_source_url: title.opt_text("source_url")?,
+            poster_source_url: match title.opt_text("source_url")? {
+                Some(url) => Some(url),
+                // The image cache is empty after a restore until metadata
+                // refreshes it, and for titles whose artwork has not been
+                // cached yet; the title row still carries the upstream URL.
+                None => title
+                    .opt_text("poster_url")?
+                    .filter(|url| is_remote_url(url)),
+            },
             poster_source_etag: title.opt_text("source_etag")?,
             facet: title.opt_text("facet")?,
             content_status: title.opt_text("content_status")?,
@@ -389,7 +402,16 @@ impl PosterOverlayRepository for PosterOverlayStore {
             self.read(),
             "SELECT COUNT(t.id) AS enabled_titles,
                     COUNT(s.output_hash) AS rendered,
-                    COUNT(s.last_error) AS failed
+                    COUNT(s.last_error) AS failed,
+                    COALESCE(SUM(CASE
+                        WHEN NOT EXISTS (
+                            SELECT 1 FROM title_images ti
+                             WHERE ti.title_id = t.id AND ti.kind = 'poster'
+                               AND ti.source_url IS NOT NULL
+                        )
+                        AND (t.poster_url IS NULL
+                             OR (t.poster_url NOT LIKE 'https://%' AND t.poster_url NOT LIKE 'http://%'))
+                        THEN 1 ELSE 0 END), 0) AS no_artwork
                FROM titles t
                JOIN poster_overlay_libraries pol ON pol.library_id = t.library_id
                LEFT JOIN poster_overlay_state s ON s.title_id = t.id
@@ -404,6 +426,7 @@ impl PosterOverlayRepository for PosterOverlayStore {
             enabled_titles: row.i64("enabled_titles")?,
             rendered: row.i64("rendered")?,
             failed: row.i64("failed")?,
+            no_artwork: row.i64("no_artwork")?,
         })
     }
 

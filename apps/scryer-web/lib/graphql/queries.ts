@@ -5612,7 +5612,7 @@ export const posterOverlaysQuery = `query PosterOverlays {
     settings { parallelism reconcileIntervalSeconds }
     libraries { libraryId libraryName facet enabled templateId }
     templates {${POSTER_OVERLAY_TEMPLATE_FIELDS}}
-    counts { enabledTitles rendered failed }
+    counts { enabledTitles rendered failed noArtwork }
     builtinTemplate
     templateSpecVersion
     templateFields

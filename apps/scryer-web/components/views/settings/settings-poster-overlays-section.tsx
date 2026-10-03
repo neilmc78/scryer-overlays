@@ -154,6 +154,11 @@ export function SettingsPosterOverlaysSection({
                 {t("settings.posterOverlays.failedCount", { count: counts.failed })}
               </span>
             ) : null}
+            {counts.noArtwork > 0 ? (
+              <span id="settings-poster-overlays-no-artwork" className={`ml-2 ${MUTED_TEXT_CLASS}`}>
+                {t("settings.posterOverlays.noArtworkCount", { count: counts.noArtwork })}
+              </span>
+            ) : null}
           </p>
         </div>
       </section>

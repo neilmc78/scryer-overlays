@@ -2289,6 +2289,7 @@ const en: LocaleDictionary = {
   "settings.posterOverlays.statusTitle": "Status",
   "settings.posterOverlays.counts": "{{rendered}} of {{total}} posters in enabled libraries carry overlays.",
   "settings.posterOverlays.failedCount": "{{count}} failed to render.",
+  "settings.posterOverlays.noArtworkCount": "{{count}} have no poster artwork to draw on yet; they render once metadata provides a poster.",
   "settings.posterOverlays.rebuild": "Rebuild now",
   "settings.posterOverlays.rebuildQueued": "Overlay rebuild started. Unchanged posters are skipped.",
   "settings.posterOverlays.revertAll": "Revert all to originals",
