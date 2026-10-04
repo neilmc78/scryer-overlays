@@ -707,6 +707,15 @@ impl AppServicesBuilder {
         };
         self
     }
+    /// Not a required service: an assembly without an overlay store and
+    /// engine serves stored posters unchanged.
+    pub fn with_poster_overlays(
+        mut self,
+        value: Option<crate::overlays::AppPosterOverlayServices>,
+    ) -> Self {
+        self.services.poster_overlays = value;
+        self
+    }
     /// The installed list-provider plugins. Without one, every provider-origin
     /// subscription fails its fetch with "provider not installed".
     pub fn with_list_plugin_provider(

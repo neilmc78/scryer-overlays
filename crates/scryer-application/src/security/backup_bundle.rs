@@ -1109,6 +1109,25 @@ pub const BACKUP_TABLE_CATALOG: &[BackupTableCatalogEntry] = &[
         table: "plugin_installations",
         classification: BackupTableClassification::Export,
     },
+    // Poster overlays: operator configuration is exported; render state is
+    // reset because the originals and outputs it points at live on disk
+    // outside the bundle and are rebuilt by the next reconcile.
+    BackupTableCatalogEntry {
+        table: "poster_overlay_libraries",
+        classification: BackupTableClassification::Export,
+    },
+    BackupTableCatalogEntry {
+        table: "poster_overlay_settings",
+        classification: BackupTableClassification::Export,
+    },
+    BackupTableCatalogEntry {
+        table: "poster_overlay_state",
+        classification: BackupTableClassification::ResetOnRestore,
+    },
+    BackupTableCatalogEntry {
+        table: "poster_overlay_templates",
+        classification: BackupTableClassification::Export,
+    },
     BackupTableCatalogEntry {
         table: "post_processing_script_runs",
         classification: BackupTableClassification::Export,
@@ -1390,6 +1409,10 @@ pub fn validate_restore_manifest_table_set(
                     | "list_exclusion_external_ids"
                     | "user_list_policies"
                     | "list_sync_runs" => number < 259,
+                    "poster_overlay_libraries"
+                    | "poster_overlay_settings"
+                    | "poster_overlay_state"
+                    | "poster_overlay_templates" => number < 268,
                     _ => false,
                 })
             })

@@ -37,6 +37,7 @@ export const SETTINGS_SECTION_PATH: Record<SettingsSection, string> = {
   notifications: "notifications",
   "post-processing": "post-processing",
   subtitles: "subtitles",
+  posterOverlays: "overlays",
 };
 
 const AUTOMATION_SETTINGS_SECTION_PATH: Partial<Record<SettingsSection, string>> = {
@@ -443,6 +444,8 @@ const LOCAL_SETTINGS_BY_SEGMENT: Record<string, SettingsSection> = {
   "title-tags": "titleTags",
   titletags: "titleTags",
   plugins: "plugins",
+  overlays: "posterOverlays",
+  "poster-overlays": "posterOverlays",
 };
 const SYSTEM_SETTINGS_BY_SEGMENT: Record<string, SettingsSection> = {
   users: "users",
