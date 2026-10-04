@@ -22,7 +22,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use url::Url;
 
-const PLEX_BASE_URL: &str = "https://plex.tv";
+pub(crate) const PLEX_BASE_URL: &str = "https://plex.tv";
 const SCRYER_PRODUCT: &str = "Scryer";
 
 pub struct HttpExternalIdentityVerifier {
@@ -1735,7 +1735,7 @@ fn plex_external_id(value: &str) -> Option<ExternalId> {
     Some(ExternalId::new(source, external_id))
 }
 
-fn media_server_url(value: &str) -> AppResult<Url> {
+pub(crate) fn media_server_url(value: &str) -> AppResult<Url> {
     let mut url = Url::parse(value.trim())
         .map_err(|error| AppError::Repository(format!("invalid media server URL: {error}")))?;
     if !url.path().ends_with('/') {
@@ -1744,7 +1744,7 @@ fn media_server_url(value: &str) -> AppResult<Url> {
     Ok(url)
 }
 
-fn plex_server_url(resources_xml: &str, machine_id: &str) -> AppResult<Option<String>> {
+pub(crate) fn plex_server_url(resources_xml: &str, machine_id: &str) -> AppResult<Option<String>> {
     let mut reader = Reader::from_str(resources_xml);
     let mut selected = false;
     let mut uris = Vec::new();
