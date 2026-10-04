@@ -328,8 +328,9 @@ overlaid poster also becomes the poster of the title's Plex item.
 ### Which items
 
 - Every enabled Plex connection with a selected server and a stored token
-  is used. Requests go to the connection's server URL with the token in a
-  header.
+  is used. Scryer finds the server's address the way its catalog scan does:
+  it asks plex.tv for the selected server, preferring an HTTPS address, and
+  reuses the answer for ten minutes. The token is sent in a header.
 - A title is pushed to the Plex item that Scryer's media-server catalog
   scan matched it to (the same match behind "Play on Plex" links). A title
   with no match is skipped until the scan finds one.
