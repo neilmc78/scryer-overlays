@@ -1,10 +1,17 @@
 //! Plex poster reads and uploads for poster overlays.
 //!
-//! Talks to the selected server at the connection's `base_url` with its
-//! stored token, sent as a header so it never appears in a URL or an error.
+//! Finds the selected server the way the catalog scan does: by asking
+//! plex.tv for the address of the connection's server (preferring HTTPS),
+//! cached for ten minutes. A connection without a selected server falls back
+//! to its `base_url`. The stored token is sent as a header, so it never
+//! appears in a URL or an error.
 //! Four calls: read an item, read its selected poster, upload a poster, and
 //! lock or unlock the poster field. Nothing here deletes anything on the
 //! server.
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use reqwest::StatusCode;
@@ -17,15 +24,86 @@ use scryer_outbound_http::generic_reqwest_client;
 use serde_json::Value;
 use url::Url;
 
+use crate::external_identity::{PLEX_BASE_URL, media_server_url, plex_server_url};
+
+/// How long a server address found through plex.tv is reused.
+const SERVER_URL_CACHE_TTL: Duration = Duration::from_secs(10 * 60);
+
 pub struct HttpPlexPosterClient {
     client: reqwest::Client,
+    plex_base_url: Url,
+    /// Server address per machine id, with when it was looked up.
+    servers: Mutex<HashMap<String, (Instant, Url)>>,
 }
 
 impl HttpPlexPosterClient {
     pub fn new() -> Self {
+        Self::with_plex_base_url(Url::parse(PLEX_BASE_URL).expect("valid Plex base URL"))
+    }
+
+    fn with_plex_base_url(plex_base_url: Url) -> Self {
         Self {
             client: generic_reqwest_client(),
+            plex_base_url,
+            servers: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The selected server's address: looked up on plex.tv by machine id,
+    /// or the connection's `base_url` when no server is selected.
+    async fn server(&self, connection: &MediaServerConnection) -> AppResult<Url> {
+        let Some(machine_id) = connection
+            .machine_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        else {
+            return media_server_url(&connection.base_url).map_err(|_| {
+                AppError::Validation("the Plex connection has an invalid server URL".into())
+            });
+        };
+        if let Ok(servers) = self.servers.lock()
+            && let Some((at, url)) = servers.get(machine_id)
+            && at.elapsed() < SERVER_URL_CACHE_TTL
+        {
+            return Ok(url.clone());
+        }
+        let resources = self
+            .plex_base_url
+            .join("api/resources?includeHttps=1")
+            .map_err(|_| AppError::Repository("invalid Plex resources URL".into()))?;
+        let response = self
+            .client
+            .get(resources)
+            .header("Accept", "application/xml")
+            .header("X-Plex-Token", token(connection)?)
+            .send()
+            .await
+            .map_err(|error| request_failed("server lookup", error))?;
+        if !response.status().is_success() {
+            return Err(bad_status("server lookup", response.status()));
+        }
+        let xml = response
+            .text()
+            .await
+            .map_err(|error| request_failed("server lookup", error))?;
+        let url = plex_server_url(&xml, machine_id)?
+            .ok_or_else(|| {
+                AppError::Repository("the selected Plex server has no reachable address".into())
+            })
+            .and_then(|uri| media_server_url(&uri))?;
+        if let Ok(mut servers) = self.servers.lock() {
+            servers.insert(machine_id.to_string(), (Instant::now(), url.clone()));
+        }
+        Ok(url)
+    }
+
+    /// `path` resolved against the selected server, keeping any base path.
+    async fn server_url(&self, connection: &MediaServerConnection, path: &str) -> AppResult<Url> {
+        self.server(connection)
+            .await?
+            .join(path.trim_start_matches('/'))
+            .map_err(|_| AppError::Validation("invalid Plex request path".into()))
     }
 }
 
@@ -42,17 +120,6 @@ fn token(connection: &MediaServerConnection) -> AppResult<&str> {
         .map(str::trim)
         .filter(|key| !key.is_empty())
         .ok_or_else(|| AppError::Validation("the Plex connection has no stored token".into()))
-}
-
-/// `path` resolved against the server URL, keeping any base path.
-fn server_url(connection: &MediaServerConnection, path: &str) -> AppResult<Url> {
-    let mut base = connection.base_url.trim().to_string();
-    if !base.ends_with('/') {
-        base.push('/');
-    }
-    Url::parse(&base)
-        .and_then(|base| base.join(path.trim_start_matches('/')))
-        .map_err(|_| AppError::Validation("the Plex connection has an invalid server URL".into()))
 }
 
 fn request_failed(action: &str, error: reqwest::Error) -> AppError {
@@ -88,7 +155,9 @@ impl PosterOverlayPlexClient for HttpPlexPosterClient {
         connection: &MediaServerConnection,
         rating_key: &str,
     ) -> AppResult<Option<PlexPosterItem>> {
-        let url = server_url(connection, &format!("library/metadata/{rating_key}"))?;
+        let url = self
+            .server_url(connection, &format!("library/metadata/{rating_key}"))
+            .await?;
         let response = self
             .client
             .get(url)
@@ -140,7 +209,7 @@ impl PosterOverlayPlexClient for HttpPlexPosterClient {
         }
         let response = self
             .client
-            .get(server_url(connection, thumb)?)
+            .get(self.server_url(connection, thumb).await?)
             .header("X-Plex-Token", token(connection)?)
             .send()
             .await
@@ -164,10 +233,12 @@ impl PosterOverlayPlexClient for HttpPlexPosterClient {
         item: &PlexPosterItem,
         jpeg: Vec<u8>,
     ) -> AppResult<()> {
-        let url = server_url(
-            connection,
-            &format!("library/metadata/{}/posters", item.rating_key),
-        )?;
+        let url = self
+            .server_url(
+                connection,
+                &format!("library/metadata/{}/posters", item.rating_key),
+            )
+            .await?;
         let response = self
             .client
             .post(url)
@@ -189,7 +260,7 @@ impl PosterOverlayPlexClient for HttpPlexPosterClient {
     ) -> AppResult<Option<PlexMaintenanceWindow>> {
         let response = self
             .client
-            .get(server_url(connection, ":/prefs")?)
+            .get(self.server_url(connection, ":/prefs").await?)
             .header("Accept", "application/json")
             .header("X-Plex-Token", token(connection)?)
             .send()
@@ -244,10 +315,12 @@ impl PosterOverlayPlexClient for HttpPlexPosterClient {
                 "the Plex item has no library section".into(),
             ));
         }
-        let mut url = server_url(
-            connection,
-            &format!("library/sections/{}/all", item.section_id),
-        )?;
+        let mut url = self
+            .server_url(
+                connection,
+                &format!("library/sections/{}/all", item.section_id),
+            )
+            .await?;
         url.query_pairs_mut()
             .append_pair("type", item_type)
             .append_pair("id", &item.rating_key)
@@ -289,7 +362,8 @@ mod tests {
             auto_add_enabled: false,
             default_app_permissions: AppPermissionMask::default(),
             default_library_grants: Vec::new(),
-            machine_id: Some("machine".into()),
+            // No selected server: requests go to `base_url`.
+            machine_id: None,
             api_key: Some("plex-token".into()),
             emby_server_id: None,
             emby_connect_enabled: false,
@@ -444,6 +518,37 @@ mod tests {
                 end_hour: 5
             })
         );
+    }
+
+    #[tokio::test]
+    async fn a_selected_server_is_found_through_plex_tv_not_base_url() {
+        let plex_tv = MockServer::start().await;
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/resources"))
+            .and(header("x-plex-token", "plex-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+                r#"<MediaContainer><Device clientIdentifier="machine" provides="server"><Connection uri="{}"/></Device></MediaContainer>"#,
+                server.uri()
+            )))
+            .expect(1)
+            .mount(&plex_tv)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/library/metadata/42"))
+            .respond_with(ResponseTemplate::new(404))
+            .expect(2)
+            .mount(&server)
+            .await;
+        let client = HttpPlexPosterClient::with_plex_base_url(Url::parse(&plex_tv.uri()).unwrap());
+        // The stored base URL is unreachable; only the plex.tv address works.
+        let connection = MediaServerConnection {
+            machine_id: Some("machine".into()),
+            ..connection("http://127.0.0.1:9")
+        };
+        assert_eq!(client.item(&connection, "42").await.unwrap(), None);
+        // The address is reused rather than looked up again.
+        assert_eq!(client.item(&connection, "42").await.unwrap(), None);
     }
 
     #[tokio::test]
