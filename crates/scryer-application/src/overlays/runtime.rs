@@ -78,6 +78,10 @@ pub async fn start_poster_overlay_worker(app: AppUseCase, token: CancellationTok
         }
 
         let retry_at = poll_events.then(|| tokio::time::Instant::now() + OVERLAY_EVENT_RETRY_DELAY);
+        // Plex changes held back by a maintenance window run when it ends.
+        let plex_resume_at = overlays
+            .plex_resume_at()
+            .map(tokio::time::Instant::from_std);
         tokio::select! {
             _ = token.cancelled() => return,
             _ = tokio::time::sleep_until(next_reconcile) => {
@@ -99,6 +103,17 @@ pub async fn start_poster_overlay_worker(app: AppUseCase, token: CancellationTok
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => poll_events = true,
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
             },
+            _ = async {
+                match plex_resume_at {
+                    Some(deadline) => tokio::time::sleep_until(deadline).await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                overlays.take_plex_resume_at();
+                if let Err(error) = overlays.reconcile().await {
+                    tracing::warn!(%error, "poster overlay reconcile failed");
+                }
+            }
             _ = async {
                 match retry_at {
                     Some(deadline) => tokio::time::sleep_until(deadline).await,

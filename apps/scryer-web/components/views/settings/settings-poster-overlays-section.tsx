@@ -59,6 +59,7 @@ type SettingsPosterOverlaysSectionProps = {
     React.SetStateAction<{ parallelism: string; reconcileHours: string }>
   >;
   onSaveSettings: (event: React.FormEvent<HTMLFormElement>) => void;
+  onSetPlexPush: (enabled: boolean) => void;
   onRebuild: () => void;
   onRequestRevertAll: () => void;
   templateDraft: PosterOverlayTemplateDraft | null;
@@ -87,6 +88,7 @@ export function SettingsPosterOverlaysSection({
   settingsDraft,
   setSettingsDraft,
   onSaveSettings,
+  onSetPlexPush,
   onRebuild,
   onRequestRevertAll,
   templateDraft,
@@ -317,6 +319,38 @@ export function SettingsPosterOverlaysSection({
             {t("label.save")}
           </Button>
         </form>
+      </section>
+
+      <section id="settings-poster-overlays-plex" className={PANEL_CLASS}>
+        <div className={PANEL_HEADER_CLASS}>
+          <h3 className={PANEL_TITLE_CLASS}>{t("settings.posterOverlays.plexTitle")}</h3>
+          <Switch
+            id="settings-poster-overlays-plex-push"
+            aria-label={t("settings.posterOverlays.plexPush")}
+            checked={overview.settings.plexPushEnabled}
+            disabled={disabled}
+            onCheckedChange={onSetPlexPush}
+          />
+        </div>
+        <div className={`${PANEL_BODY_CLASS} space-y-2`}>
+          <p className={MUTED_TEXT_CLASS}>{t("settings.posterOverlays.plexPushHelp")}</p>
+          {overview.settings.plexPushEnabled ||
+          counts.plexPushed + counts.plexFailed + counts.plexChanged > 0 ? (
+            <p id="settings-poster-overlays-plex-counts">
+              {t("settings.posterOverlays.plexCounts", { pushed: counts.plexPushed })}
+              {counts.plexChanged > 0 ? (
+                <span className={`ml-2 ${MUTED_TEXT_CLASS}`}>
+                  {t("settings.posterOverlays.plexChangedCount", { count: counts.plexChanged })}
+                </span>
+              ) : null}
+              {counts.plexFailed > 0 ? (
+                <span className="ml-2 text-destructive">
+                  {t("settings.posterOverlays.plexFailedCount", { count: counts.plexFailed })}
+                </span>
+              ) : null}
+            </p>
+          ) : null}
+        </div>
       </section>
 
       <section className={PANEL_CLASS}>

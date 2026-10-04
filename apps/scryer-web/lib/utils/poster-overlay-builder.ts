@@ -13,6 +13,8 @@ export const OVERLAY_CANVAS_WIDTH = 1000;
 export const OVERLAY_CANVAS_HEIGHT = 1500;
 
 export const MIN_FONT_SIZE = 6;
+/** Most lines fitted text may wrap onto, matching the server. */
+export const MAX_FIT_LINES = 4;
 export const MAX_FONT_SIZE = 400;
 
 export type OverlayTextAlign = "start" | "middle" | "end";
@@ -84,6 +86,11 @@ export type OverlayElement = {
   backgroundOpacity: number;
   align: OverlayTextAlign;
   letterSpacing: number;
+  /**
+   * 0 keeps the font size. 1 shrinks the text to fit the box on one line;
+   * 2 or more also lets it wrap onto that many lines.
+   */
+  fitLines: number;
   /** Set for a ratings badge; its box is then one tile. */
   ratings: OverlayRatings | null;
 };
@@ -191,6 +198,7 @@ export function newElement(kind: OverlayBadgeKind, key: string): OverlayElement 
     backgroundOpacity: 0.82,
     align: "middle",
     letterSpacing: 0,
+    fitLines: kind === "ratings" ? 0 : kind === "edition" ? 2 : 1,
     ratings:
       kind === "ratings"
         ? {
@@ -283,6 +291,7 @@ export function clampElement(element: OverlayElement): OverlayElement {
     radius: clamp(element.radius, 0, Math.min(width, height) / 2),
     backgroundOpacity: clamp(element.backgroundOpacity, 0, 1),
     letterSpacing: clamp(element.letterSpacing, -20, 100),
+    fitLines: Math.round(clamp(element.fitLines, 0, MAX_FIT_LINES)),
     ratings: element.ratings
       ? {
           ...element.ratings,
@@ -295,8 +304,20 @@ export function clampElement(element: OverlayElement): OverlayElement {
 /** Inter's cap height is about 0.73em; half of it centres capitals in the box. */
 const CAP_CENTER_RATIO = 0.36;
 
+function textPadding(element: OverlayElement): number {
+  return Math.max(8, element.fontSize * 0.4);
+}
+
+/** `data-scryer-fit`: the box inside the padding the text must fit in. */
+function fitBox(element: OverlayElement): string {
+  const padding = textPadding(element);
+  return [element.x + padding, element.y, Math.max(1, element.width - padding * 2), element.height]
+    .map(formatNumber)
+    .join(" ");
+}
+
 function textAnchorX(element: OverlayElement): number {
-  const padding = Math.max(8, element.fontSize * 0.4);
+  const padding = textPadding(element);
   switch (element.align) {
     case "start":
       return element.x + padding;
@@ -437,6 +458,8 @@ function serializeElement(element: OverlayElement): string {
     `fill="${element.textColor}"`,
     `text-anchor="${element.align}"`,
     element.letterSpacing !== 0 ? `letter-spacing="${formatNumber(element.letterSpacing)}"` : "",
+    element.fitLines > 0 ? `data-scryer-fit="${fitBox(element)}"` : "",
+    element.fitLines > 1 ? `data-scryer-fit-lines="${element.fitLines}"` : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -507,6 +530,8 @@ const TEXT_ATTRIBUTES = [
   "fill",
   "text-anchor",
   "letter-spacing",
+  "data-scryer-fit",
+  "data-scryer-fit-lines",
 ] as const;
 
 const BADGE_PATTERN = /^<g\b([^>]*)>\s*<rect\b([^>]*?)\/>\s*<text\b([^>]*)>([^<]*)<\/text>\s*<\/g>/;
@@ -560,7 +585,7 @@ function parseBadgeParts(
   if (values.some((value) => value === null || Number.isNaN(value)) || !background || !textColor) {
     return null;
   }
-  return {
+  const element: OverlayElement = {
     key,
     showWhen: group.get("data-scryer-if") ?? "",
     hideWhen: group.get("data-scryer-unless") ?? "",
@@ -576,8 +601,26 @@ function parseBadgeParts(
     backgroundOpacity: backgroundOpacity as number,
     align: anchor,
     letterSpacing: letterSpacing as number,
+    fitLines: 0,
     ratings: null,
   };
+  const fit = text.get("data-scryer-fit");
+  const fitLines = text.get("data-scryer-fit-lines");
+  if (fit === undefined) {
+    return fitLines === undefined ? element : null;
+  }
+  const lines = fitLines === undefined ? 1 : Number(fitLines.trim());
+  if (!Number.isInteger(lines) || lines < 1 || lines > MAX_FIT_LINES) {
+    return null;
+  }
+  const fitted = { ...element, fitLines: lines };
+  // A box the editor did not write stays with the SVG editor.
+  return fit
+    .trim()
+    .split(/[\s,]+/)
+    .join(" ") === fitBox(fitted)
+    ? fitted
+    : null;
 }
 
 const STACK_PATTERN =

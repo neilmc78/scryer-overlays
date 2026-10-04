@@ -3314,7 +3314,7 @@ export const setPosterOverlayLibraryMutation = `mutation SetPosterOverlayLibrary
 }`;
 
 export const updatePosterOverlaySettingsMutation = `mutation UpdatePosterOverlaySettings($input: UpdatePosterOverlaySettingsInput!) {
-  updatePosterOverlaySettings(input: $input) { parallelism reconcileIntervalSeconds }
+  updatePosterOverlaySettings(input: $input) { parallelism reconcileIntervalSeconds plexPushEnabled }
 }`;
 
 export const savePosterOverlayTemplateMutation = `mutation SavePosterOverlayTemplate($input: SavePosterOverlayTemplateInput!) {

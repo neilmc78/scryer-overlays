@@ -19884,7 +19884,8 @@ type MutationRoot {
 		input: SetPosterOverlayLibraryInput!
 	): Boolean!
 	"""
-	Change render parallelism and the safety-net reconcile interval.
+	Change render parallelism, the safety-net reconcile interval and
+	whether posters are pushed to Plex.
 	"""
 	updatePosterOverlaySettings(
 		"""
@@ -21391,6 +21392,18 @@ type PosterOverlayCounts {
 	Of those, titles with no poster artwork to draw on yet.
 	"""
 	noArtwork: Int!
+	"""
+	Titles whose current overlay is the poster on a Plex server.
+	"""
+	plexPushed: Int!
+	"""
+	Titles whose last push to a Plex server failed.
+	"""
+	plexFailed: Int!
+	"""
+	Titles whose poster was changed in Plex after a push and left alone.
+	"""
+	plexChanged: Int!
 }
 
 """
@@ -21554,6 +21567,11 @@ type PosterOverlaySettings {
 	upstream artwork.
 	"""
 	reconcileIntervalSeconds: Int!
+	"""
+	Whether rendered posters are uploaded to the Plex items their titles
+	are matched to.
+	"""
+	plexPushEnabled: Boolean!
 }
 
 """
@@ -31238,6 +31256,11 @@ input UpdatePosterOverlaySettingsInput {
 	Seconds between safety-net passes.
 	"""
 	reconcileIntervalSeconds: Int!
+	"""
+	Upload rendered posters to matched Plex items; null keeps the
+	current setting.
+	"""
+	plexPushEnabled: Boolean
 }
 
 """

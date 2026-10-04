@@ -191,6 +191,7 @@ export function SettingsPosterOverlaysContainer({
         settingsDraft={settingsDraft}
         setSettingsDraft={setSettingsDraft}
         onSaveSettings={saveSettings}
+        onSetPlexPush={(enabled) => void overlays.setPlexPush(enabled)}
         onRebuild={() => void overlays.rebuild()}
         onRequestRevertAll={() => setConfirmRevert(true)}
         templateDraft={templateDraft}

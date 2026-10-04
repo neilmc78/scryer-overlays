@@ -6,13 +6,17 @@ use futures_util::StreamExt;
 use scryer_domain::{AppPermission, Id, User};
 
 use super::fields::{OverlayFields, OverlaySampleValues, blake3_hex, input_hash, template_version};
+use super::plex::{PlexPush, PlexSyncCounts};
 use super::ports::{
     MAX_OVERLAY_PARALLELISM, MIN_OVERLAY_RECONCILE_INTERVAL_SECONDS, PosterOverlayEngine,
     PosterOverlayLibraryConfig, PosterOverlayPreviewPoster, PosterOverlayPreviewRequest,
     PosterOverlayRenderRequest, PosterOverlayRepository, PosterOverlaySettings, PosterOverlayState,
     PosterOverlayStatusCounts, PosterOverlayTemplate, PosterOverlayVariant,
 };
-use crate::{AppError, AppResult, AppUseCase, ImageProxyKind, ImageProxySourceRecord};
+use crate::{
+    AppError, AppResult, AppUseCase, ImageProxyKind, ImageProxySourceRecord,
+    MediaServerConnectionRepository,
+};
 
 /// Keyset page size for library-wide passes.
 pub(crate) const OVERLAY_PASS_PAGE: usize = 200;
@@ -29,6 +33,8 @@ pub struct AppPosterOverlayServices {
     /// The library-wide pass in progress, if any. Kept in memory so the
     /// settings page can follow a rebuild without querying the database.
     pass: Arc<Mutex<PosterOverlayPassProgress>>,
+    /// Pushes rendered posters to Plex; absent where no client is wired.
+    pub(crate) plex: Option<PlexPush>,
     /// Whether any library has overlays enabled. Lets the image route skip
     /// the overlay lookup entirely on installs that do not use overlays.
     /// Starts `true` so nothing is missed before the first refresh.
@@ -45,8 +51,39 @@ impl AppPosterOverlayServices {
             engine,
             wake: Arc::new(tokio::sync::Notify::new()),
             pass: Arc::new(Mutex::new(PosterOverlayPassProgress::default())),
+            plex: None,
             any_library_enabled: Arc::new(AtomicBool::new(true)),
         }
+    }
+
+    /// Push rendered posters to the Plex servers in `connections` through
+    /// `client`, when the overlay settings turn push on.
+    pub fn with_plex(
+        mut self,
+        connections: Arc<dyn MediaServerConnectionRepository>,
+        client: Arc<dyn super::ports::PosterOverlayPlexClient>,
+    ) -> Self {
+        self.plex = Some(PlexPush::new(connections, client));
+        self
+    }
+
+    /// When Plex work held back by a maintenance window should run.
+    pub(crate) fn plex_resume_at(&self) -> Option<std::time::Instant> {
+        self.plex.as_ref().and_then(PlexPush::resume_at)
+    }
+
+    /// Clear the pending resume once a pass picks the deferred work up.
+    pub(crate) fn take_plex_resume_at(&self) -> Option<std::time::Instant> {
+        self.plex.as_ref().and_then(PlexPush::take_resume_at)
+    }
+
+    async fn plex_push_enabled(&self) -> bool {
+        self.plex.is_some()
+            && self
+                .repository
+                .get_settings()
+                .await
+                .is_ok_and(|settings| settings.plex_push_enabled)
     }
 
     /// Re-read whether any library has overlays enabled.
@@ -110,7 +147,29 @@ impl AppPosterOverlayServices {
     /// Bring one title's overlay up to date. Idempotent: a title whose
     /// `input_hash` is unchanged is not re-rendered. Failures are recorded
     /// on the title's state and the previous output keeps being served.
+    /// When Plex push is on, the poster is then brought up to date on every
+    /// Plex server the title is matched on.
     pub async fn process_title(&self, title_id: &str) -> PosterOverlayOutcome {
+        let push = self.plex_push_enabled().await;
+        self.process_title_and_push(title_id, push).await.0
+    }
+
+    async fn process_title_and_push(
+        &self,
+        title_id: &str,
+        push: bool,
+    ) -> (PosterOverlayOutcome, PlexSyncCounts) {
+        let outcome = self.render_title(title_id).await;
+        let plex = match outcome {
+            PosterOverlayOutcome::Rendered { .. } | PosterOverlayOutcome::Unchanged if push => {
+                self.sync_plex(title_id).await
+            }
+            _ => PlexSyncCounts::default(),
+        };
+        (outcome, plex)
+    }
+
+    async fn render_title(&self, title_id: &str) -> PosterOverlayOutcome {
         match process_title(self, title_id).await {
             Ok(outcome) => outcome,
             Err(error) => {
@@ -147,19 +206,16 @@ impl AppPosterOverlayServices {
         title_ids: Vec<String>,
         track: bool,
     ) -> PosterOverlayPassSummary {
-        let parallelism = self
-            .repository
-            .get_settings()
-            .await
-            .map(|settings| settings.parallelism)
-            .unwrap_or(super::ports::DEFAULT_OVERLAY_PARALLELISM)
-            .clamp(1, MAX_OVERLAY_PARALLELISM);
+        let settings = self.repository.get_settings().await.unwrap_or_default();
+        let parallelism = settings.parallelism.clamp(1, MAX_OVERLAY_PARALLELISM);
+        let push = self.plex.is_some() && settings.plex_push_enabled;
         let mut summary = PosterOverlayPassSummary::default();
         let mut outcomes = futures_util::stream::iter(title_ids)
-            .map(|title_id| async move { self.process_title(&title_id).await })
+            .map(|title_id| async move { self.process_title_and_push(&title_id, push).await })
             .buffer_unordered(parallelism);
-        while let Some(outcome) = outcomes.next().await {
+        while let Some((outcome, plex)) = outcomes.next().await {
             summary.record(&outcome);
+            summary.plex.merge(plex);
             if track {
                 self.update_pass(|pass| {
                     pass.processed += 1;
@@ -228,12 +284,28 @@ impl AppPosterOverlayServices {
             after = Some(last);
         }
 
+        let push = self.plex_push_enabled().await;
+        summary
+            .plex
+            .merge(self.restore_inactive_plex_posters(push).await);
+
         if !title_ids.is_empty() {
             tracing::info!(
                 rendered = summary.rendered,
                 unchanged = summary.unchanged,
                 failed = summary.failed,
                 "poster overlay reconcile finished"
+            );
+        }
+        let plex = summary.plex;
+        if plex.pushed + plex.restored + plex.changed_in_plex + plex.deferred + plex.failed > 0 {
+            tracing::info!(
+                pushed = plex.pushed,
+                restored = plex.restored,
+                changed_in_plex = plex.changed_in_plex,
+                deferred_for_maintenance = plex.deferred,
+                failed = plex.failed,
+                "poster overlay Plex sync finished"
             );
         }
         if summary.no_artwork > 0 {
@@ -398,6 +470,8 @@ pub struct PosterOverlayPassSummary {
     pub skipped: usize,
     pub no_artwork: usize,
     pub failed: usize,
+    /// What the pass did on Plex servers.
+    pub plex: PlexSyncCounts,
 }
 
 impl PosterOverlayPassSummary {
@@ -407,6 +481,7 @@ impl PosterOverlayPassSummary {
         self.skipped += other.skipped;
         self.no_artwork += other.no_artwork;
         self.failed += other.failed;
+        self.plex.merge(other.plex);
     }
 
     fn record(&mut self, outcome: &PosterOverlayOutcome) {
@@ -497,14 +572,16 @@ impl AppUseCase {
         actor: &User,
         parallelism: usize,
         reconcile_interval_seconds: u64,
+        plex_push_enabled: Option<bool>,
     ) -> AppResult<PosterOverlaySettings> {
         self.require_app_permission(actor, AppPermission::ManageCatalogSettings)
             .await?;
         let overlays = self.require_poster_overlays()?;
+        let previous = overlays.repository.get_settings().await?;
         let settings = PosterOverlaySettings {
             parallelism,
             reconcile_interval_seconds,
-            ..overlays.repository.get_settings().await?
+            plex_push_enabled: plex_push_enabled.unwrap_or(previous.plex_push_enabled),
         };
         if settings.parallelism == 0 || settings.parallelism > MAX_OVERLAY_PARALLELISM {
             return Err(AppError::Validation(format!(
@@ -518,6 +595,11 @@ impl AppUseCase {
         }
         overlays.repository.save_settings(&settings).await?;
         overlays.engine.set_parallelism(settings.parallelism);
+        // Turning push on uploads every poster; turning it off puts the
+        // originals back. Either way a pass does the work.
+        if previous.plex_push_enabled != settings.plex_push_enabled {
+            overlays.request_pass();
+        }
         Ok(settings)
     }
 
@@ -673,7 +755,12 @@ impl AppUseCase {
     pub async fn revert_all_poster_overlays(&self, actor: &User) -> AppResult<usize> {
         self.require_app_permission(actor, AppPermission::ManageCatalogSettings)
             .await?;
-        self.require_poster_overlays()?.revert_all().await
+        let overlays = self.require_poster_overlays()?;
+        let reverted = overlays.revert_all().await?;
+        // Every library is disabled now, so every poster pushed to Plex is
+        // inactive and gets its original back.
+        overlays.restore_inactive_plex_posters(false).await;
+        Ok(reverted)
     }
 
     /// The overlaid poster for the image route, or `None` to serve the stored

@@ -14,8 +14,8 @@ pub struct PosterOverlaySettings {
     /// Upper bound on concurrent renders, and the size of the render pool.
     pub parallelism: usize,
     pub reconcile_interval_seconds: u64,
-    /// Phase 2: push rendered posters to Plex. Stored now so the setting has
-    /// a home; nothing reads it yet.
+    /// Upload rendered posters to every enabled Plex server the titles are
+    /// matched on, and lock them there.
     pub plex_push_enabled: bool,
 }
 
@@ -100,6 +100,28 @@ pub struct PosterOverlayStatusCounts {
     pub failed: i64,
     /// Enabled titles with no poster artwork to draw on yet.
     pub no_artwork: i64,
+    /// Titles whose current overlay is the poster on a Plex server.
+    pub plex_pushed: i64,
+    /// Titles whose last push to a Plex server failed.
+    pub plex_failed: i64,
+    /// Titles whose poster was changed in Plex after a push and left alone.
+    pub plex_changed: i64,
+}
+
+/// What was pushed to one Plex server for one title.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PosterOverlayPlexState {
+    pub connection_id: String,
+    pub title_id: String,
+    /// The Plex item (`ratingKey`) the poster was uploaded to.
+    pub provider_item_id: String,
+    /// The rendered output uploaded; `None` until an upload succeeds.
+    pub pushed_output_hash: Option<String>,
+    /// The item's `thumb` right after the upload. A different value later
+    /// means the poster was changed in Plex.
+    pub pushed_thumb: Option<String>,
+    pub pushed_at: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
 }
 
 #[async_trait]
@@ -148,6 +170,20 @@ pub trait PosterOverlayRepository: Send + Sync {
     async fn save_state(&self, state: &PosterOverlayState) -> AppResult<()>;
     async fn delete_state(&self, title_id: &str) -> AppResult<()>;
     async fn status_counts(&self) -> AppResult<PosterOverlayStatusCounts>;
+
+    async fn get_plex_state(
+        &self,
+        connection_id: &str,
+        title_id: &str,
+    ) -> AppResult<Option<PosterOverlayPlexState>>;
+    async fn save_plex_state(&self, state: &PosterOverlayPlexState) -> AppResult<()>;
+    async fn delete_plex_state(&self, connection_id: &str, title_id: &str) -> AppResult<()>;
+    /// Every Plex push record, keyset-paged by `(title_id, connection_id)`.
+    async fn list_plex_states(
+        &self,
+        after: Option<(&str, &str)>,
+        limit: usize,
+    ) -> AppResult<Vec<PosterOverlayPlexState>>;
 
     /// The output hash to serve for a title, only when its library has
     /// overlays enabled and a render exists.
@@ -235,6 +271,67 @@ pub struct PosterOverlayPreviewRequest {
     pub background: Option<Vec<u8>>,
     pub template_svg: String,
     pub values: std::collections::BTreeMap<&'static str, String>,
+}
+
+/// A Plex item's poster, as the push reads it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PlexPosterItem {
+    pub rating_key: String,
+    /// `movie` or `show`.
+    pub item_type: String,
+    /// The library section holding the item.
+    pub section_id: String,
+    /// Path of the selected poster, such as `/library/metadata/1/thumb/1700`.
+    /// Plex gives it a new value whenever a different poster is selected.
+    pub thumb: Option<String>,
+}
+
+/// Hours Plex runs its scheduled maintenance, in the server's local time.
+/// `end_hour` may be earlier than `start_hour` for a window past midnight.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PlexMaintenanceWindow {
+    pub start_hour: u32,
+    pub end_hour: u32,
+}
+
+/// Reads and replaces posters on a Plex server through a stored connection.
+/// Nothing here deletes anything on the server: superseded uploads stay in
+/// Plex until its own "Clean Bundles" task removes them.
+#[async_trait]
+pub trait PosterOverlayPlexClient: Send + Sync {
+    /// The item, or `None` when the server no longer has it.
+    async fn item(
+        &self,
+        connection: &scryer_domain::MediaServerConnection,
+        rating_key: &str,
+    ) -> AppResult<Option<PlexPosterItem>>;
+    /// The bytes of the item's selected poster.
+    async fn current_poster(
+        &self,
+        connection: &scryer_domain::MediaServerConnection,
+        item: &PlexPosterItem,
+    ) -> AppResult<Option<Vec<u8>>>;
+    /// Upload `jpeg` as the item's poster; Plex selects it.
+    async fn upload_poster(
+        &self,
+        connection: &scryer_domain::MediaServerConnection,
+        item: &PlexPosterItem,
+        jpeg: Vec<u8>,
+    ) -> AppResult<()>;
+    /// The server's scheduled maintenance hours (`ButlerStartHour` and
+    /// `ButlerEndHour`), or `None` when it does not report them.
+    async fn maintenance_window(
+        &self,
+        connection: &scryer_domain::MediaServerConnection,
+    ) -> AppResult<Option<PlexMaintenanceWindow>>;
+    /// Lock or unlock the poster field. A locked poster survives Plex's
+    /// metadata refreshes.
+    async fn set_poster_locked(
+        &self,
+        connection: &scryer_domain::MediaServerConnection,
+        item: &PlexPosterItem,
+        locked: bool,
+    ) -> AppResult<()>;
 }
 
 /// Rendering, marker detection and overlay file ownership. Everything this

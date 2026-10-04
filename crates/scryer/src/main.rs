@@ -1645,7 +1645,11 @@ async fn bootstrap_application(
         )))
         .with_plugin_descriptor_loader(Arc::new(scryer_plugins::WasmPluginDescriptorLoader))
         .with_tracked_download_handle(TrackedDownloadHandle::new(tracked_download_tx))
-        .with_poster_overlays(build_poster_overlays(datastore.datastore(), &data_dir))
+        .with_poster_overlays(build_poster_overlays(
+            datastore.datastore(),
+            datastore.media_server_connections(),
+            &data_dir,
+        ))
         .build();
 
     let webauthn = build_webauthn_runtime();
@@ -2380,13 +2384,23 @@ fn image_proxy_response(headers: &HeaderMap, blob: Option<ImageProxyBlob>) -> Re
 /// unchanged, if the render pool cannot start.
 fn build_poster_overlays(
     datastore: scryer_infrastructure_sql::runtime::StoreDatastore,
+    media_server_connections: Arc<dyn scryer_application::MediaServerConnectionRepository>,
     data_dir: &std::path::Path,
 ) -> Option<AppPosterOverlayServices> {
     match OverlayEngine::with_http_fetch(data_dir) {
-        Ok(engine) => Some(AppPosterOverlayServices::new(
-            Arc::new(PosterOverlayStore::new(datastore)),
-            Arc::new(engine),
-        )),
+        Ok(engine) => Some(
+            AppPosterOverlayServices::new(
+                Arc::new(PosterOverlayStore::new(datastore)),
+                Arc::new(engine),
+            )
+            .with_plex(
+                media_server_connections,
+                Arc::new(
+                    scryer_infrastructure_identity::media_server_posters::HttpPlexPosterClient::new(
+                    ),
+                ),
+            ),
+        ),
         Err(error) => {
             tracing::warn!(%error, "poster overlays are unavailable");
             None

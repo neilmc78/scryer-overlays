@@ -11,13 +11,19 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use chrono::Utc;
 use image::{ImageFormat, Rgb, RgbImage};
+use scryer_application::MediaServerConnectionRepository;
 use scryer_application::overlays::{
-    AppPosterOverlayServices, PosterOverlayOutcome, PosterOverlayRepository,
+    AppPosterOverlayServices, PlexMaintenanceWindow, PlexPosterItem, PosterOverlayOutcome,
+    PosterOverlayPlexClient, PosterOverlayRepository, PosterOverlaySettings,
     overlay_title_for_proxy_source,
 };
 use scryer_application::{
     AppResult, ImageProxyKind, ImageProxyRegistration, ImageProxyRepository, TitleExternalRating,
     TitleRatingSummary,
+};
+use scryer_domain::{
+    AppPermissionMask, MediaServerConnection, MediaServerPlaybackEntityKind,
+    MediaServerPlaybackItem, MediaServerProvider,
 };
 use scryer_infrastructure_datastore::postgres::PostgresServices;
 use scryer_infrastructure_datastore::{MigrationMode, SqliteServices};
@@ -570,5 +576,384 @@ async fn renders_from_the_title_poster_url_when_the_image_cache_is_empty(
     assert_eq!(
         local_path, None,
         "overlay path {rendered} must not survive revert"
+    );
+}
+
+// ── Plex push ─────────────────────────────────────────────────────────────
+
+const PLEX_CONNECTION: &str = "plex-1";
+const PLEX_ITEM: &str = "4242";
+
+/// One Plex item held in memory: its selected poster, a thumb path that
+/// changes whenever the poster does, and whether the field is locked.
+#[derive(Default)]
+struct FakePlexItem {
+    poster: Vec<u8>,
+    version: u32,
+    locked: bool,
+    uploads: usize,
+}
+
+#[derive(Default)]
+struct FakePlex {
+    item: Mutex<FakePlexItem>,
+    maintenance: Mutex<Option<PlexMaintenanceWindow>>,
+}
+
+impl FakePlex {
+    /// Someone selects another poster in Plex.
+    fn select(&self, poster: Vec<u8>) {
+        let mut item = self.item.lock().unwrap();
+        item.poster = poster;
+        item.version += 1;
+    }
+
+    fn snapshot(&self) -> (Vec<u8>, bool, usize) {
+        let item = self.item.lock().unwrap();
+        (item.poster.clone(), item.locked, item.uploads)
+    }
+
+    fn plex_item(&self) -> PlexPosterItem {
+        let item = self.item.lock().unwrap();
+        PlexPosterItem {
+            rating_key: PLEX_ITEM.into(),
+            item_type: "movie".into(),
+            section_id: "1".into(),
+            thumb: Some(format!(
+                "/library/metadata/{PLEX_ITEM}/thumb/{}",
+                item.version
+            )),
+        }
+    }
+}
+
+#[async_trait]
+impl PosterOverlayPlexClient for FakePlex {
+    async fn item(
+        &self,
+        _connection: &MediaServerConnection,
+        rating_key: &str,
+    ) -> AppResult<Option<PlexPosterItem>> {
+        Ok((rating_key == PLEX_ITEM).then(|| self.plex_item()))
+    }
+
+    async fn current_poster(
+        &self,
+        _connection: &MediaServerConnection,
+        _item: &PlexPosterItem,
+    ) -> AppResult<Option<Vec<u8>>> {
+        Ok(Some(self.item.lock().unwrap().poster.clone()))
+    }
+
+    async fn upload_poster(
+        &self,
+        _connection: &MediaServerConnection,
+        _item: &PlexPosterItem,
+        jpeg: Vec<u8>,
+    ) -> AppResult<()> {
+        let mut item = self.item.lock().unwrap();
+        item.poster = jpeg;
+        item.version += 1;
+        item.uploads += 1;
+        Ok(())
+    }
+
+    async fn maintenance_window(
+        &self,
+        _connection: &MediaServerConnection,
+    ) -> AppResult<Option<PlexMaintenanceWindow>> {
+        Ok(*self.maintenance.lock().unwrap())
+    }
+
+    async fn set_poster_locked(
+        &self,
+        _connection: &MediaServerConnection,
+        _item: &PlexPosterItem,
+        locked: bool,
+    ) -> AppResult<()> {
+        self.item.lock().unwrap().locked = locked;
+        Ok(())
+    }
+}
+
+/// One enabled Plex connection with the title matched to `PLEX_ITEM`.
+struct FakeConnections;
+
+fn plex_connection() -> MediaServerConnection {
+    MediaServerConnection {
+        id: PLEX_CONNECTION.into(),
+        provider: MediaServerProvider::Plex,
+        display_name: "Plex".into(),
+        base_url: "http://plex.local:32400".into(),
+        external_url: None,
+        enabled: true,
+        login_enabled: false,
+        linking_enabled: false,
+        auto_add_enabled: false,
+        default_app_permissions: AppPermissionMask::default(),
+        default_library_grants: Vec::new(),
+        machine_id: Some("machine".into()),
+        api_key: Some("token".into()),
+        emby_server_id: None,
+        emby_connect_enabled: false,
+        path_mappings: Vec::new(),
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    }
+}
+
+#[async_trait]
+impl MediaServerConnectionRepository for FakeConnections {
+    async fn list(
+        &self,
+        _provider: Option<MediaServerProvider>,
+    ) -> AppResult<Vec<MediaServerConnection>> {
+        Ok(vec![plex_connection()])
+    }
+    async fn get_by_id(&self, _id: &str) -> AppResult<Option<MediaServerConnection>> {
+        Ok(Some(plex_connection()))
+    }
+    async fn create(&self, connection: MediaServerConnection) -> AppResult<MediaServerConnection> {
+        Ok(connection)
+    }
+    async fn update(&self, connection: MediaServerConnection) -> AppResult<MediaServerConnection> {
+        Ok(connection)
+    }
+    async fn list_playback_items_for_entity(
+        &self,
+        entity_kind: MediaServerPlaybackEntityKind,
+        entity_id: &str,
+    ) -> AppResult<Vec<MediaServerPlaybackItem>> {
+        Ok(
+            (entity_kind == MediaServerPlaybackEntityKind::Title && entity_id == TITLE)
+                .then(|| MediaServerPlaybackItem {
+                    connection_id: PLEX_CONNECTION.into(),
+                    entity_kind,
+                    entity_id: entity_id.into(),
+                    provider_item_id: PLEX_ITEM.into(),
+                    last_seen_at: Utc::now(),
+                })
+                .into_iter()
+                .collect(),
+        )
+    }
+    async fn replace_playback_items_for_connection(
+        &self,
+        _connection_id: &str,
+        _items: Vec<MediaServerPlaybackItem>,
+    ) -> AppResult<()> {
+        Ok(())
+    }
+    async fn delete(&self, _id: &str) -> AppResult<()> {
+        Ok(())
+    }
+    async fn has_external_accounts(&self, _id: &str) -> AppResult<bool> {
+        Ok(false)
+    }
+    async fn has_notification_channels(&self, _id: &str) -> AppResult<bool> {
+        Ok(false)
+    }
+}
+
+async fn set_plex_push(store: &PosterOverlayStore, enabled: bool) {
+    let settings = store.get_settings().await.unwrap();
+    store
+        .save_settings(&PosterOverlaySettings {
+            plex_push_enabled: enabled,
+            ..settings
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn pushes_to_plex_only_on_change_and_respects_posters_changed_there_sqlite() {
+    let dir = tempfile::tempdir().unwrap();
+    let services = SqliteServices::new(dir.path().join("scryer.db").to_string_lossy())
+        .await
+        .expect("sqlite services");
+    pushes_to_plex_only_on_change_and_respects_posters_changed_there(
+        services.datastore(),
+        dir.path(),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn pushes_to_plex_only_on_change_and_respects_posters_changed_there_postgres() {
+    let Some(admin_url) = std::env::var("SCRYER_TEST_POSTGRES_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+    else {
+        eprintln!("skipping PostgreSQL Plex push test; SCRYER_TEST_POSTGRES_URL is not set");
+        return;
+    };
+    let database = format!("scryer_overlay_{}", uuid::Uuid::new_v4().simple());
+    let admin = sqlx::PgPool::connect(&admin_url)
+        .await
+        .expect("postgres admin");
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {database}")))
+        .execute(&admin)
+        .await
+        .expect("create test database");
+    let mut url = url::Url::parse(&admin_url).expect("postgres url");
+    url.set_path(&format!("/{database}"));
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let services = PostgresServices::new_with_mode(url.as_str(), MigrationMode::Apply)
+            .await
+            .expect("postgres services");
+        pushes_to_plex_only_on_change_and_respects_posters_changed_there(
+            services.datastore(),
+            dir.path(),
+        )
+        .await;
+    }
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE {database} WITH (FORCE)"
+    )))
+    .execute(&admin)
+    .await
+    .expect("drop test database");
+}
+
+async fn pushes_to_plex_only_on_change_and_respects_posters_changed_there(
+    datastore: StoreDatastore,
+    data_dir: &std::path::Path,
+) {
+    seed(&datastore).await;
+    let now = Utc::now();
+    exec(
+        &datastore,
+        "INSERT INTO media_server_connections (id, provider, display_name, base_url, created_at, updated_at)
+         VALUES ({}, 'plex', 'Plex', 'http://plex.local:32400', {}, {})",
+        vec![
+            SqlArg::Text(PLEX_CONNECTION.into()),
+            SqlArg::Timestamp(now),
+            SqlArg::Timestamp(now),
+        ],
+    )
+    .await;
+
+    let fetch = Arc::new(ScriptedFetch::default());
+    fetch.serve(poster(10));
+    let plex = Arc::new(FakePlex::default());
+    plex.select(poster(77));
+    let store = Arc::new(PosterOverlayStore::new(datastore.clone()));
+    let overlays = AppPosterOverlayServices::new(
+        store.clone(),
+        Arc::new(OverlayEngine::new(data_dir, fetch.clone()).unwrap()),
+    )
+    .with_plex(Arc::new(FakeConnections), plex.clone());
+    store.set_library_config(LIBRARY, true, None).await.unwrap();
+
+    // Push off: rendering never touches Plex.
+    rendered_hash(overlays.process_title(TITLE).await);
+    assert_eq!(plex.snapshot().2, 0);
+
+    // Push on: the overlay is uploaded and locked.
+    set_plex_push(&store, true).await;
+    let summary = overlays.reconcile().await.unwrap();
+    assert_eq!(summary.plex.pushed, 1);
+    let (shown, locked, uploads) = plex.snapshot();
+    assert!(has_marker(&shown) && locked);
+    assert_eq!(uploads, 1);
+    let counts = store.status_counts().await.unwrap();
+    assert_eq!((counts.plex_pushed, counts.plex_failed), (1, 0));
+
+    // Nothing changed: no upload.
+    overlays.reconcile().await.unwrap();
+    assert_eq!(plex.snapshot().2, 1);
+
+    // An upgrade during Plex's maintenance hours re-renders, but the upload
+    // waits for the window to end.
+    let hour = chrono::Timelike::hour(&chrono::Local::now().time());
+    *plex.maintenance.lock().unwrap() = Some(PlexMaintenanceWindow {
+        start_hour: hour,
+        // Two hours from the current one, so crossing an hour boundary
+        // mid-test still lands inside the window.
+        end_hour: (hour + 2) % 24,
+    });
+    // A fresh service: maintenance hours are cached for ten minutes.
+    let overlays = AppPosterOverlayServices::new(
+        store.clone(),
+        Arc::new(OverlayEngine::new(data_dir, fetch.clone()).unwrap()),
+    )
+    .with_plex(Arc::new(FakeConnections), plex.clone());
+    exec(
+        &datastore,
+        "UPDATE media_files SET video_width = 3840, video_height = 2160 WHERE id = 'file-1'",
+        vec![],
+    )
+    .await;
+    let summary = overlays.reconcile().await.unwrap();
+    assert_eq!((summary.rendered, summary.plex.deferred), (1, 1));
+    assert_eq!(plex.snapshot().2, 1);
+
+    // After the window, the next pass uploads it.
+    *plex.maintenance.lock().unwrap() = None;
+    let overlays = AppPosterOverlayServices::new(
+        store.clone(),
+        Arc::new(OverlayEngine::new(data_dir, fetch.clone()).unwrap()),
+    )
+    .with_plex(Arc::new(FakeConnections), plex.clone());
+    overlays.reconcile().await.unwrap();
+    assert_eq!(plex.snapshot().2, 2);
+
+    // Someone picks another poster in Plex: Scryer leaves it alone, even
+    // when its own overlay changes.
+    let chosen = poster(200);
+    plex.select(chosen.clone());
+    let summary = overlays.reconcile().await.unwrap();
+    assert_eq!(summary.plex.changed_in_plex, 1);
+    exec(
+        &datastore,
+        "UPDATE media_files SET video_width = 1280, video_height = 720 WHERE id = 'file-1'",
+        vec![],
+    )
+    .await;
+    rendered_hash(overlays.process_title(TITLE).await);
+    let (shown, _, uploads) = plex.snapshot();
+    assert_eq!((shown, uploads), (chosen.clone(), 2));
+    assert_eq!(store.status_counts().await.unwrap().plex_changed, 1);
+
+    // Selecting Scryer's poster in Plex again resumes pushing.
+    let current = overlays.image(TITLE, "original").await.unwrap().unwrap();
+    plex.select(current.bytes);
+    overlays.reconcile().await.unwrap();
+    assert_eq!(plex.snapshot().2, 3);
+    assert_eq!(store.status_counts().await.unwrap().plex_changed, 0);
+
+    // Push off: the original goes back, unlocked, and the record is gone.
+    set_plex_push(&store, false).await;
+    let summary = overlays.reconcile().await.unwrap();
+    assert_eq!(summary.plex.restored, 1);
+    let (shown, locked, _) = plex.snapshot();
+    assert!(!has_marker(&shown) && !locked);
+    assert!(
+        store
+            .get_plex_state(PLEX_CONNECTION, TITLE)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    // A poster changed in Plex is not replaced by the restore either.
+    set_plex_push(&store, true).await;
+    overlays.reconcile().await.unwrap();
+    plex.select(chosen.clone());
+    overlays.reconcile().await.unwrap();
+    store
+        .set_library_config(LIBRARY, false, None)
+        .await
+        .unwrap();
+    overlays.reconcile().await.unwrap();
+    assert_eq!(plex.snapshot().0, chosen);
+    assert!(
+        store
+            .get_plex_state(PLEX_CONNECTION, TITLE)
+            .await
+            .unwrap()
+            .is_none()
     );
 }

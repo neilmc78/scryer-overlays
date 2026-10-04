@@ -21,6 +21,9 @@ pub struct PosterOverlaySettingsPayload {
     /// Seconds between safety-net passes that pick up missed changes and new
     /// upstream artwork.
     pub reconcile_interval_seconds: i64,
+    /// Whether rendered posters are uploaded to the Plex items their titles
+    /// are matched to.
+    pub plex_push_enabled: bool,
 }
 
 impl From<PosterOverlaySettings> for PosterOverlaySettingsPayload {
@@ -29,6 +32,7 @@ impl From<PosterOverlaySettings> for PosterOverlaySettingsPayload {
             parallelism: i32::try_from(value.parallelism).unwrap_or(i32::MAX),
             reconcile_interval_seconds: i64::try_from(value.reconcile_interval_seconds)
                 .unwrap_or(i64::MAX),
+            plex_push_enabled: value.plex_push_enabled,
         }
     }
 }
@@ -105,6 +109,12 @@ pub struct PosterOverlayCountsPayload {
     pub failed: i64,
     /// Of those, titles with no poster artwork to draw on yet.
     pub no_artwork: i64,
+    /// Titles whose current overlay is the poster on a Plex server.
+    pub plex_pushed: i64,
+    /// Titles whose last push to a Plex server failed.
+    pub plex_failed: i64,
+    /// Titles whose poster was changed in Plex after a push and left alone.
+    pub plex_changed: i64,
 }
 
 impl From<PosterOverlayStatusCounts> for PosterOverlayCountsPayload {
@@ -114,6 +124,9 @@ impl From<PosterOverlayStatusCounts> for PosterOverlayCountsPayload {
             rendered: value.rendered,
             failed: value.failed,
             no_artwork: value.no_artwork,
+            plex_pushed: value.plex_pushed,
+            plex_failed: value.plex_failed,
+            plex_changed: value.plex_changed,
         }
     }
 }
@@ -295,6 +308,9 @@ pub struct UpdatePosterOverlaySettingsInput {
     pub parallelism: i32,
     /// Seconds between safety-net passes.
     pub reconcile_interval_seconds: i64,
+    /// Upload rendered posters to matched Plex items; null keeps the
+    /// current setting.
+    pub plex_push_enabled: Option<bool>,
 }
 
 /// A custom template to create or replace.

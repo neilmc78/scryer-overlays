@@ -5,9 +5,10 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use scryer_application::overlays::{
-    MAX_OVERLAY_PARALLELISM, OverlayMediaFacts, PosterOverlayInputs, PosterOverlayLibraryConfig,
-    PosterOverlayPreviewPoster, PosterOverlayRepository, PosterOverlaySettings, PosterOverlayState,
-    PosterOverlayStatusCounts, PosterOverlayTemplate,
+    MAX_OVERLAY_PARALLELISM, OverlayMediaFacts, PLEX_POSTER_CHANGED_IN_PLEX, PosterOverlayInputs,
+    PosterOverlayLibraryConfig, PosterOverlayPlexState, PosterOverlayPreviewPoster,
+    PosterOverlayRepository, PosterOverlaySettings, PosterOverlayState, PosterOverlayStatusCounts,
+    PosterOverlayTemplate,
 };
 use scryer_application::{AppResult, TitleImageKind};
 
@@ -463,6 +464,98 @@ impl PosterOverlayRepository for PosterOverlayStore {
         Ok(())
     }
 
+    async fn get_plex_state(
+        &self,
+        connection_id: &str,
+        title_id: &str,
+    ) -> AppResult<Option<PosterOverlayPlexState>> {
+        SqlRuntime::fetch_optional(
+            self.read(),
+            "SELECT connection_id, title_id, provider_item_id, pushed_output_hash, pushed_thumb,
+                    pushed_at, last_error
+               FROM poster_overlay_plex_state
+              WHERE connection_id = {} AND title_id = {}",
+            &[
+                SqlArg::Text(connection_id.to_string()),
+                SqlArg::Text(title_id.to_string()),
+            ],
+        )
+        .await?
+        .map(|row| plex_state_from_row(&row))
+        .transpose()
+    }
+
+    async fn save_plex_state(&self, state: &PosterOverlayPlexState) -> AppResult<()> {
+        SqlRuntime::execute_write(
+            &self.datastore,
+            "save_poster_overlay_plex_state",
+            "INSERT INTO poster_overlay_plex_state
+                (connection_id, title_id, provider_item_id, pushed_output_hash, pushed_thumb,
+                 pushed_at, last_error, updated_at)
+             VALUES ({}, {}, {}, {}, {}, {}, {}, {})
+             ON CONFLICT (connection_id, title_id) DO UPDATE SET
+                provider_item_id = excluded.provider_item_id,
+                pushed_output_hash = excluded.pushed_output_hash,
+                pushed_thumb = excluded.pushed_thumb,
+                pushed_at = excluded.pushed_at,
+                last_error = excluded.last_error,
+                updated_at = excluded.updated_at",
+            vec![
+                SqlArg::Text(state.connection_id.clone()),
+                SqlArg::Text(state.title_id.clone()),
+                SqlArg::Text(state.provider_item_id.clone()),
+                SqlArg::OptText(state.pushed_output_hash.clone()),
+                SqlArg::OptText(state.pushed_thumb.clone()),
+                SqlArg::OptTimestamp(state.pushed_at),
+                SqlArg::OptText(state.last_error.clone()),
+                SqlArg::Timestamp(Utc::now()),
+            ],
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn delete_plex_state(&self, connection_id: &str, title_id: &str) -> AppResult<()> {
+        SqlRuntime::execute_write(
+            &self.datastore,
+            "delete_poster_overlay_plex_state",
+            "DELETE FROM poster_overlay_plex_state WHERE connection_id = {} AND title_id = {}",
+            vec![
+                SqlArg::Text(connection_id.to_string()),
+                SqlArg::Text(title_id.to_string()),
+            ],
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn list_plex_states(
+        &self,
+        after: Option<(&str, &str)>,
+        limit: usize,
+    ) -> AppResult<Vec<PosterOverlayPlexState>> {
+        let (after_title, after_connection) = after.unwrap_or(("", ""));
+        SqlRuntime::fetch_all(
+            self.read(),
+            "SELECT connection_id, title_id, provider_item_id, pushed_output_hash, pushed_thumb,
+                    pushed_at, last_error
+               FROM poster_overlay_plex_state
+              WHERE title_id > {} OR (title_id = {} AND connection_id > {})
+              ORDER BY title_id, connection_id
+              LIMIT {}",
+            &[
+                SqlArg::Text(after_title.to_string()),
+                SqlArg::Text(after_title.to_string()),
+                SqlArg::Text(after_connection.to_string()),
+                SqlArg::I64(i64::try_from(limit).unwrap_or(i64::MAX)),
+            ],
+        )
+        .await?
+        .iter()
+        .map(plex_state_from_row)
+        .collect()
+    }
+
     async fn status_counts(&self) -> AppResult<PosterOverlayStatusCounts> {
         let row = SqlRuntime::fetch_optional(
             self.read(),
@@ -488,11 +581,36 @@ impl PosterOverlayRepository for PosterOverlayStore {
         let Some(row) = row else {
             return Ok(PosterOverlayStatusCounts::default());
         };
+        let plex = SqlRuntime::fetch_optional(
+            self.read(),
+            "SELECT COALESCE(SUM(CASE WHEN p.last_error IS NULL
+                                       AND p.pushed_output_hash = s.output_hash
+                                      THEN 1 ELSE 0 END), 0) AS pushed,
+                    COALESCE(SUM(CASE WHEN p.last_error = {} THEN 1 ELSE 0 END), 0) AS changed,
+                    COALESCE(SUM(CASE WHEN p.last_error IS NOT NULL AND p.last_error <> {}
+                                      THEN 1 ELSE 0 END), 0) AS failed
+               FROM poster_overlay_plex_state p
+               LEFT JOIN poster_overlay_state s ON s.title_id = p.title_id",
+            &[
+                SqlArg::Text(PLEX_POSTER_CHANGED_IN_PLEX.to_string()),
+                SqlArg::Text(PLEX_POSTER_CHANGED_IN_PLEX.to_string()),
+            ],
+        )
+        .await?;
+        let plex_count = |name: &str| -> AppResult<i64> {
+            Ok(match &plex {
+                Some(row) => row.i64(name)?,
+                None => 0,
+            })
+        };
         Ok(PosterOverlayStatusCounts {
             enabled_titles: row.i64("enabled_titles")?,
             rendered: row.i64("rendered")?,
             failed: row.i64("failed")?,
             no_artwork: row.i64("no_artwork")?,
+            plex_pushed: plex_count("pushed")?,
+            plex_failed: plex_count("failed")?,
+            plex_changed: plex_count("changed")?,
         })
     }
 
@@ -566,4 +684,16 @@ impl PosterOverlayRepository for PosterOverlayStore {
         .await?;
         Ok(())
     }
+}
+
+fn plex_state_from_row(row: &SqlRow) -> AppResult<PosterOverlayPlexState> {
+    Ok(PosterOverlayPlexState {
+        connection_id: row.text("connection_id")?,
+        title_id: row.text("title_id")?,
+        provider_item_id: row.text("provider_item_id")?,
+        pushed_output_hash: row.opt_text("pushed_output_hash")?,
+        pushed_thumb: row.opt_text("pushed_thumb")?,
+        pushed_at: row.opt_timestamp("pushed_at")?,
+        last_error: row.opt_text("last_error")?,
+    })
 }

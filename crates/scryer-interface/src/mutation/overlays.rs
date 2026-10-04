@@ -33,7 +33,8 @@ impl PosterOverlayMutations {
         Ok(true)
     }
 
-    /// Change render parallelism and the safety-net reconcile interval.
+    /// Change render parallelism, the safety-net reconcile interval and
+    /// whether posters are pushed to Plex.
     async fn update_poster_overlay_settings(
         &self,
         ctx: &Context<'_>,
@@ -44,7 +45,7 @@ impl PosterOverlayMutations {
         let parallelism = usize::try_from(input.parallelism).unwrap_or(0);
         let interval = u64::try_from(input.reconcile_interval_seconds).unwrap_or(0);
         let settings = app
-            .update_poster_overlay_settings(&actor, parallelism, interval)
+            .update_poster_overlay_settings(&actor, parallelism, interval, input.plex_push_enabled)
             .await
             .map_err(to_gql_error)?;
         Ok(settings.into())

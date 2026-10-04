@@ -87,8 +87,9 @@ impl OverlayRenderer {
             .iter()
             .map(|field| (*field, String::new()))
             .collect::<BTreeMap<_, _>>();
-        let resolved = template::preprocess(svg, &values)?;
-        usvg::Tree::from_str(&resolved, &self.options())
+        let options = self.options();
+        let resolved = template::preprocess_measured(svg, &values, &FontMeasure::new(&options))?;
+        usvg::Tree::from_str(&resolved, &options)
             .map(|_| ())
             .map_err(|error| AppError::Validation(format!("overlay template: {error}")))
     }
@@ -138,8 +139,10 @@ impl OverlayRenderer {
         template_svg: &str,
         values: &BTreeMap<&'static str, String>,
     ) -> AppResult<()> {
-        let resolved = template::preprocess(template_svg, values)?;
-        let tree = usvg::Tree::from_str(&resolved, &self.options())
+        let options = self.options();
+        let resolved =
+            template::preprocess_measured(template_svg, values, &FontMeasure::new(&options))?;
+        let tree = usvg::Tree::from_str(&resolved, &options)
             .map_err(|error| AppError::Validation(format!("overlay template: {error}")))?;
         let (width, height) = base.dimensions();
         let mut pixmap = tiny_skia::Pixmap::new(width, height)
@@ -178,6 +181,39 @@ impl OverlayRenderer {
 }
 
 /// Neutral slate gradient standing in for a poster.
+/// Measures text with the embedded font, by laying it out the way the
+/// renderer will. Each word is measured once per render.
+struct FontMeasure<'a> {
+    options: &'a usvg::Options<'static>,
+    cache: std::cell::RefCell<std::collections::HashMap<String, f64>>,
+}
+
+impl<'a> FontMeasure<'a> {
+    fn new(options: &'a usvg::Options<'static>) -> Self {
+        Self {
+            options,
+            cache: std::cell::RefCell::new(std::collections::HashMap::new()),
+        }
+    }
+}
+
+impl template::TextMeasure for FontMeasure<'_> {
+    fn width_at_100(&self, text: &str) -> f64 {
+        if let Some(width) = self.cache.borrow().get(text) {
+            return *width;
+        }
+        let svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="100000" height="400"><text x="0" y="200" font-family="{EMBEDDED_FONT_FAMILY}" font-weight="700" font-size="100">{}</text></svg>"#,
+            quick_xml::escape::escape(text)
+        );
+        let width = usvg::Tree::from_str(&svg, self.options)
+            .map(|tree| f64::from(tree.root().abs_bounding_box().width()))
+            .unwrap_or_else(|_| template::ApproximateMeasure.width_at_100(text));
+        self.cache.borrow_mut().insert(text.to_string(), width);
+        width
+    }
+}
+
 fn placeholder_poster() -> RgbaImage {
     const TOP: [f32; 3] = [58.0, 68.0, 92.0];
     const BOTTOM: [f32; 3] = [16.0, 19.0, 28.0];
