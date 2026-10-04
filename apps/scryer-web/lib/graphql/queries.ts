@@ -5607,12 +5607,19 @@ export const POSTER_OVERLAY_TEMPLATE_FIELDS = `
     updatedAt
 `;
 
+const POSTER_OVERLAY_PASS_FIELDS = "queued running total processed rendered failed";
+
+export const posterOverlayPassQuery = `query PosterOverlayPass {
+  posterOverlayPass {${POSTER_OVERLAY_PASS_FIELDS}}
+}`;
+
 export const posterOverlaysQuery = `query PosterOverlays {
   posterOverlays {
     settings { parallelism reconcileIntervalSeconds }
     libraries { libraryId libraryName facet enabled templateId }
     templates {${POSTER_OVERLAY_TEMPLATE_FIELDS}}
     counts { enabledTitles rendered failed noArtwork }
+    pass {${POSTER_OVERLAY_PASS_FIELDS}}
     builtinTemplate
     templateSpecVersion
     templateFields

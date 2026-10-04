@@ -12,12 +12,14 @@ import {
   updatePosterOverlaySettingsMutation,
 } from "@/lib/graphql/mutations";
 import {
+  posterOverlayPassQuery,
   posterOverlaysQuery,
   previewPosterOverlayTemplateQuery,
   validatePosterOverlayTemplateQuery,
 } from "@/lib/graphql/queries";
 import type {
   PosterOverlayOverview,
+  PosterOverlayPass,
   PosterOverlayPreviewFacet,
   PosterOverlayPreviewState,
   PosterOverlaySample,
@@ -55,6 +57,35 @@ export function usePosterOverlays() {
   React.useEffect(() => {
     void reload();
   }, [reload]);
+
+  // Follow a queued or running pass, then reload once so the counts show
+  // its result. The pass query reads no database, so polling it is cheap.
+  const pass = overview?.pass ?? null;
+  const passActive = Boolean(pass?.queued || pass?.running);
+  React.useEffect(() => {
+    if (!passActive) {
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setInterval(async () => {
+      const result = await client
+        .query(posterOverlayPassQuery, {}, { requestPolicy: "network-only" })
+        .toPromise();
+      const next = result.data?.posterOverlayPass as PosterOverlayPass | undefined;
+      if (cancelled || !next) {
+        return;
+      }
+      if (next.queued || next.running) {
+        setOverview((current) => (current ? { ...current, pass: next } : current));
+      } else {
+        void reload();
+      }
+    }, PASS_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [client, passActive, reload]);
 
   /** Runs a mutation, reports failure, and reloads on success. */
   const run = React.useCallback(
@@ -185,6 +216,9 @@ export function usePosterOverlays() {
   };
 }
 
+/** How often the page checks on a running rebuild. */
+const PASS_POLL_MS = 2000;
+
 /** Pause after the last edit before rendering, so typing does not queue renders. */
 const PREVIEW_DEBOUNCE_MS = 250;
 
@@ -213,7 +247,10 @@ export function usePosterOverlayPreview(
     loading: false,
   });
   const latestRequest = React.useRef(0);
-  const pinnedTitle = React.useRef<{ facet: PosterOverlayPreviewFacet; id: string } | null>(null);
+  const pinnedTitle = React.useRef<{
+    facet: PosterOverlayPreviewFacet;
+    id: string;
+  } | null>(null);
   const [shuffles, setShuffles] = React.useState(0);
   const shuffle = React.useCallback(() => {
     pinnedTitle.current = null;
@@ -231,7 +268,14 @@ export function usePosterOverlayPreview(
       void client
         .query(
           previewPosterOverlayTemplateQuery,
-          { input: { svg, ...sample, posterFacet: facet, posterTitleId: pinned } },
+          {
+            input: {
+              svg,
+              ...sample,
+              posterFacet: facet,
+              posterTitleId: pinned,
+            },
+          },
           { requestPolicy: "network-only" },
         )
         .toPromise()

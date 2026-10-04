@@ -9,6 +9,7 @@ import {
   badgeKind,
   clampElement,
   editionToken,
+  elementBounds,
   formatBadgeCondition,
   newElement,
   parseBadgeCondition,
@@ -56,7 +57,12 @@ test("the built-in template opens in the visual editor", () => {
 test("serialising and parsing again preserves every badge", () => {
   const make = keys();
   const elements = BADGE_KINDS.map((kind) => newElement(kind, make()));
-  elements[1] = { ...elements[1]!, align: "start", letterSpacing: 3, radius: 0 };
+  elements[1] = {
+    ...elements[1]!,
+    align: "start",
+    letterSpacing: 3,
+    radius: 0,
+  };
   elements[2] = { ...elements[2]!, align: "end", backgroundOpacity: 0 };
   const svg = serializeOverlay(elements);
   assert.deepEqual(withoutKeys(parseOverlay(svg, keys())), withoutKeys(elements));
@@ -168,7 +174,62 @@ test("series status badges open in the dropdowns", () => {
     hide: [],
   });
   assert.deepEqual(
-    formatBadgeCondition({ field: "series_status", show: ["ended", "canceled"], hide: [] }),
+    formatBadgeCondition({
+      field: "series_status",
+      show: ["ended", "canceled"],
+      hide: [],
+    }),
     { showWhen: "series_status=ended|canceled", hideWhen: "" },
+  );
+});
+
+test("a ratings badge writes one tile per source and opens again", () => {
+  const ratings = {
+    ...newElement("ratings", "r"),
+    ratings: {
+      sources: ["imdb", "metacritic_user"],
+      direction: "right",
+      gap: 12,
+      layout: "beside",
+    },
+  } satisfies OverlayElement;
+  const svg = serializeOverlay([ratings]);
+  assert.match(svg, /data-scryer-stack="right" data-scryer-step="212"/);
+  assert.match(
+    svg,
+    /data-scryer-if="rating_imdb"[\s\S]*#scryer-logo-imdb[\s\S]*\{\{rating_imdb\}\}/,
+  );
+  // The user score shares the Metacritic logo but has its own score.
+  assert.match(svg, /#scryer-logo-metacritic"[\s\S]*\{\{rating_metacritic_user\}\}/);
+  const [parsed] = parseOverlay(svg, keys()) ?? [];
+  assert.deepEqual(withoutKeys(parsed ? [parsed] : null), withoutKeys([ratings]));
+});
+
+test("a hand-edited ratings badge is left to the SVG editor", () => {
+  const svg = serializeOverlay([newElement("ratings", "r")]);
+  for (const edited of [
+    svg.replace('fill-opacity="0.82"/>', 'fill-opacity="0.82" stroke="#fff"/>'),
+    svg.replace("rating_tmdb", "rating_netflix"),
+    svg.replace(/width="200" height="200"/, 'width="210" height="200"'),
+  ]) {
+    assert.notEqual(edited, svg);
+    assert.equal(parseOverlay(edited, keys()), null, edited);
+  }
+});
+
+test("a ratings badge covers every tile it can draw", () => {
+  const element = newElement("ratings", "r");
+  assert.deepEqual(elementBounds(element), {
+    x: 40,
+    y: 300,
+    width: 200,
+    height: 640,
+  });
+  assert.deepEqual(
+    elementBounds({
+      ...element,
+      ratings: { ...element.ratings!, direction: "left" },
+    }),
+    { x: -400, y: 300, width: 640, height: 200 },
   );
 });

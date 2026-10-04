@@ -15,10 +15,14 @@ use scryer_application::overlays::{
     AppPosterOverlayServices, PosterOverlayOutcome, PosterOverlayRepository,
     overlay_title_for_proxy_source,
 };
-use scryer_application::{AppResult, ImageProxyKind, ImageProxyRegistration, ImageProxyRepository};
+use scryer_application::{
+    AppResult, ImageProxyKind, ImageProxyRegistration, ImageProxyRepository, TitleExternalRating,
+    TitleRatingSummary,
+};
 use scryer_infrastructure_datastore::postgres::PostgresServices;
 use scryer_infrastructure_datastore::{MigrationMode, SqliteServices};
 use scryer_infrastructure_library::images::ImageProxyStore;
+use scryer_infrastructure_library::media::canonical_tags::replace_title_metadata_ratings_tx;
 use scryer_infrastructure_library::overlays::{
     OverlayEngine, OverlaySourceFetch, PosterOverlayStore, add_marker, has_marker,
 };
@@ -274,11 +278,40 @@ async fn render_then_rebuild_only_when_inputs_change(
     let summary = overlays.reconcile().await.unwrap();
     assert_eq!(summary.rendered, 1);
     assert_eq!(fetch.fetches(), 2);
+    let pass = overlays.pass_progress();
+    assert!(!pass.running && !pass.queued, "a finished pass is idle");
+    assert_eq!((pass.total, pass.processed, pass.rendered), (1, 1, 1));
     let state = store.get_state(TITLE).await.unwrap().unwrap();
     assert_ne!(
         state.original_hash.as_deref(),
         Some(first_original.as_str())
     );
+
+    // A metadata refresh that changes a score rebuilds the poster: ratings
+    // are read with the title's other inputs.
+    let ratings = TitleRatingSummary {
+        rating: Some(7.8),
+        rating_sources: vec!["imdb".into()],
+        external_ratings: vec![TitleExternalRating {
+            source: "imdb".into(),
+            value: Some(7.8),
+            score: None,
+            normalized: 7.8,
+            votes: Some(10),
+            url: String::new(),
+        }],
+    };
+    SqlRuntime::run_in_transaction(&datastore, "seed_ratings", move |tx| {
+        let ratings = ratings.clone();
+        Box::pin(async move { replace_title_metadata_ratings_tx(tx, TITLE, &ratings).await })
+    })
+    .await
+    .unwrap();
+    let inputs = store.load_inputs(TITLE).await.unwrap().unwrap();
+    assert_eq!(inputs.ratings.len(), 1);
+    assert_eq!(inputs.ratings[0].value, Some(7.8));
+    assert_eq!(overlays.reconcile().await.unwrap().rendered, 1);
+    let state = store.get_state(TITLE).await.unwrap().unwrap();
     let current = state.output_hash.clone().unwrap();
 
     // An upstream poster carrying our marker is never taken as an original;

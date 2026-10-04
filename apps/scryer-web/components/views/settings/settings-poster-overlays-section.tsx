@@ -117,7 +117,7 @@ export function SettingsPosterOverlaysSection({
     );
   }
 
-  const { counts, libraries, templates } = overview;
+  const { counts, libraries, templates, pass } = overview;
   const disabled = busy || !canManage;
 
   return (
@@ -158,15 +158,32 @@ export function SettingsPosterOverlaysSection({
             })}
             {counts.failed > 0 ? (
               <span className="ml-2 text-destructive">
-                {t("settings.posterOverlays.failedCount", { count: counts.failed })}
+                {t("settings.posterOverlays.failedCount", {
+                  count: counts.failed,
+                })}
               </span>
             ) : null}
             {counts.noArtwork > 0 ? (
               <span id="settings-poster-overlays-no-artwork" className={`ml-2 ${MUTED_TEXT_CLASS}`}>
-                {t("settings.posterOverlays.noArtworkCount", { count: counts.noArtwork })}
+                {t("settings.posterOverlays.noArtworkCount", {
+                  count: counts.noArtwork,
+                })}
               </span>
             ) : null}
           </p>
+          {pass.running ? (
+            <p id="settings-poster-overlays-pass" className={`mt-1 ${MUTED_TEXT_CLASS}`}>
+              {t("settings.posterOverlays.passRunning", {
+                processed: pass.processed,
+                total: pass.total,
+                rendered: pass.rendered,
+              })}
+            </p>
+          ) : pass.queued ? (
+            <p id="settings-poster-overlays-pass" className={`mt-1 ${MUTED_TEXT_CLASS}`}>
+              {t("settings.posterOverlays.passQueued")}
+            </p>
+          ) : null}
         </div>
       </section>
 
@@ -264,7 +281,10 @@ export function SettingsPosterOverlaysSection({
               value={settingsDraft.parallelism}
               disabled={disabled}
               onChange={(event) =>
-                setSettingsDraft((draft) => ({ ...draft, parallelism: event.target.value }))
+                setSettingsDraft((draft) => ({
+                  ...draft,
+                  parallelism: event.target.value,
+                }))
               }
             />
             <p className={`text-xs ${MUTED_TEXT_CLASS}`}>
@@ -283,7 +303,10 @@ export function SettingsPosterOverlaysSection({
               value={settingsDraft.reconcileHours}
               disabled={disabled}
               onChange={(event) =>
-                setSettingsDraft((draft) => ({ ...draft, reconcileHours: event.target.value }))
+                setSettingsDraft((draft) => ({
+                  ...draft,
+                  reconcileHours: event.target.value,
+                }))
               }
             />
             <p className={`text-xs ${MUTED_TEXT_CLASS}`}>

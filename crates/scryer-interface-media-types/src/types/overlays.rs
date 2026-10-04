@@ -4,10 +4,11 @@
 use async_graphql::{ID, InputObject, SimpleObject};
 use chrono::{DateTime, Utc};
 use scryer_application::overlays::{
-    CHANNEL_LAYOUTS, OverlayAudio, OverlayHdr, OverlayResolution, OverlaySampleValues,
-    OverlaySeriesStatus, OverlaySource, OverlayVideoCodec, PosterOverlayLibraryConfig,
-    PosterOverlayOverview, PosterOverlayPreviewChoice, PosterOverlaySettings,
-    PosterOverlayStatusCounts, PosterOverlayTemplate, TEMPLATE_FIELDS, TEMPLATE_SPEC_VERSION,
+    CHANNEL_LAYOUTS, OverlayAudio, OverlayHdr, OverlayRatingSource, OverlayResolution,
+    OverlaySampleValues, OverlaySeriesStatus, OverlaySource, OverlayVideoCodec,
+    PosterOverlayLibraryConfig, PosterOverlayOverview, PosterOverlayPassProgress,
+    PosterOverlayPreviewChoice, PosterOverlaySettings, PosterOverlayStatusCounts,
+    PosterOverlayTemplate, TEMPLATE_FIELDS, TEMPLATE_SPEC_VERSION,
 };
 
 /// Render settings shared by every library.
@@ -117,6 +118,38 @@ impl From<PosterOverlayStatusCounts> for PosterOverlayCountsPayload {
     }
 }
 
+/// A library-wide overlay pass, such as a requested rebuild.
+#[derive(SimpleObject, Clone)]
+#[graphql(name = "PosterOverlayPass")]
+pub struct PosterOverlayPassPayload {
+    /// A pass was requested and has not started yet.
+    pub queued: bool,
+    /// A pass is running now.
+    pub running: bool,
+    /// Titles the running pass covers.
+    pub total: i64,
+    /// Of those, titles checked so far.
+    pub processed: i64,
+    /// Of those, titles re-rendered so far; unchanged titles are skipped.
+    pub rendered: i64,
+    /// Of those, titles whose render failed.
+    pub failed: i64,
+}
+
+impl From<PosterOverlayPassProgress> for PosterOverlayPassPayload {
+    fn from(value: PosterOverlayPassProgress) -> Self {
+        let count = |value: usize| i64::try_from(value).unwrap_or(i64::MAX);
+        Self {
+            queued: value.queued,
+            running: value.running,
+            total: count(value.total),
+            processed: count(value.processed),
+            rendered: count(value.rendered),
+            failed: count(value.failed),
+        }
+    }
+}
+
 /// Everything the poster overlay settings page shows.
 #[derive(SimpleObject, Clone)]
 #[graphql(name = "PosterOverlayOverview")]
@@ -137,6 +170,8 @@ pub struct PosterOverlayOverviewPayload {
     pub template_fields: Vec<String>,
     /// Values the template preview can be set to.
     pub sample_options: PosterOverlaySampleOptionsPayload,
+    /// The library-wide pass in progress or queued.
+    pub pass: PosterOverlayPassPayload,
 }
 
 /// One value of a badge field: the token conditions match and the label
@@ -225,6 +260,7 @@ impl From<PosterOverlayOverview> for PosterOverlayOverviewPayload {
                 .map(|field| field.to_string())
                 .collect(),
             sample_options: PosterOverlaySampleOptionsPayload::current(),
+            pass: value.pass.into(),
         }
     }
 }

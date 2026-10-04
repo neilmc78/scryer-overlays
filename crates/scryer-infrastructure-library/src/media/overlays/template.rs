@@ -20,6 +20,49 @@ pub const MAX_TEMPLATE_BYTES: usize = 256 * 1024;
 const VERSION_ATTR: &str = "data-scryer-version";
 const IF_ATTR: &str = "data-scryer-if";
 const UNLESS_ATTR: &str = "data-scryer-unless";
+const STACK_ATTR: &str = "data-scryer-stack";
+const STEP_ATTR: &str = "data-scryer-step";
+
+/// `<use href="#scryer-logo-imdb"/>` draws a bundled logo. The renderer adds
+/// the referenced logos to the document; templates never carry them.
+pub const LOGO_ID_PREFIX: &str = "scryer-logo-";
+
+/// Logos a template may reference, as `(name, svg)`. Each is a plain vector
+/// SVG whose internal ids already carry its own `scryer-logo-<name>-` prefix.
+pub const LOGOS: &[(&str, &str)] = &[
+    (
+        "imdb",
+        include_str!("../../../assets/overlays/logos/imdb.svg"),
+    ),
+    (
+        "letterboxd",
+        include_str!("../../../assets/overlays/logos/letterboxd.svg"),
+    ),
+    (
+        "mdblist",
+        include_str!("../../../assets/overlays/logos/mdblist.svg"),
+    ),
+    (
+        "metacritic",
+        include_str!("../../../assets/overlays/logos/metacritic.svg"),
+    ),
+    (
+        "popcornmeter",
+        include_str!("../../../assets/overlays/logos/popcornmeter.svg"),
+    ),
+    (
+        "rottentomatoes",
+        include_str!("../../../assets/overlays/logos/rottentomatoes.svg"),
+    ),
+    (
+        "tmdb",
+        include_str!("../../../assets/overlays/logos/tmdb.svg"),
+    ),
+    (
+        "trakt",
+        include_str!("../../../assets/overlays/logos/trakt.svg"),
+    ),
+];
 
 /// Element names a template may not contain. Templates are vector badges;
 /// nothing may pull in outside content.
@@ -48,6 +91,9 @@ pub fn preprocess(svg: &str, values: &BTreeMap<&'static str, String>) -> AppResu
     // Depth inside an element whose condition failed; 0 when emitting.
     let mut skip_depth = 0usize;
     let mut saw_root = false;
+    // One entry per open emitted element: its stack layout, if it is one.
+    let mut open: Vec<Option<Stack>> = Vec::new();
+    let mut logos: Vec<&'static str> = Vec::new();
 
     loop {
         let event = reader
@@ -61,8 +107,11 @@ pub fn preprocess(svg: &str, values: &BTreeMap<&'static str, String>) -> AppResu
                     continue;
                 }
                 check_element(&start, &mut saw_root)?;
-                match rewrite_element(&start, values)? {
-                    Some(element) => write(&mut writer, Event::Start(element))?,
+                match emit_element(&start, values, &mut open, &mut logos)? {
+                    Some(element) => {
+                        open.push(stack_layout(&start)?);
+                        write(&mut writer, Event::Start(element))?;
+                    }
                     None => skip_depth = 1,
                 }
             }
@@ -71,7 +120,7 @@ pub fn preprocess(svg: &str, values: &BTreeMap<&'static str, String>) -> AppResu
                     continue;
                 }
                 check_element(&start, &mut saw_root)?;
-                if let Some(element) = rewrite_element(&start, values)? {
+                if let Some(element) = emit_element(&start, values, &mut open, &mut logos)? {
                     write(&mut writer, Event::Empty(element))?;
                 }
             }
@@ -79,6 +128,10 @@ pub fn preprocess(svg: &str, values: &BTreeMap<&'static str, String>) -> AppResu
                 if skip_depth > 0 {
                     skip_depth -= 1;
                     continue;
+                }
+                open.pop();
+                if open.is_empty() && !logos.is_empty() {
+                    write_logo_defs(&mut writer, &logos)?;
                 }
                 write(&mut writer, Event::End(end))?;
             }
@@ -125,6 +178,9 @@ pub fn validate(svg: &str) -> AppResult<()> {
         {
             Event::Eof => return Ok(()),
             Event::Start(start) | Event::Empty(start) => {
+                stack_layout(&start)?;
+                referenced_logo(&start)?;
+                check_reserved_id(&start)?;
                 for attribute in start.attributes() {
                     let attribute =
                         attribute.map_err(|error| invalid(format!("bad attribute: {error}")))?;
@@ -132,6 +188,8 @@ pub fn validate(svg: &str) -> AppResult<()> {
                     if key == IF_ATTR || key == UNLESS_ATTR {
                         evaluate_condition(&attribute.value, &values)?;
                         check_condition_values(&attribute.value)?;
+                    } else if key == STACK_ATTR || key == STEP_ATTR {
+                        // Checked together below.
                     } else {
                         substitute(&attribute.value, &values)?;
                     }
@@ -180,14 +238,183 @@ fn check_element(start: &BytesStart<'_>, saw_root: &mut bool) -> AppResult<()> {
     }
 }
 
+/// A `data-scryer-stack` group: each child it keeps is moved one `step`
+/// further along, so children hidden by their conditions leave no gap.
+#[derive(Clone, Copy, Debug)]
+struct Stack {
+    dx: f64,
+    dy: f64,
+    placed: usize,
+}
+
+/// The stack layout an element declares, checked even where it never
+/// renders.
+fn stack_layout(start: &BytesStart<'_>) -> AppResult<Option<Stack>> {
+    let attribute = |name: &str| -> AppResult<Option<String>> {
+        Ok(start
+            .try_get_attribute(name)
+            .map_err(|error| invalid(format!("bad attribute: {error}")))?
+            .map(|attribute| attribute.value.trim().to_string()))
+    };
+    let direction = attribute(STACK_ATTR)?;
+    let step = attribute(STEP_ATTR)?;
+    let (direction, step) = match (direction, step) {
+        (None, None) => return Ok(None),
+        (Some(direction), Some(step)) => (direction, step),
+        _ => {
+            return Err(invalid(format!(
+                "{STACK_ATTR} and {STEP_ATTR} must be used together"
+            )));
+        }
+    };
+    let step = step
+        .parse::<f64>()
+        .ok()
+        .filter(|step| step.is_finite() && *step > 0.0 && *step <= 10_000.0)
+        .ok_or_else(|| {
+            invalid(format!(
+                "{STEP_ATTR} must be a positive number, not \"{step}\""
+            ))
+        })?;
+    let (dx, dy) = match direction.as_str() {
+        "down" => (0.0, step),
+        "up" => (0.0, -step),
+        "right" => (step, 0.0),
+        "left" => (-step, 0.0),
+        other => {
+            return Err(invalid(format!(
+                "{STACK_ATTR} must be down, up, right or left, not \"{other}\""
+            )));
+        }
+    };
+    Ok(Some(Stack { dx, dy, placed: 0 }))
+}
+
+/// The logo a `<use>` element draws, if it references one. Any reference
+/// into the reserved prefix must name a bundled logo.
+fn referenced_logo(start: &BytesStart<'_>) -> AppResult<Option<&'static str>> {
+    if start.local_name().as_ref() != "use" {
+        return Ok(None);
+    }
+    for attribute in start.attributes() {
+        let attribute = attribute.map_err(|error| invalid(format!("bad attribute: {error}")))?;
+        if attribute.key.local_name().as_ref() != "href" {
+            continue;
+        }
+        let Some(name) = attribute
+            .value
+            .trim()
+            .strip_prefix('#')
+            .and_then(|id| id.strip_prefix(LOGO_ID_PREFIX))
+        else {
+            continue;
+        };
+        return LOGOS
+            .iter()
+            .find(|(logo, _)| *logo == name)
+            .map(|(logo, _)| Some(*logo))
+            .ok_or_else(|| {
+                invalid(format!(
+                    "unknown logo \"{name}\"; use one of {}",
+                    LOGOS
+                        .iter()
+                        .map(|(logo, _)| *logo)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            });
+    }
+    Ok(None)
+}
+
+/// Ids under the logo prefix belong to the renderer.
+fn check_reserved_id(start: &BytesStart<'_>) -> AppResult<()> {
+    if let Some(id) = start
+        .try_get_attribute("id")
+        .map_err(|error| invalid(format!("bad attribute: {error}")))?
+        && id.value.trim().starts_with(LOGO_ID_PREFIX)
+    {
+        return Err(invalid(format!(
+            "ids starting with \"{LOGO_ID_PREFIX}\" are reserved for logos"
+        )));
+    }
+    Ok(())
+}
+
+/// Rewrites an element that is not inside a skipped subtree: records the
+/// logo it draws and, inside a stack, moves it to its slot.
+fn emit_element(
+    start: &BytesStart<'_>,
+    values: &BTreeMap<&'static str, String>,
+    open: &mut [Option<Stack>],
+    logos: &mut Vec<&'static str>,
+) -> AppResult<Option<BytesStart<'static>>> {
+    check_reserved_id(start)?;
+    let logo = referenced_logo(start)?;
+    let parent = open.last_mut().and_then(Option::as_mut);
+    let offset = parent.as_ref().map(|stack| {
+        (
+            stack.dx * stack.placed as f64,
+            stack.dy * stack.placed as f64,
+        )
+    });
+    let Some(element) = rewrite_element(start, values, offset)? else {
+        return Ok(None);
+    };
+    if let Some(stack) = parent {
+        stack.placed += 1;
+    }
+    if let Some(logo) = logo
+        && !logos.contains(&logo)
+    {
+        logos.push(logo);
+    }
+    Ok(Some(element))
+}
+
+/// `<defs>` holding a `<symbol>` per referenced logo, appended to the root.
+fn write_logo_defs(writer: &mut Writer<Vec<u8>>, logos: &[&'static str]) -> AppResult<()> {
+    let mut defs = String::from("<defs>");
+    for name in logos {
+        let (_, svg) = LOGOS
+            .iter()
+            .find(|(logo, _)| logo == name)
+            .ok_or_else(|| invalid(format!("unknown logo \"{name}\"")))?;
+        let (view_box, body) = logo_parts(svg)
+            .ok_or_else(|| invalid(format!("bundled logo \"{name}\" is malformed")))?;
+        defs.push_str(&format!(
+            "<symbol id=\"{LOGO_ID_PREFIX}{name}\" viewBox=\"{view_box}\" preserveAspectRatio=\"xMidYMid meet\">{body}</symbol>"
+        ));
+    }
+    defs.push_str("</defs>");
+    write(writer, Event::Text(BytesText::from_escaped(defs)))
+}
+
+/// The `viewBox` and inner markup of a bundled logo.
+fn logo_parts(svg: &str) -> Option<(&str, &str)> {
+    let open_end = svg.find('>')?;
+    let root = &svg[..open_end];
+    let view_box_start = root.find("viewBox=\"")? + "viewBox=\"".len();
+    let view_box_len = root[view_box_start..].find('"')?;
+    let body_end = svg.rfind("</svg>")?;
+    Some((
+        &root[view_box_start..view_box_start + view_box_len],
+        svg[open_end + 1..body_end].trim(),
+    ))
+}
+
 /// Returns the element with contract attributes stripped and placeholders
-/// substituted, or `None` when its conditions exclude it.
+/// substituted, or `None` when its conditions exclude it. `offset` moves the
+/// element, ahead of any transform of its own.
 fn rewrite_element<'a>(
     start: &BytesStart<'a>,
     values: &BTreeMap<&'static str, String>,
+    offset: Option<(f64, f64)>,
 ) -> AppResult<Option<BytesStart<'static>>> {
     let name = String::from_utf8_lossy(start.name().as_ref().as_bytes()).into_owned();
     let mut rewritten = BytesStart::new(name);
+    let translate = offset.map(|(dx, dy)| format!("translate({dx} {dy})"));
+    let mut translated = translate.is_none();
     for attribute in start.attributes() {
         let attribute = attribute.map_err(|error| invalid(format!("bad attribute: {error}")))?;
         let key = attribute.key.0;
@@ -202,7 +429,15 @@ fn rewrite_element<'a>(
                     return Ok(None);
                 }
             }
-            VERSION_ATTR => {}
+            VERSION_ATTR | STACK_ATTR | STEP_ATTR => {}
+            "transform" if !translated => {
+                let own = substitute(&attribute.value, values)?;
+                rewritten.push_attribute((
+                    "transform",
+                    format!("{} {own}", translate.as_deref().unwrap_or_default()).as_str(),
+                ));
+                translated = true;
+            }
             _ => {
                 let value = substitute(&attribute.value, values)?;
                 rewritten.push_attribute(Attribute {
@@ -211,6 +446,9 @@ fn rewrite_element<'a>(
                 });
             }
         }
+    }
+    if !translated && let Some(translate) = translate {
+        rewritten.push_attribute(("transform", translate.as_str()));
     }
     Ok(Some(rewritten))
 }

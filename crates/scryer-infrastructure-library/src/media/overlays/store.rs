@@ -11,6 +11,7 @@ use scryer_application::overlays::{
 };
 use scryer_application::{AppResult, TitleImageKind};
 
+use crate::media::canonical_tags::load_title_metadata_ratings;
 use crate::media::images::synthesize_local_title_image_url;
 use crate::queries::sql_runtime::{SqlArg, SqlExec, SqlRow, SqlRuntime, StoreDatastore};
 
@@ -263,6 +264,11 @@ impl PosterOverlayRepository for PosterOverlayStore {
             })
         })
         .collect::<AppResult<Vec<_>>>()?;
+        let ratings = load_title_metadata_ratings(self.read(), &[title_id.to_string()])
+            .await?
+            .remove(title_id)
+            .map(|summary| summary.external_ratings)
+            .unwrap_or_default();
         Ok(Some(PosterOverlayInputs {
             title_id: title.text("id")?,
             library_id: title.opt_text("library_id")?,
@@ -280,6 +286,7 @@ impl PosterOverlayRepository for PosterOverlayStore {
             poster_source_etag: title.opt_text("source_etag")?,
             facet: title.opt_text("facet")?,
             content_status: title.opt_text("content_status")?,
+            ratings,
             files,
         }))
     }

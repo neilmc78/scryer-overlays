@@ -64,7 +64,7 @@ pub struct PosterOverlayState {
 }
 
 /// Everything the pipeline reads about one title, in one round trip.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct PosterOverlayInputs {
     pub title_id: String,
     pub library_id: Option<String>,
@@ -77,6 +77,8 @@ pub struct PosterOverlayInputs {
     pub facet: Option<String>,
     /// `titles.content_status`, as metadata supplied it.
     pub content_status: Option<String>,
+    /// The title's stored external ratings.
+    pub ratings: Vec<crate::TitleExternalRating>,
     pub files: Vec<OverlayMediaFacts>,
 }
 

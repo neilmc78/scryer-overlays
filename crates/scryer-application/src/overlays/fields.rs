@@ -8,6 +8,8 @@
 
 use std::collections::BTreeMap;
 
+use crate::TitleExternalRating;
+
 /// Probe and parse facts for one media file, as stored on `media_files`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct OverlayMediaFacts {
@@ -583,6 +585,172 @@ impl OverlaySeriesStatus {
     }
 }
 
+/// A rating source a badge can show, as metadata stores it on the title.
+/// The order is the display order the web UI uses.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum OverlayRatingSource {
+    Imdb,
+    RottenTomatoes,
+    Popcornmeter,
+    Metacritic,
+    MetacriticUser,
+    Letterboxd,
+    Tmdb,
+    Trakt,
+    Mdblist,
+}
+
+/// How a rating source's score is written, matching the web UI.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RatingFormat {
+    /// The source's own value, such as IMDb's `7.8`.
+    Value,
+    /// A percentage, such as Rotten Tomatoes' `74%`.
+    Percent,
+    /// A score out of 100, such as Metacritic's `81`.
+    Hundred,
+}
+
+impl OverlayRatingSource {
+    pub const ALL: [Self; 9] = [
+        Self::Imdb,
+        Self::RottenTomatoes,
+        Self::Popcornmeter,
+        Self::Metacritic,
+        Self::MetacriticUser,
+        Self::Letterboxd,
+        Self::Tmdb,
+        Self::Trakt,
+        Self::Mdblist,
+    ];
+
+    pub fn token(self) -> &'static str {
+        match self {
+            Self::Imdb => "imdb",
+            Self::RottenTomatoes => "rottentomatoes",
+            Self::Popcornmeter => "popcornmeter",
+            Self::Metacritic => "metacritic",
+            Self::MetacriticUser => "metacritic_user",
+            Self::Letterboxd => "letterboxd",
+            Self::Tmdb => "tmdb",
+            Self::Trakt => "trakt",
+            Self::Mdblist => "mdblist",
+        }
+    }
+
+    pub fn from_token(token: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|source| source.token() == token)
+    }
+
+    /// The template field holding this source's displayed score.
+    pub fn field(self) -> &'static str {
+        match self {
+            Self::Imdb => "rating_imdb",
+            Self::RottenTomatoes => "rating_rottentomatoes",
+            Self::Popcornmeter => "rating_popcornmeter",
+            Self::Metacritic => "rating_metacritic",
+            Self::MetacriticUser => "rating_metacritic_user",
+            Self::Letterboxd => "rating_letterboxd",
+            Self::Tmdb => "rating_tmdb",
+            Self::Trakt => "rating_trakt",
+            Self::Mdblist => "rating_mdblist",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Imdb => "IMDb",
+            Self::RottenTomatoes => "Rotten Tomatoes",
+            Self::Popcornmeter => "Popcornmeter",
+            Self::Metacritic => "Metacritic",
+            Self::MetacriticUser => "Metacritic User",
+            Self::Letterboxd => "Letterboxd",
+            Self::Tmdb => "TMDB",
+            Self::Trakt => "Trakt",
+            Self::Mdblist => "MDBList",
+        }
+    }
+
+    /// The bundled logo drawn for this source. Metacritic's user score
+    /// shares the Metacritic logo, as it does in the web UI.
+    pub fn logo(self) -> &'static str {
+        match self {
+            Self::MetacriticUser => "metacritic",
+            other => other.token(),
+        }
+    }
+
+    /// Stored source names for this rating, most preferred first, after
+    /// the normalisation `normalized_rating_source` applies.
+    fn aliases(self) -> &'static [&'static str] {
+        match self {
+            Self::Imdb => &["imdb"],
+            Self::RottenTomatoes => &["rottentomatoes", "tomatoes"],
+            Self::Popcornmeter => &["popcornmeter", "popcorn", "audience"],
+            Self::Metacritic => &["metacritic"],
+            Self::MetacriticUser => &["metacriticuser", "mcuser"],
+            Self::Letterboxd => &["letterboxd"],
+            Self::Tmdb => &["tmdb"],
+            Self::Trakt => &["trakt"],
+            Self::Mdblist => &["mdblist"],
+        }
+    }
+
+    fn format(self) -> RatingFormat {
+        match self {
+            Self::RottenTomatoes | Self::Popcornmeter => RatingFormat::Percent,
+            Self::Metacritic | Self::MetacriticUser => RatingFormat::Hundred,
+            _ => RatingFormat::Value,
+        }
+    }
+
+    /// The displayed score for this source from a title's stored ratings,
+    /// or `None` when the title has none from it.
+    fn display(self, ratings: &[TitleExternalRating]) -> Option<String> {
+        let rating = self.aliases().iter().find_map(|alias| {
+            ratings
+                .iter()
+                .find(|rating| normalized_rating_source(&rating.source) == *alias)
+        })?;
+        let text = match self.format() {
+            RatingFormat::Percent => format!("{}%", score_out_of_hundred(rating).round()),
+            RatingFormat::Hundred => compact_rating(score_out_of_hundred(rating)),
+            RatingFormat::Value => compact_rating(rating.value.unwrap_or(rating.normalized)),
+        };
+        Some(text)
+    }
+}
+
+/// Lowercase with spaces, `_`, `.` and `-` removed: `Rotten Tomatoes` and
+/// `rotten_tomatoes` are both `rottentomatoes`.
+fn normalized_rating_source(source: &str) -> String {
+    source
+        .trim()
+        .chars()
+        .filter(|ch| !ch.is_whitespace() && !matches!(ch, '_' | '.' | '-'))
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn score_out_of_hundred(rating: &TitleExternalRating) -> f64 {
+    match rating.score.or(rating.value) {
+        Some(score) if score <= 1.0 => score * 100.0,
+        Some(score) if score <= 10.0 => score * 10.0,
+        Some(score) => score,
+        None => rating.normalized * 10.0,
+    }
+}
+
+/// One decimal place at most, without a trailing `.0`: `7.8`, `8`, `74`.
+fn compact_rating(value: f64) -> String {
+    // Half away from zero, as the web UI's `toFixed` does for these values.
+    let rounded = format!("{:.1}", (value * 10.0).round() / 10.0);
+    rounded
+        .strip_suffix(".0")
+        .map(str::to_string)
+        .unwrap_or(rounded)
+}
+
 /// The resolved badge fields for one title.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct OverlayFields {
@@ -595,6 +763,8 @@ pub struct OverlayFields {
     pub series_status: Option<OverlaySeriesStatus>,
     pub video_codec: Option<OverlayVideoCodec>,
     pub source: Option<OverlaySource>,
+    /// Displayed score per rating source the title has.
+    pub ratings: BTreeMap<OverlayRatingSource, String>,
 }
 
 impl OverlayFields {
@@ -673,12 +843,22 @@ impl OverlayFields {
             series_status: None,
             video_codec,
             source,
+            ratings: BTreeMap::new(),
         }
     }
 
     /// Add the title-level fields that do not come from its files.
     pub fn with_title(mut self, facet: Option<&str>, content_status: Option<&str>) -> Self {
         self.series_status = OverlaySeriesStatus::resolve(facet, content_status);
+        self
+    }
+
+    /// Add the title's ratings, formatted as the web UI shows them.
+    pub fn with_ratings(mut self, ratings: &[TitleExternalRating]) -> Self {
+        self.ratings = OverlayRatingSource::ALL
+            .into_iter()
+            .filter_map(|source| source.display(ratings).map(|text| (source, text)))
+            .collect();
         self
     }
 
@@ -731,6 +911,12 @@ impl OverlayFields {
             "video_codec_label",
             token(self.video_codec.map(|v| v.label())),
         );
+        for source in OverlayRatingSource::ALL {
+            values.insert(
+                source.field(),
+                self.ratings.get(&source).cloned().unwrap_or_default(),
+            );
+        }
         values
     }
 
@@ -754,6 +940,7 @@ impl OverlayFields {
             && self.series_status.is_none()
             && self.video_codec.is_none()
             && self.source.is_none()
+            && self.ratings.is_empty()
     }
 }
 
@@ -917,6 +1104,7 @@ impl OverlayFields {
                 OverlayVideoCodec::from_token,
             )?,
             source: parse(&sample.source, "source", OverlaySource::from_token)?,
+            ratings: BTreeMap::new(),
         })
     }
 }
@@ -996,6 +1184,15 @@ pub const TEMPLATE_FIELDS: &[&str] = &[
     "edition_label",
     "hdr",
     "hdr_label",
+    "rating_imdb",
+    "rating_letterboxd",
+    "rating_mdblist",
+    "rating_metacritic",
+    "rating_metacritic_user",
+    "rating_popcornmeter",
+    "rating_rottentomatoes",
+    "rating_tmdb",
+    "rating_trakt",
     "resolution",
     "resolution_label",
     "series_status",

@@ -21455,6 +21455,40 @@ type PosterOverlayOverview {
 	Values the template preview can be set to.
 	"""
 	sampleOptions: PosterOverlaySampleOptions!
+	"""
+	The library-wide pass in progress or queued.
+	"""
+	pass: PosterOverlayPass!
+}
+
+"""
+A library-wide overlay pass, such as a requested rebuild.
+"""
+type PosterOverlayPass {
+	"""
+	A pass was requested and has not started yet.
+	"""
+	queued: Boolean!
+	"""
+	A pass is running now.
+	"""
+	running: Boolean!
+	"""
+	Titles the running pass covers.
+	"""
+	total: Int!
+	"""
+	Of those, titles checked so far.
+	"""
+	processed: Int!
+	"""
+	Of those, titles re-rendered so far; unchanged titles are skipped.
+	"""
+	rendered: Int!
+	"""
+	Of those, titles whose render failed.
+	"""
+	failed: Int!
 }
 
 """
@@ -24149,6 +24183,12 @@ type QueryRoot {
 	catalog or library settings access.
 	"""
 	posterOverlays: PosterOverlayOverview!
+	"""
+	The library-wide overlay pass in progress or queued. Cheap enough to
+	poll while a rebuild runs. Requires catalog or library settings
+	access.
+	"""
+	posterOverlayPass: PosterOverlayPass!
 	"""
 	Check a template against the format without saving it.
 	"""

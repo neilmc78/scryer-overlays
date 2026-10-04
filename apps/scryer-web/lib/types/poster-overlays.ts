@@ -28,11 +28,22 @@ export type PosterOverlayCounts = {
   noArtwork: number;
 };
 
+/** A library-wide pass, such as a requested rebuild. */
+export type PosterOverlayPass = {
+  queued: boolean;
+  running: boolean;
+  total: number;
+  processed: number;
+  rendered: number;
+  failed: number;
+};
+
 export type PosterOverlayOverview = {
   settings: PosterOverlaySettings;
   libraries: PosterOverlayLibrary[];
   templates: PosterOverlayTemplate[];
   counts: PosterOverlayCounts;
+  pass: PosterOverlayPass;
   builtinTemplate: string;
   templateSpecVersion: number;
   templateFields: string[];

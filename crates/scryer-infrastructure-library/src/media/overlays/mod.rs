@@ -20,4 +20,6 @@ pub use render::{
 };
 pub use store::PosterOverlayStore;
 #[cfg(feature = "image-processing")]
-pub use template::{TEMPLATE_FIELDS, evaluate_condition, preprocess, substitute, validate};
+pub use template::{
+    LOGO_ID_PREFIX, LOGOS, TEMPLATE_FIELDS, evaluate_condition, preprocess, substitute, validate,
+};

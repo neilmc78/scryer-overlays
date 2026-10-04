@@ -18,7 +18,48 @@ export const MAX_FONT_SIZE = 400;
 export type OverlayTextAlign = "start" | "middle" | "end";
 
 export type OverlayBadgeKind =
-  "resolution" | "hdr" | "codec" | "source" | "audio" | "edition" | "status" | "custom";
+  "resolution" | "hdr" | "codec" | "source" | "audio" | "edition" | "status" | "ratings" | "custom";
+
+/**
+ * Rating sources a badge can show, in display order. `field` holds the
+ * title's score as the web UI writes it; `logo` names the bundled logo the
+ * server draws for `<use href="#scryer-logo-NAME"/>`.
+ */
+export const RATING_SOURCES = [
+  { token: "imdb", label: "IMDb", logo: "imdb" },
+  { token: "rottentomatoes", label: "Rotten Tomatoes", logo: "rottentomatoes" },
+  { token: "popcornmeter", label: "Popcornmeter", logo: "popcornmeter" },
+  { token: "metacritic", label: "Metacritic", logo: "metacritic" },
+  { token: "metacritic_user", label: "Metacritic User", logo: "metacritic" },
+  { token: "letterboxd", label: "Letterboxd", logo: "letterboxd" },
+  { token: "tmdb", label: "TMDB", logo: "tmdb" },
+  { token: "trakt", label: "Trakt", logo: "trakt" },
+  { token: "mdblist", label: "MDBList", logo: "mdblist" },
+] as const;
+
+export type RatingSourceToken = (typeof RATING_SOURCES)[number]["token"];
+
+export function ratingField(token: RatingSourceToken): string {
+  return `rating_${token}`;
+}
+
+export type OverlayStackDirection = "down" | "up" | "right" | "left";
+
+/** `above`: logo over the score, as Kometa draws them. `beside`: logo left. */
+export type OverlayRatingLayout = "above" | "beside";
+
+/**
+ * A ratings badge: one tile per source, each a box with the source's logo and
+ * score. Tiles for sources a title has no score from are left out and the
+ * rest close up, so the first tile sits at the badge's position.
+ */
+export type OverlayRatings = {
+  sources: RatingSourceToken[];
+  direction: OverlayStackDirection;
+  /** Space between tiles, in template units. */
+  gap: number;
+  layout: OverlayRatingLayout;
+};
 
 export type OverlayElement = {
   /** Client-side identity for React keys and selection; never serialised. */
@@ -43,14 +84,24 @@ export type OverlayElement = {
   backgroundOpacity: number;
   align: OverlayTextAlign;
   letterSpacing: number;
+  /** Set for a ratings badge; its box is then one tile. */
+  ratings: OverlayRatings | null;
 };
 
 type BadgePreset = { showWhen: string; hideWhen: string; text: string };
 
-export const BADGE_PRESETS: Record<Exclude<OverlayBadgeKind, "custom">, BadgePreset> = {
-  resolution: { showWhen: "resolution", hideWhen: "", text: "{{resolution_label}}" },
+export const BADGE_PRESETS: Record<Exclude<OverlayBadgeKind, "custom" | "ratings">, BadgePreset> = {
+  resolution: {
+    showWhen: "resolution",
+    hideWhen: "",
+    text: "{{resolution_label}}",
+  },
   hdr: { showWhen: "hdr", hideWhen: "hdr=sdr", text: "{{hdr_label}}" },
-  codec: { showWhen: "video_codec", hideWhen: "", text: "{{video_codec_label}}" },
+  codec: {
+    showWhen: "video_codec",
+    hideWhen: "",
+    text: "{{video_codec_label}}",
+  },
   source: { showWhen: "source", hideWhen: "", text: "{{source_label}}" },
   audio: {
     showWhen: "audio_codec",
@@ -58,7 +109,11 @@ export const BADGE_PRESETS: Record<Exclude<OverlayBadgeKind, "custom">, BadgePre
     text: "{{audio_label}} {{audio_channels}}",
   },
   edition: { showWhen: "edition", hideWhen: "", text: "{{edition_label}}" },
-  status: { showWhen: "series_status", hideWhen: "", text: "{{series_status_label}}" },
+  status: {
+    showWhen: "series_status",
+    hideWhen: "",
+    text: "{{series_status_label}}",
+  },
 };
 
 export const BADGE_KINDS: OverlayBadgeKind[] = [
@@ -69,6 +124,7 @@ export const BADGE_KINDS: OverlayBadgeKind[] = [
   "audio",
   "edition",
   "status",
+  "ratings",
   "custom",
 ];
 
@@ -84,11 +140,19 @@ const KIND_DEFAULT_BOX: Record<
   audio: { x: 460, y: 1350, width: 500, height: 110, fontSize: 50 },
   edition: { x: 40, y: 180, width: 420, height: 72, fontSize: 32 },
   status: { x: 40, y: 1350, width: 380, height: 90, fontSize: 40 },
+  ratings: { x: 40, y: 300, width: 200, height: 200, fontSize: 54 },
   custom: { x: 350, y: 700, width: 300, height: 100, fontSize: 48 },
 };
 
 /** The field a badge's condition tests, used to label it in the editor. */
-export function badgeKind(element: Pick<OverlayElement, "showWhen">): OverlayBadgeKind {
+export function badgeKind(
+  element: Pick<OverlayElement, "showWhen"> & {
+    ratings?: OverlayRatings | null;
+  },
+): OverlayBadgeKind {
+  if (element.ratings) {
+    return "ratings";
+  }
   const field = element.showWhen.split(/[=|]/, 1)[0]?.trim() ?? "";
   switch (field) {
     case "resolution":
@@ -112,7 +176,11 @@ export function badgeKind(element: Pick<OverlayElement, "showWhen">): OverlayBad
 
 export function newElement(kind: OverlayBadgeKind, key: string): OverlayElement {
   const preset =
-    kind === "custom" ? { showWhen: "", hideWhen: "", text: "TEXT" } : BADGE_PRESETS[kind];
+    kind === "custom"
+      ? { showWhen: "", hideWhen: "", text: "TEXT" }
+      : kind === "ratings"
+        ? { showWhen: "", hideWhen: "", text: "" }
+        : BADGE_PRESETS[kind];
   return {
     key,
     ...preset,
@@ -123,7 +191,75 @@ export function newElement(kind: OverlayBadgeKind, key: string): OverlayElement 
     backgroundOpacity: 0.82,
     align: "middle",
     letterSpacing: 0,
+    ratings:
+      kind === "ratings"
+        ? {
+            sources: ["rottentomatoes", "imdb", "tmdb"],
+            direction: "down",
+            gap: 20,
+            layout: "above",
+          }
+        : null,
   };
+}
+
+/** Distance from one tile of a ratings badge to the next. */
+function stackStep(element: OverlayElement, ratings: OverlayRatings): number {
+  const along =
+    ratings.direction === "down" || ratings.direction === "up" ? element.height : element.width;
+  return along + ratings.gap;
+}
+
+/**
+ * The area a badge covers: its box, or for a ratings badge every tile it
+ * draws when the title has a score from every chosen source.
+ */
+export function elementBounds(element: OverlayElement): {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+} {
+  const ratings = element.ratings;
+  if (!ratings || ratings.sources.length < 2) {
+    return {
+      x: element.x,
+      y: element.y,
+      width: element.width,
+      height: element.height,
+    };
+  }
+  const span = stackStep(element, ratings) * (ratings.sources.length - 1);
+  switch (ratings.direction) {
+    case "down":
+      return {
+        x: element.x,
+        y: element.y,
+        width: element.width,
+        height: element.height + span,
+      };
+    case "up":
+      return {
+        x: element.x,
+        y: element.y - span,
+        width: element.width,
+        height: element.height + span,
+      };
+    case "right":
+      return {
+        x: element.x,
+        y: element.y,
+        width: element.width + span,
+        height: element.height,
+      };
+    case "left":
+      return {
+        x: element.x - span,
+        y: element.y,
+        width: element.width + span,
+        height: element.height,
+      };
+  }
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -147,6 +283,12 @@ export function clampElement(element: OverlayElement): OverlayElement {
     radius: clamp(element.radius, 0, Math.min(width, height) / 2),
     backgroundOpacity: clamp(element.backgroundOpacity, 0, 1),
     letterSpacing: clamp(element.letterSpacing, -20, 100),
+    ratings: element.ratings
+      ? {
+          ...element.ratings,
+          gap: clamp(element.ratings.gap, 0, OVERLAY_CANVAS_HEIGHT),
+        }
+      : null,
   };
 }
 
@@ -189,14 +331,79 @@ function unescapeXml(value: string): string {
     .replace(/&amp;/g, "&");
 }
 
-function serializeElement(element: OverlayElement): string {
-  const groupAttributes = [
-    element.showWhen.trim() ? ` data-scryer-if="${escapeAttribute(element.showWhen.trim())}"` : "",
-    element.hideWhen.trim()
-      ? ` data-scryer-unless="${escapeAttribute(element.hideWhen.trim())}"`
-      : "",
-  ].join("");
-  const rect = [
+/** Logo box and score position inside one ratings tile. */
+function ratingTileLayout(element: OverlayElement, layout: OverlayRatingLayout) {
+  const padding = Math.round(Math.min(element.width, element.height) * 0.08);
+  if (layout === "above") {
+    const logoHeight = Math.round((element.height - padding * 2) * 0.55);
+    const textTop = element.y + padding + logoHeight;
+    return {
+      logo: {
+        x: element.x + padding,
+        y: element.y + padding,
+        width: element.width - padding * 2,
+        height: logoHeight,
+      },
+      textX: element.x + element.width / 2,
+      baseline:
+        (textTop + element.y + element.height - padding) / 2 + element.fontSize * CAP_CENTER_RATIO,
+    };
+  }
+  const logoWidth = Math.round((element.width - padding * 2) * 0.45);
+  const textLeft = element.x + padding + logoWidth;
+  return {
+    logo: {
+      x: element.x + padding,
+      y: element.y + padding,
+      width: logoWidth,
+      height: element.height - padding * 2,
+    },
+    textX: (textLeft + element.x + element.width - padding) / 2,
+    baseline: element.y + element.height / 2 + element.fontSize * CAP_CENTER_RATIO,
+  };
+}
+
+function serializeRatings(element: OverlayElement, ratings: OverlayRatings): string {
+  const tile = ratingTileLayout(element, ratings.layout);
+  const rect = rectAttributes(element);
+  const text = [
+    `x="${formatNumber(tile.textX)}"`,
+    `y="${formatNumber(tile.baseline)}"`,
+    `font-family="Inter"`,
+    `font-weight="700"`,
+    `font-size="${formatNumber(element.fontSize)}"`,
+    `fill="${element.textColor}"`,
+    `text-anchor="middle"`,
+    element.letterSpacing !== 0 ? `letter-spacing="${formatNumber(element.letterSpacing)}"` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const logoBox = [
+    `x="${formatNumber(tile.logo.x)}"`,
+    `y="${formatNumber(tile.logo.y)}"`,
+    `width="${formatNumber(tile.logo.width)}"`,
+    `height="${formatNumber(tile.logo.height)}"`,
+  ].join(" ");
+  const tiles = ratings.sources.map((token) => {
+    const source = RATING_SOURCES.find((candidate) => candidate.token === token)!;
+    const field = ratingField(token);
+    return [
+      `    <g data-scryer-if="${field}">`,
+      `      <rect ${rect}/>`,
+      `      <use href="#scryer-logo-${source.logo}" ${logoBox}/>`,
+      `      <text ${text}>{{${field}}}</text>`,
+      `    </g>`,
+    ].join("\n");
+  });
+  return [
+    `  <g data-scryer-stack="${ratings.direction}" data-scryer-step="${formatNumber(stackStep(element, ratings))}">`,
+    ...tiles,
+    `  </g>`,
+  ].join("\n");
+}
+
+function rectAttributes(element: OverlayElement): string {
+  return [
     `x="${formatNumber(element.x)}"`,
     `y="${formatNumber(element.y)}"`,
     `width="${formatNumber(element.width)}"`,
@@ -207,6 +414,19 @@ function serializeElement(element: OverlayElement): string {
   ]
     .filter(Boolean)
     .join(" ");
+}
+
+function serializeElement(element: OverlayElement): string {
+  if (element.ratings) {
+    return serializeRatings(element, element.ratings);
+  }
+  const groupAttributes = [
+    element.showWhen.trim() ? ` data-scryer-if="${escapeAttribute(element.showWhen.trim())}"` : "",
+    element.hideWhen.trim()
+      ? ` data-scryer-unless="${escapeAttribute(element.hideWhen.trim())}"`
+      : "",
+  ].join("");
+  const rect = rectAttributes(element);
   const baseline = element.y + element.height / 2 + element.fontSize * CAP_CENTER_RATIO;
   const text = [
     `x="${formatNumber(textAnchorX(element))}"`,
@@ -293,6 +513,22 @@ const BADGE_PATTERN = /^<g\b([^>]*)>\s*<rect\b([^>]*?)\/>\s*<text\b([^>]*)>([^<]
 
 function parseBadge(match: RegExpExecArray, key: string): OverlayElement | null {
   const [, groupSource, rectSource, textSource, textContent] = match;
+  return parseBadgeParts(
+    groupSource ?? "",
+    rectSource ?? "",
+    textSource ?? "",
+    textContent ?? "",
+    key,
+  );
+}
+
+function parseBadgeParts(
+  groupSource: string,
+  rectSource: string,
+  textSource: string,
+  textContent: string,
+  key: string,
+): OverlayElement | null {
   const group = parseAttributes(groupSource ?? "");
   const rect = parseAttributes(rectSource ?? "");
   const text = parseAttributes(textSource ?? "");
@@ -340,7 +576,63 @@ function parseBadge(match: RegExpExecArray, key: string): OverlayElement | null 
     backgroundOpacity: backgroundOpacity as number,
     align: anchor,
     letterSpacing: letterSpacing as number,
+    ratings: null,
   };
+}
+
+const STACK_PATTERN =
+  /^<g\s+data-scryer-stack="(down|up|right|left)"\s+data-scryer-step="([^"]*)"\s*>([\s\S]*?)<\/g>\s*<\/g>/;
+const RATING_TILE_PATTERN =
+  /<g data-scryer-if="rating_([a-z_]+)">\s*<rect\b([^>]*?)\/>\s*<use\b[^>]*?\/>\s*<text\b([^>]*)>/g;
+
+function normalizeMarkup(markup: string): string {
+  return markup.replace(/\s+/g, " ").replace(/>\s+</g, "><").trim();
+}
+
+/**
+ * A ratings badge, accepted only when writing it back out reproduces the
+ * markup exactly: anything hand-edited stays with the SVG editor.
+ */
+function parseRatings(match: RegExpExecArray, key: string): OverlayElement | null {
+  const [source, direction, stepSource, inner] = match;
+  const tiles = [...(inner ?? "").matchAll(RATING_TILE_PATTERN)];
+  const first = tiles[0];
+  if (!first) {
+    return null;
+  }
+  const tile = parseBadgeParts("", first[2] ?? "", first[3] ?? "", "", key);
+  const step = Number(stepSource);
+  if (!tile || !Number.isFinite(step)) {
+    return null;
+  }
+  const sources: RatingSourceToken[] = [];
+  for (const [, token] of tiles) {
+    const known = RATING_SOURCES.find((candidate) => candidate.token === token);
+    if (!known) {
+      return null;
+    }
+    sources.push(known.token);
+  }
+  const stackDirection = direction as OverlayStackDirection;
+  const along = stackDirection === "down" || stackDirection === "up" ? tile.height : tile.width;
+  for (const layout of ["above", "beside"] as const) {
+    const ratings: OverlayRatings = {
+      sources,
+      direction: stackDirection,
+      gap: step - along,
+      layout,
+    };
+    const element: OverlayElement = {
+      ...tile,
+      text: "",
+      align: "middle",
+      ratings,
+    };
+    if (normalizeMarkup(serializeRatings(element, ratings)) === normalizeMarkup(source ?? "")) {
+      return element;
+    }
+  }
+  return null;
 }
 
 const ROOT_PATTERN = /^\s*(?:<\?xml[^>]*\?>\s*)?<svg\b([^>]*)>([\s\S]*)<\/svg>\s*$/;
@@ -370,6 +662,16 @@ export function parseOverlay(svg: string, makeKey: () => string): OverlayElement
   let body = (root[2] ?? "").replace(/<!--[\s\S]*?-->/g, "").trim();
   const elements: OverlayElement[] = [];
   while (body.length > 0) {
+    const stack = STACK_PATTERN.exec(body);
+    if (stack) {
+      const element = parseRatings(stack, makeKey());
+      if (!element) {
+        return null;
+      }
+      elements.push(element);
+      body = body.slice(stack[0].length).trim();
+      continue;
+    }
     const match = BADGE_PATTERN.exec(body);
     if (!match) {
       return null;

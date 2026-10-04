@@ -31,9 +31,11 @@ import {
   CONDITION_FIELDS,
   OVERLAY_CANVAS_HEIGHT,
   OVERLAY_CANVAS_WIDTH,
+  RATING_SOURCES,
   badgeKind,
   clampElement,
   editionToken,
+  elementBounds,
   formatBadgeCondition,
   newElement,
   parseBadgeCondition,
@@ -43,8 +45,13 @@ import {
   type ConditionField,
   type OverlayBadgeKind,
   type OverlayElement,
+  type OverlayRatingLayout,
+  type OverlayRatings,
+  type OverlayStackDirection,
   type OverlayTextAlign,
+  type RatingSourceToken,
 } from "@/lib/utils/poster-overlay-builder";
+import { ratingSourceInfo } from "@/lib/utils/title-ratings";
 
 /** Radix Select forbids an empty value, so "no value" needs a token. */
 const NONE_VALUE = "__none__";
@@ -154,6 +161,8 @@ export function SettingsPosterOverlayTemplateEditor({
         return t("settings.posterOverlays.badgeKindCodec");
       case "source":
         return t("settings.posterOverlays.badgeKindSource");
+      case "ratings":
+        return t("settings.posterOverlays.badgeKindRatings");
       default:
         return t("settings.posterOverlays.badgeKindCustom");
     }
@@ -235,6 +244,7 @@ export function SettingsPosterOverlayTemplateEditor({
 
               {selectedElement ? (
                 <BadgeFields
+                  key={selectedElement.key}
                   element={selectedElement}
                   index={selectedIndex}
                   busy={busy}
@@ -416,26 +426,39 @@ function BadgeFields({
         </IconButton>
       </div>
 
-      <div className="space-y-1.5">
-        <Label htmlFor={id("text")}>{t("settings.posterOverlays.badgeText")}</Label>
-        <Input
-          id={id("text")}
-          value={element.text}
-          disabled={busy}
-          onChange={(event) => onChange({ text: event.target.value })}
+      {element.ratings ? (
+        <RatingsFields
+          ratings={element.ratings}
+          busy={busy}
+          id={id}
+          onChange={(ratings) => onChange({ ratings })}
         />
-        <p className={`text-xs ${MUTED_TEXT_CLASS}`}>
-          {t("settings.posterOverlays.badgeTextHelp", { example: "{{audio_label}}" })}
-        </p>
-      </div>
+      ) : (
+        <>
+          <div className="space-y-1.5">
+            <Label htmlFor={id("text")}>{t("settings.posterOverlays.badgeText")}</Label>
+            <Input
+              id={id("text")}
+              value={element.text}
+              disabled={busy}
+              onChange={(event) => onChange({ text: event.target.value })}
+            />
+            <p className={`text-xs ${MUTED_TEXT_CLASS}`}>
+              {t("settings.posterOverlays.badgeTextHelp", {
+                example: "{{audio_label}}",
+              })}
+            </p>
+          </div>
 
-      <BadgeConditionFields
-        element={element}
-        sampleOptions={sampleOptions}
-        busy={busy}
-        id={id}
-        onChange={onChange}
-      />
+          <BadgeConditionFields
+            element={element}
+            sampleOptions={sampleOptions}
+            busy={busy}
+            id={id}
+            onChange={onChange}
+          />
+        </>
+      )}
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <NumberField
@@ -519,7 +542,7 @@ function BadgeFields({
             onChange={(event) => onChange({ background: event.target.value })}
           />
         </div>
-        <div className="col-span-2 space-y-1.5 sm:col-span-1">
+        <div className={`col-span-2 space-y-1.5 sm:col-span-1 ${element.ratings ? "hidden" : ""}`}>
           <Label htmlFor={id("align")}>{t("settings.posterOverlays.textAlign")}</Label>
           <Select
             value={element.align}
@@ -541,6 +564,113 @@ function BadgeFields({
   );
 }
 
+type RatingsFieldsProps = {
+  ratings: OverlayRatings;
+  busy: boolean;
+  id: (field: string) => string;
+  onChange: (ratings: OverlayRatings) => void;
+};
+
+/** Sources, logo placement and stacking for a ratings badge. */
+function RatingsFields({ ratings, busy, id, onChange }: RatingsFieldsProps) {
+  const t = useTranslate();
+  const options = RATING_SOURCES.map((source) => {
+    const logo = ratingSourceInfo(source.token).logoSrc;
+    return {
+      value: source.token,
+      label: (
+        <span className="inline-flex items-center gap-2">
+          {logo ? <img src={logo} alt="" className="h-4 w-auto max-w-8 object-contain" /> : null}
+          {source.label}
+        </span>
+      ),
+    };
+  });
+  // Tiles follow the display order, whatever order they were ticked in.
+  const ordered = (tokens: string[]): RatingSourceToken[] =>
+    RATING_SOURCES.map((source) => source.token).filter((token) => tokens.includes(token));
+  const summary =
+    ratings.sources.length === 0
+      ? t("settings.posterOverlays.ratingSourcesNone")
+      : ratings.sources
+          .map((token) => RATING_SOURCES.find((source) => source.token === token)?.label ?? token)
+          .join(", ");
+
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1.5">
+        <Label htmlFor={id("rating-sources")}>{t("settings.posterOverlays.ratingSources")}</Label>
+        <MultiSelectDropdown
+          id={id("rating-sources")}
+          options={options}
+          selectedValues={ratings.sources}
+          onSelectedValuesChange={(values) => onChange({ ...ratings, sources: ordered(values) })}
+          triggerLabel={summary}
+          disabled={busy}
+          optionIdPrefix={`${id("rating-sources")}-option`}
+        />
+        <p className={`text-xs ${MUTED_TEXT_CLASS}`}>{t("settings.posterOverlays.ratingsHelp")}</p>
+      </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <div className="space-y-1.5">
+          <Label htmlFor={id("rating-layout")}>{t("settings.posterOverlays.ratingLayout")}</Label>
+          <Select
+            value={ratings.layout}
+            disabled={busy}
+            onValueChange={(layout) =>
+              onChange({ ...ratings, layout: layout as OverlayRatingLayout })
+            }
+          >
+            <SelectTrigger id={id("rating-layout")} className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="above">
+                {t("settings.posterOverlays.ratingLayoutAbove")}
+              </SelectItem>
+              <SelectItem value="beside">
+                {t("settings.posterOverlays.ratingLayoutBeside")}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor={id("rating-direction")}>
+            {t("settings.posterOverlays.stackDirection")}
+          </Label>
+          <Select
+            value={ratings.direction}
+            disabled={busy}
+            onValueChange={(direction) =>
+              onChange({
+                ...ratings,
+                direction: direction as OverlayStackDirection,
+              })
+            }
+          >
+            <SelectTrigger id={id("rating-direction")} className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="down">{t("settings.posterOverlays.stackDown")}</SelectItem>
+              <SelectItem value="up">{t("settings.posterOverlays.stackUp")}</SelectItem>
+              <SelectItem value="right">{t("settings.posterOverlays.stackRight")}</SelectItem>
+              <SelectItem value="left">{t("settings.posterOverlays.stackLeft")}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <NumberField
+          id={id("rating-gap")}
+          label={t("settings.posterOverlays.stackGap")}
+          value={ratings.gap}
+          busy={busy}
+          onChange={(gap) => onChange({ ...ratings, gap: Math.max(0, gap) })}
+        />
+      </div>
+    </div>
+  );
+}
+
 /** Radix Select forbids an empty value, so "no field" needs a token. */
 const NO_FIELD_VALUE = "__always__";
 
@@ -552,7 +682,10 @@ function conditionOptions(
   sampleOptions: PosterOverlaySampleOptions,
 ): ConditionOption[] | null {
   const labelled = (options: { token: string; label: string }[]) =>
-    options.map((option) => ({ value: option.token, label: `${option.label} (${option.token})` }));
+    options.map((option) => ({
+      value: option.token,
+      label: `${option.label} (${option.token})`,
+    }));
   switch (field) {
     case "resolution":
       return labelled(sampleOptions.resolutions);
@@ -561,7 +694,10 @@ function conditionOptions(
     case "audio_codec":
       return labelled(sampleOptions.audio);
     case "audio_channels":
-      return sampleOptions.audioChannels.map((layout) => ({ value: layout, label: layout }));
+      return sampleOptions.audioChannels.map((layout) => ({
+        value: layout,
+        label: layout,
+      }));
     case "series_status":
       return labelled(sampleOptions.seriesStatus);
     case "video_codec":
@@ -699,7 +835,10 @@ function BadgeConditionFields({
               options={options}
               selectedValues={condition.show === "all" ? [] : condition.show}
               onSelectedValuesChange={(values) =>
-                write({ ...condition, show: values.length > 0 ? values : "all" })
+                write({
+                  ...condition,
+                  show: values.length > 0 ? values : "all",
+                })
               }
               allOption={{
                 label: t("settings.posterOverlays.conditionAll"),
@@ -923,7 +1062,10 @@ function PreviewPanel({
   };
 
   const setSampleField = (field: keyof PosterOverlaySample) => (value: string) =>
-    setSample((current) => ({ ...current, [field]: value === NONE_VALUE ? "" : value }));
+    setSample((current) => ({
+      ...current,
+      [field]: value === NONE_VALUE ? "" : value,
+    }));
 
   return (
     <div className="space-y-3 lg:sticky lg:top-4 lg:self-start">
@@ -987,10 +1129,7 @@ function PreviewPanel({
             {elements.map((element, index) => (
               <rect
                 key={element.key}
-                x={element.x}
-                y={element.y}
-                width={element.width}
-                height={element.height}
+                {...elementBounds(element)}
                 fill="transparent"
                 stroke={index === selectedIndex ? "#38bdf8" : "transparent"}
                 strokeWidth={6}
@@ -1003,6 +1142,13 @@ function PreviewPanel({
                   const point = toCanvas(event);
                   if (!point) {
                     return;
+                  }
+                  // Commit the badge field being typed in before selecting
+                  // another badge. Its blur would otherwise land after the
+                  // selection change and write into the new badge.
+                  const active = document.activeElement;
+                  if (active instanceof HTMLElement) {
+                    active.blur();
                   }
                   event.currentTarget.setPointerCapture(event.pointerId);
                   onSelect(index);
@@ -1073,21 +1219,30 @@ function PreviewPanel({
             id="settings-poster-overlays-sample-hdr"
             label={t("settings.posterOverlays.badgeKindHdr")}
             value={sample.hdr}
-            options={options.hdr.map((option) => ({ value: option.token, label: option.label }))}
+            options={options.hdr.map((option) => ({
+              value: option.token,
+              label: option.label,
+            }))}
             onChange={setSampleField("hdr")}
           />
           <SampleSelect
             id="settings-poster-overlays-sample-audio"
             label={t("settings.posterOverlays.badgeKindAudio")}
             value={sample.audio}
-            options={options.audio.map((option) => ({ value: option.token, label: option.label }))}
+            options={options.audio.map((option) => ({
+              value: option.token,
+              label: option.label,
+            }))}
             onChange={setSampleField("audio")}
           />
           <SampleSelect
             id="settings-poster-overlays-sample-channels"
             label={t("settings.posterOverlays.sampleChannels")}
             value={sample.audioChannels}
-            options={options.audioChannels.map((layout) => ({ value: layout, label: layout }))}
+            options={options.audioChannels.map((layout) => ({
+              value: layout,
+              label: layout,
+            }))}
             onChange={setSampleField("audioChannels")}
           />
           <SampleSelect

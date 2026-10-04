@@ -1,7 +1,7 @@
 # Poster overlays
 
 Scryer can draw quality badges (resolution, HDR, video codec, source, audio,
-edition, series status) over title posters. Badges come from each title's own
+edition, series status) and rating badges over title posters. Badges come from each title's own
 media files and the metadata Scryer already stores; nothing is looked up for
 them. Overlays are enabled per library under Settings > Poster overlays.
 
@@ -59,6 +59,7 @@ changes meaning.
 | `edition_label` | Every edition's upper-case text, joined with ` / `, for example `DIRECTOR'S CUT / THEATRICAL` |
 | `series_status` | `continuing`, `upcoming`, `ended`, `canceled` |
 | `series_status_label` | `CONTINUING`, `UPCOMING`, `ENDED`, `CANCELED` |
+| `rating_imdb`, `rating_rottentomatoes`, `rating_popcornmeter`, `rating_metacritic`, `rating_metacritic_user`, `rating_letterboxd`, `rating_tmdb`, `rating_trakt`, `rating_mdblist` | The title's score from that source as the web UI writes it, for example `7.8`, `74%` or `81` |
 
 How the values are resolved:
 
@@ -80,6 +81,9 @@ How the values are resolved:
   files, primary first. A file's edition is its parsed edition, else the
   Plex/Radarr `{edition-Name}` tag in its file name. A folder holding a
   director's cut and a theatrical cut therefore reports both.
+- **Ratings** come from the scores stored with the title's metadata. Rotten
+  Tomatoes and Popcornmeter are percentages, Metacritic and its user score are
+  out of 100, and the other sources show their own value to one decimal place.
 - **Series status** comes from the title's stored metadata status, for series
   and anime only. TVDB-style statuses (`Continuing`, `Ended`, `Upcoming`) and
   TMDB's (`Returning Series`, `Planned`, `Pilot`, `In Production`, `Ended`,
@@ -128,6 +132,39 @@ values must be slugs.
 <g data-scryer-if="edition=directors_cut|extended">...</g>
 ```
 
+### Logos
+
+`<use href="#scryer-logo-NAME" x="..." y="..." width="..." height="..."/>`
+draws a bundled logo scaled to fit the box, keeping its aspect ratio. The
+logos are `imdb`, `rottentomatoes`, `popcornmeter`, `metacritic`,
+`letterboxd`, `tmdb`, `trakt` and `mdblist`; Metacritic's user score uses the
+`metacritic` logo. The renderer adds only the logos a poster actually draws.
+
+```xml
+<g data-scryer-if="rating_imdb">
+  <use href="#scryer-logo-imdb" x="56" y="316" width="168" height="92"/>
+  <text x="140" y="465">{{rating_imdb}}</text>
+</g>
+```
+
+### Stacks
+
+A group with `data-scryer-stack` and `data-scryer-step` lays out its children
+in a row or column. Children hidden by their conditions take no slot, so a
+title with no score from one source shows no gap.
+
+- `data-scryer-stack` is `down`, `up`, `right` or `left`.
+- `data-scryer-step` is the distance between slots, in viewBox units.
+- Write every child at the first slot's position. The nth child shown is
+  moved `n - 1` steps along.
+
+```xml
+<g data-scryer-stack="down" data-scryer-step="220">
+  <g data-scryer-if="rating_rottentomatoes">...</g>
+  <g data-scryer-if="rating_imdb">...</g>
+</g>
+```
+
 ### Restrictions
 
 A template is rejected if it:
@@ -136,7 +173,11 @@ A template is rejected if it:
 - contains a `DOCTYPE`;
 - is larger than 256 KiB;
 - references an unknown field;
-- compares a field against a value it can never take.
+- compares a field against a value it can never take;
+- references a logo that is not bundled, or uses an id starting with
+  `scryer-logo-`;
+- has a stack without both attributes, an unknown direction, or a step that
+  is not a positive number.
 
 The settings page can check a template before it is saved.
 
@@ -188,11 +229,17 @@ Rebuilds are triggered by:
   upstream artwork: when the title's poster source changes, the new image
   replaces the stored original and the poster is re-rendered. Series status
   changes arrive with metadata refreshes, which raise no event, so they are
-  picked up here.
+  picked up here, as are rating changes.
 
 Rendering runs on a dedicated thread pool, never on the async runtime. Its
 parallelism is configurable (default 3) and bounds memory during
 library-wide rebuilds.
+
+A library-wide pass logs one line when it starts, with the number of titles,
+and one when it finishes, with how many posters were re-rendered, left
+unchanged or failed. Nothing is logged per poster. While a pass runs, the
+settings page shows how many titles it has checked and re-rendered; it reads
+that from memory, not the database.
 
 ### Serving
 
@@ -204,6 +251,9 @@ library-wide rebuilds.
 - Overlay responses carry an `overlay:<output_hash>` ETag and are revalidated
   on every load, so a re-render shows on the next refresh.
 - When no library has overlays enabled, the overlay lookup is skipped.
+- A browser that cached a poster under a long-lived cache header before
+  overlays were enabled keeps showing that copy until its cache expires or is
+  cleared.
 
 ### Reverting
 
@@ -221,17 +271,22 @@ The settings page edits templates visually. The result is an ordinary
 template in the format above.
 
 - Badges are added from presets (resolution, HDR, video codec, source, audio,
-  edition, series status, free text). Each has a position, size, font size,
+  edition, series status, ratings, free text). Each has a position, size, font size,
   colours, background opacity, corner radius and alignment, and can be
   dragged on the preview.
 - Each badge picks one field, the values to show for (`All` means any value)
   and the values to hide for. Hide wins, as `data-scryer-unless` does.
   Options are labelled as the badge prints them, for example `4K (2160p)`.
+- A ratings badge picks its sources from a list showing each source's logo.
+  It draws one tile per source, with the logo above or beside the score, and
+  stacks the tiles in a chosen direction with a chosen gap. Its box is one
+  tile; the preview outlines the whole stack.
 - A template using SVG the visual editor cannot represent stays editable as
   text and is never rewritten.
 - The preview is rendered on the server with chosen sample values, on a
   random stored original from a chosen kind of library (movies, series or
-  anime). The same poster is kept between edits until Shuffle. Nothing is
+  anime). The same poster is kept between edits until Shuffle. Ratings come
+  from that title's scores, or sample scores on the placeholder. Nothing is
   stored.
 
 ## Plex (planned, not yet built)
@@ -257,6 +312,10 @@ each other's work.
 - The embedded font is Inter by The Inter Project Authors, licensed under the
   SIL Open Font License 1.1. The licence ships beside the font in
   `crates/scryer-infrastructure-library/assets/overlays/Inter-OFL.txt`.
+- The rating source logos are the files the web UI already ships under
+  `apps/scryer-web/public/rating-sources`, with internal ids prefixed; the
+  MDBList logo, shipped there only as a small raster, is redrawn as a vector.
+  They are trademarks of their owners and identify the source of each score.
 - The badge designs, template format and rendering code are original to
   Scryer. The overlay concept follows Kometa and Agregarr, but no code or
   assets are taken from either.

@@ -573,3 +573,85 @@ fn edition_conditions_match_any_of_a_titles_editions() {
     assert!(!evaluate_condition("edition=theatrical", &none).unwrap());
     assert!(evaluate_condition("edition!=theatrical", &none).unwrap());
 }
+
+// ── Stacks and logos ───────────────────────────────────────────────────────
+
+#[test]
+fn stacks_close_the_gaps_left_by_hidden_children() {
+    let svg = template(
+        r##"<g data-scryer-stack="down" data-scryer-step="20"><g data-scryer-if="rating_imdb"><text>a</text></g><g data-scryer-if="rating_tmdb"><text>b</text></g><g data-scryer-if="rating_trakt" transform="scale(2)"><text>c</text></g></g>"##,
+    );
+    let out = preprocess(
+        &svg,
+        &values(&[("rating_imdb", "7.8"), ("rating_trakt", "80")]),
+    )
+    .expect("preprocess");
+    assert!(
+        out.contains(r#"<g transform="translate(0 0)"><text>a</text>"#),
+        "{out}"
+    );
+    assert!(
+        out.contains(r#"<g transform="translate(0 20) scale(2)"><text>c</text>"#),
+        "the second visible child takes the second slot: {out}"
+    );
+    assert!(!out.contains(">b<"));
+    assert!(!out.contains("data-scryer-stack") && !out.contains("data-scryer-step"));
+}
+
+#[test]
+fn referenced_logos_are_added_once_and_only_when_drawn() {
+    let svg = template(
+        r##"<g data-scryer-if="rating_imdb"><use href="#scryer-logo-imdb" width="10" height="5"/><use href="#scryer-logo-imdb" y="5" width="10" height="5"/></g><g data-scryer-if="rating_tmdb"><use href="#scryer-logo-tmdb" width="10" height="5"/></g>"##,
+    );
+    let out = preprocess(&svg, &values(&[("rating_imdb", "7.8")])).expect("preprocess");
+    assert_eq!(
+        out.matches(r#"<symbol id="scryer-logo-imdb""#).count(),
+        1,
+        "{out}"
+    );
+    assert!(!out.contains("scryer-logo-tmdb"), "{out}");
+    assert!(out.ends_with("</defs></svg>"), "{out}");
+
+    let out = preprocess(&svg, &empty_values()).expect("preprocess");
+    assert!(!out.contains("<defs>"), "no logo drawn, none added");
+}
+
+#[test]
+fn logo_and_stack_misuse_is_rejected() {
+    for body in [
+        r##"<use href="#scryer-logo-netflix" width="10" height="10"/>"##,
+        r##"<g data-scryer-if="rating_imdb"><use href="#scryer-logo-nope"/></g>"##,
+        r##"<rect id="scryer-logo-imdb" width="1" height="1"/>"##,
+        r##"<g data-scryer-stack="down"/>"##,
+        r##"<g data-scryer-step="10"/>"##,
+        r##"<g data-scryer-stack="sideways" data-scryer-step="10"/>"##,
+        r##"<g data-scryer-stack="down" data-scryer-step="-4"/>"##,
+    ] {
+        assert!(validate(&template(body)).is_err(), "{body}");
+    }
+    assert!(validate(&template(
+        r##"<g data-scryer-stack="right" data-scryer-step="12.5"><use href="#scryer-logo-mdblist"/></g>"##
+    ))
+    .is_ok());
+}
+
+#[test]
+fn every_bundled_logo_renders() {
+    for (name, _) in LOGOS {
+        let svg = format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 150" data-scryer-version="1"><rect width="100" height="150" fill="#000"/><use href="#scryer-logo-{name}" x="0" y="0" width="100" height="150"/></svg>"##
+        );
+        let original = poster(ImageFormat::Png, 100, 150);
+        let rendered = OverlayRenderer::new()
+            .render(&original, &svg, &empty_values(), "h")
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        let full = image::load_from_memory(&rendered.variants[0].1)
+            .unwrap()
+            .to_rgb8();
+        assert!(
+            full.pixels()
+                .any(|pixel| pixel.0.iter().any(|channel| *channel > 120)),
+            "{name} draws something over black"
+        );
+    }
+}

@@ -7,7 +7,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use scryer_application::AppError;
 use scryer_interface_core::{actor_from_ctx, app_from_ctx, to_gql_error};
 use scryer_interface_media::types::{
-    PosterOverlayOverviewPayload, PosterOverlayTemplatePreviewPayload,
+    PosterOverlayOverviewPayload, PosterOverlayPassPayload, PosterOverlayTemplatePreviewPayload,
     PosterOverlayTemplateValidationPayload, PreviewPosterOverlayTemplateInput,
 };
 
@@ -26,6 +26,19 @@ impl PosterOverlayQueries {
             .await
             .map_err(to_gql_error)?;
         Ok(overview.into())
+    }
+
+    /// The library-wide overlay pass in progress or queued. Cheap enough to
+    /// poll while a rebuild runs. Requires catalog or library settings
+    /// access.
+    async fn poster_overlay_pass(&self, ctx: &Context<'_>) -> GqlResult<PosterOverlayPassPayload> {
+        let app = app_from_ctx(ctx)?;
+        let actor = actor_from_ctx(ctx)?;
+        let pass = app
+            .poster_overlay_pass(&actor)
+            .await
+            .map_err(to_gql_error)?;
+        Ok(pass.into())
     }
 
     /// Check a template against the format without saving it.

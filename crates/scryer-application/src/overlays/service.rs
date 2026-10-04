@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use chrono::Utc;
 use futures_util::StreamExt;
@@ -26,6 +26,9 @@ pub struct AppPosterOverlayServices {
     pub(crate) repository: Arc<dyn PosterOverlayRepository>,
     pub(crate) engine: Arc<dyn PosterOverlayEngine>,
     pub(crate) wake: Arc<tokio::sync::Notify>,
+    /// The library-wide pass in progress, if any. Kept in memory so the
+    /// settings page can follow a rebuild without querying the database.
+    pass: Arc<Mutex<PosterOverlayPassProgress>>,
     /// Whether any library has overlays enabled. Lets the image route skip
     /// the overlay lookup entirely on installs that do not use overlays.
     /// Starts `true` so nothing is missed before the first refresh.
@@ -41,6 +44,7 @@ impl AppPosterOverlayServices {
             repository,
             engine,
             wake: Arc::new(tokio::sync::Notify::new()),
+            pass: Arc::new(Mutex::new(PosterOverlayPassProgress::default())),
             any_library_enabled: Arc::new(AtomicBool::new(true)),
         }
     }
@@ -59,7 +63,22 @@ impl AppPosterOverlayServices {
 
     /// Ask the worker for a library-wide pass.
     pub fn request_pass(&self) {
+        self.update_pass(|pass| pass.queued = true);
         self.wake.notify_one();
+    }
+
+    /// The library-wide pass in progress or queued, if any.
+    pub fn pass_progress(&self) -> PosterOverlayPassProgress {
+        self.pass
+            .lock()
+            .map(|pass| pass.clone())
+            .unwrap_or_default()
+    }
+
+    fn update_pass(&self, change: impl FnOnce(&mut PosterOverlayPassProgress)) {
+        if let Ok(mut pass) = self.pass.lock() {
+            change(&mut pass);
+        }
     }
 
     /// The overlaid poster for an image-route variant, or `None` to serve
@@ -118,6 +137,16 @@ impl AppPosterOverlayServices {
 
     /// Process titles with at most `parallelism` in flight.
     pub async fn process_titles(&self, title_ids: Vec<String>) -> PosterOverlayPassSummary {
+        self.process_titles_tracked(title_ids, false).await
+    }
+
+    /// As `process_titles`; `track` counts each outcome into the running
+    /// library-wide pass.
+    async fn process_titles_tracked(
+        &self,
+        title_ids: Vec<String>,
+        track: bool,
+    ) -> PosterOverlayPassSummary {
         let parallelism = self
             .repository
             .get_settings()
@@ -131,6 +160,16 @@ impl AppPosterOverlayServices {
             .buffer_unordered(parallelism);
         while let Some(outcome) = outcomes.next().await {
             summary.record(&outcome);
+            if track {
+                self.update_pass(|pass| {
+                    pass.processed += 1;
+                    match outcome {
+                        PosterOverlayOutcome::Rendered { .. } => pass.rendered += 1,
+                        PosterOverlayOutcome::Failed(_) => pass.failed += 1,
+                        _ => {}
+                    }
+                });
+            }
         }
         summary
     }
@@ -140,7 +179,9 @@ impl AppPosterOverlayServices {
     /// URL back.
     pub async fn reconcile(&self) -> AppResult<PosterOverlayPassSummary> {
         let repository = &self.repository;
-        let mut summary = PosterOverlayPassSummary::default();
+        // A request made from here on asks for another pass after this one.
+        self.update_pass(|pass| pass.queued = false);
+        let mut title_ids = Vec::new();
         let mut after: Option<String> = None;
         loop {
             let page = repository
@@ -149,8 +190,17 @@ impl AppPosterOverlayServices {
             let Some(last) = page.last().cloned() else {
                 break;
             };
-            summary.merge(self.process_titles(page).await);
+            title_ids.extend(page);
             after = Some(last);
+        }
+
+        let _running = RunningPass::start(self, title_ids.len());
+        if !title_ids.is_empty() {
+            tracing::info!(titles = title_ids.len(), "poster overlay reconcile started");
+        }
+        let mut summary = PosterOverlayPassSummary::default();
+        for page in title_ids.chunks(OVERLAY_PASS_PAGE) {
+            summary.merge(self.process_titles_tracked(page.to_vec(), true).await);
         }
 
         let mut after: Option<String> = None;
@@ -178,7 +228,7 @@ impl AppPosterOverlayServices {
             after = Some(last);
         }
 
-        if summary.rendered > 0 || summary.failed > 0 {
+        if !title_ids.is_empty() {
             tracing::info!(
                 rendered = summary.rendered,
                 unchanged = summary.unchanged,
@@ -267,6 +317,7 @@ pub struct PosterOverlayOverview {
     pub templates: Vec<PosterOverlayTemplate>,
     pub counts: PosterOverlayStatusCounts,
     pub builtin_template: &'static str,
+    pub pass: PosterOverlayPassProgress,
 }
 
 /// A template rendered for the editor.
@@ -296,6 +347,45 @@ pub fn overlay_title_for_proxy_source(source: &ImageProxySourceRecord) -> Option
     .then_some(source.owner_id.as_deref())
     .flatten()
     .filter(|title_id| !title_id.is_empty())
+}
+
+/// A library-wide pass as the settings page shows it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PosterOverlayPassProgress {
+    /// A pass was requested and has not started yet.
+    pub queued: bool,
+    pub running: bool,
+    /// Titles the running pass covers.
+    pub total: usize,
+    /// Of those, titles checked so far.
+    pub processed: usize,
+    /// Of those, titles re-rendered so far.
+    pub rendered: usize,
+    pub failed: usize,
+}
+
+/// Marks a pass as running for as long as it lives, so a pass that ends
+/// early on an error is not reported as still running.
+struct RunningPass<'a>(&'a AppPosterOverlayServices);
+
+impl<'a> RunningPass<'a> {
+    fn start(services: &'a AppPosterOverlayServices, total: usize) -> Self {
+        services.update_pass(|pass| {
+            *pass = PosterOverlayPassProgress {
+                queued: pass.queued,
+                running: true,
+                total,
+                ..PosterOverlayPassProgress::default()
+            };
+        });
+        Self(services)
+    }
+}
+
+impl Drop for RunningPass<'_> {
+    fn drop(&mut self) {
+        self.0.update_pass(|pass| pass.running = false);
+    }
 }
 
 /// Titles checked for a stored original to use as the preview background.
@@ -352,7 +442,15 @@ impl AppUseCase {
             templates: repository.list_templates().await?,
             counts: repository.status_counts().await?,
             builtin_template: overlays.engine.builtin_template(),
+            pass: overlays.pass_progress(),
         })
+    }
+
+    /// The library-wide pass in progress or queued. Reads no database, so
+    /// the settings page can poll it during a rebuild.
+    pub async fn poster_overlay_pass(&self, actor: &User) -> AppResult<PosterOverlayPassProgress> {
+        self.require_library_settings_read_permission(actor).await?;
+        Ok(self.require_poster_overlays()?.pass_progress())
     }
 
     pub async fn set_poster_overlay_library(
@@ -388,7 +486,7 @@ impl AppUseCase {
             .set_library_config(library_id, enabled, template_id)
             .await?;
         overlays.refresh_enabled_flag().await?;
-        overlays.wake.notify_one();
+        overlays.request_pass();
         Ok(())
     }
 
@@ -466,7 +564,7 @@ impl AppUseCase {
             updated_at: now,
         };
         overlays.repository.save_template(&template).await?;
-        overlays.wake.notify_one();
+        overlays.request_pass();
         Ok(template)
     }
 
@@ -480,7 +578,7 @@ impl AppUseCase {
         let overlays = self.require_poster_overlays()?;
         let deleted = overlays.repository.delete_template(template_id).await?;
         if deleted {
-            overlays.wake.notify_one();
+            overlays.request_pass();
         }
         Ok(deleted)
     }
@@ -507,9 +605,8 @@ impl AppUseCase {
             .await?;
         let overlays = self.require_poster_overlays()?;
         overlays.engine.validate_template(svg)?;
-        let values = OverlayFields::from_sample(sample)
-            .map_err(|message| AppError::Validation(format!("preview sample: {message}")))?
-            .template_values();
+        let fields = OverlayFields::from_sample(sample)
+            .map_err(|message| AppError::Validation(format!("preview sample: {message}")))?;
 
         let facet = choice
             .facet
@@ -540,6 +637,18 @@ impl AppUseCase {
                 break;
             }
         }
+        // Ratings come from the title behind the preview, so a ratings badge
+        // shows real scores; the placeholder poster gets sample ones.
+        let ratings = match &poster {
+            Some(poster) => overlays
+                .repository
+                .load_inputs(&poster.title_id)
+                .await?
+                .map(|inputs| inputs.ratings)
+                .unwrap_or_default(),
+            None => sample_ratings(),
+        };
+        let values = fields.with_ratings(&ratings).template_values();
         let jpeg = overlays
             .engine
             .render_preview(PosterOverlayPreviewRequest {
@@ -614,6 +723,31 @@ impl AppUseCase {
     }
 }
 
+/// Scores for previewing a ratings badge when no library poster is available.
+fn sample_ratings() -> Vec<crate::TitleExternalRating> {
+    [
+        ("imdb", 7.8),
+        ("rottentomatoes", 91.0),
+        ("popcornmeter", 86.0),
+        ("metacritic", 74.0),
+        ("metacriticuser", 7.9),
+        ("letterboxd", 3.9),
+        ("tmdb", 7.6),
+        ("trakt", 80.0),
+        ("mdblist", 82.0),
+    ]
+    .into_iter()
+    .map(|(source, value)| crate::TitleExternalRating {
+        source: source.to_string(),
+        value: Some(value),
+        score: None,
+        normalized: 0.0,
+        votes: None,
+        url: String::new(),
+    })
+    .collect()
+}
+
 pub(crate) fn presented_version(output_hash: &str) -> &str {
     let end = output_hash
         .char_indices()
@@ -686,7 +820,8 @@ async fn process_title(
     };
     let version = template_version(&template_svg);
     let fields = OverlayFields::aggregate(&inputs.files)
-        .with_title(inputs.facet.as_deref(), inputs.content_status.as_deref());
+        .with_title(inputs.facet.as_deref(), inputs.content_status.as_deref())
+        .with_ratings(&inputs.ratings);
     let input = input_hash(&original_hash, &version, &fields);
 
     let outputs_present = engine

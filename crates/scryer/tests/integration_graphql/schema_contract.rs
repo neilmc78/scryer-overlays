@@ -713,11 +713,13 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     // one more read: 184->185. Keeping the jobs view current adds
     // `latestJobRuns`, the newest run per job in one read: 185->186.
     // Poster overlays add the settings overview, template validation and the
-    // editor's live template preview: 186->189.
+    // editor's live template preview: 186->189. Following a rebuild adds
+    // `posterOverlayPass`, polled without touching the database: 189->190.
     assert!(query_field_names.contains(&"latestJobRuns"));
     assert!(query_field_names.contains(&"previewPosterOverlayTemplate"));
+    assert!(query_field_names.contains(&"posterOverlayPass"));
     assert_eq!(
-        query_field_count, 189,
+        query_field_count, 190,
         "query fields: {query_field_names:?}"
     );
     // First-class proxies (WP4) add one mutation, resetProxyHostKey: SSH host
@@ -1020,11 +1022,13 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     // Poster overlays add nine payloads (overview, settings, library,
     // template, counts, validation, preview, and the two sample-option
     // types) and four inputs (library, settings, template save, preview):
-    // public types 919->932, OBJECT 499->508, INPUT_OBJECT 232->236.
+    // public types 919->932, OBJECT 499->508, INPUT_OBJECT 232->236. Rebuild
+    // progress adds the pass payload: public types 932->933, OBJECT 508->509.
     assert!(public_type_names.contains(&"PosterOverlayTemplatePreview"));
     assert!(public_type_names.contains(&"PreviewPosterOverlayTemplateInput"));
-    assert_eq!(public_types.len(), 932);
-    assert_eq!(kind_count("OBJECT"), 508);
+    assert!(public_type_names.contains(&"PosterOverlayPass"));
+    assert_eq!(public_types.len(), 933);
+    assert_eq!(kind_count("OBJECT"), 509);
     assert_eq!(kind_count("INPUT_OBJECT"), 236);
     assert_eq!(kind_count("ENUM"), 176);
     assert_eq!(kind_count("SCALAR"), 10);

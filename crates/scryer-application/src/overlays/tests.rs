@@ -547,3 +547,71 @@ fn source_is_the_best_release_source_of_the_primary_files() {
         assert_eq!(OverlaySource::from_token(value.token()), Some(value));
     }
 }
+
+fn rating(source: &str, value: Option<f64>, score: Option<f64>) -> crate::TitleExternalRating {
+    crate::TitleExternalRating {
+        source: source.to_string(),
+        value,
+        score,
+        normalized: 0.0,
+        votes: None,
+        url: String::new(),
+    }
+}
+
+#[test]
+fn ratings_are_written_as_the_web_ui_shows_them() {
+    let fields = OverlayFields::default().with_ratings(&[
+        rating("imdb", Some(7.8), None),
+        rating("Rotten Tomatoes", Some(74.0), None),
+        rating("audience", None, Some(0.86)),
+        rating("metacritic", Some(81.0), None),
+        rating("mc-user", Some(7.9), None),
+        rating("letterboxd", Some(4.0), None),
+        rating("TMDb", Some(7.25), None),
+        rating("trakt", Some(80.0), None),
+    ]);
+    let values = fields.template_values();
+    assert_eq!(values["rating_imdb"], "7.8");
+    assert_eq!(values["rating_rottentomatoes"], "74%");
+    assert_eq!(values["rating_popcornmeter"], "86%");
+    assert_eq!(values["rating_metacritic"], "81");
+    assert_eq!(values["rating_metacritic_user"], "79");
+    assert_eq!(values["rating_letterboxd"], "4");
+    assert_eq!(values["rating_tmdb"], "7.3");
+    assert_eq!(values["rating_trakt"], "80");
+    assert_eq!(values["rating_mdblist"], "", "absent sources are empty");
+}
+
+#[test]
+fn a_preferred_alias_wins_and_ratings_feed_the_input_hash() {
+    let fields = OverlayFields::default().with_ratings(&[
+        rating("audience", Some(60.0), None),
+        rating("popcornmeter", Some(90.0), None),
+    ]);
+    assert_eq!(
+        fields
+            .ratings
+            .get(&OverlayRatingSource::Popcornmeter)
+            .map(String::as_str),
+        Some("90%")
+    );
+    let before = OverlayFields::default().with_ratings(&[rating("imdb", Some(7.8), None)]);
+    let after = OverlayFields::default().with_ratings(&[rating("imdb", Some(7.9), None)]);
+    assert_ne!(
+        input_hash("o", "t", &before),
+        input_hash("o", "t", &after),
+        "a changed score rebuilds the poster"
+    );
+    for source in OverlayRatingSource::ALL {
+        assert_eq!(
+            OverlayRatingSource::from_token(source.token()),
+            Some(source)
+        );
+        assert!(
+            TEMPLATE_FIELDS.contains(&source.field()),
+            "{}",
+            source.field()
+        );
+    }
+}
