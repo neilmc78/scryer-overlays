@@ -1116,6 +1116,12 @@ pub const BACKUP_TABLE_CATALOG: &[BackupTableCatalogEntry] = &[
         table: "poster_overlay_libraries",
         classification: BackupTableClassification::Export,
     },
+    // Which overlay was pushed to which Plex item: reset, so the first pass
+    // after a restore uploads each poster again.
+    BackupTableCatalogEntry {
+        table: "poster_overlay_plex_state",
+        classification: BackupTableClassification::ResetOnRestore,
+    },
     BackupTableCatalogEntry {
         table: "poster_overlay_settings",
         classification: BackupTableClassification::Export,
@@ -1413,6 +1419,7 @@ pub fn validate_restore_manifest_table_set(
                     | "poster_overlay_settings"
                     | "poster_overlay_state"
                     | "poster_overlay_templates" => number < 268,
+                    "poster_overlay_plex_state" => number < 269,
                     _ => false,
                 })
             })

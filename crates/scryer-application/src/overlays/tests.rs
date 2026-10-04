@@ -615,3 +615,37 @@ fn a_preferred_alias_wins_and_ratings_feed_the_input_hash() {
         );
     }
 }
+
+#[test]
+fn plex_maintenance_hours_hold_work_back_until_they_end() {
+    use chrono::NaiveTime;
+    let at = |hour, minute| NaiveTime::from_hms_opt(hour, minute, 0).unwrap();
+    let window = |start_hour, end_hour| PlexMaintenanceWindow {
+        start_hour,
+        end_hour,
+    };
+    let minutes = |duration: Option<std::time::Duration>| duration.map(|d| d.as_secs() / 60);
+
+    assert_eq!(
+        minutes(maintenance_remaining(window(3, 5), at(3, 0))),
+        Some(120)
+    );
+    assert_eq!(
+        minutes(maintenance_remaining(window(3, 5), at(4, 30))),
+        Some(30)
+    );
+    assert_eq!(maintenance_remaining(window(3, 5), at(5, 0)), None);
+    assert_eq!(maintenance_remaining(window(3, 5), at(2, 59)), None);
+    // A window past midnight.
+    assert_eq!(
+        minutes(maintenance_remaining(window(23, 2), at(23, 30))),
+        Some(150)
+    );
+    assert_eq!(
+        minutes(maintenance_remaining(window(23, 2), at(1, 0))),
+        Some(60)
+    );
+    assert_eq!(maintenance_remaining(window(23, 2), at(12, 0)), None);
+    // Equal hours mean no window.
+    assert_eq!(maintenance_remaining(window(4, 4), at(4, 0)), None);
+}

@@ -5615,10 +5615,10 @@ export const posterOverlayPassQuery = `query PosterOverlayPass {
 
 export const posterOverlaysQuery = `query PosterOverlays {
   posterOverlays {
-    settings { parallelism reconcileIntervalSeconds }
+    settings { parallelism reconcileIntervalSeconds plexPushEnabled }
     libraries { libraryId libraryName facet enabled templateId }
     templates {${POSTER_OVERLAY_TEMPLATE_FIELDS}}
-    counts { enabledTitles rendered failed noArtwork }
+    counts { enabledTitles rendered failed noArtwork plexPushed plexFailed plexChanged }
     pass {${POSTER_OVERLAY_PASS_FIELDS}}
     builtinTemplate
     templateSpecVersion

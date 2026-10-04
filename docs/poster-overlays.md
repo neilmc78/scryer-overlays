@@ -1,12 +1,13 @@
 # Poster overlays
 
 Scryer can draw quality badges (resolution, HDR, video codec, source, audio,
-edition, series status) and rating badges over title posters. Badges come from each title's own
-media files and the metadata Scryer already stores; nothing is looked up for
-them. Overlays are enabled per library under Settings > Poster overlays.
+edition, series status) and rating badges over title posters. Badges come
+from each title's own media files and the metadata Scryer already stores;
+nothing is looked up for them. Overlays are enabled per library under
+Settings > Poster overlays, and can also be pushed to Plex.
 
 This document is the public contract for overlay templates. It also records
-how rendering, rebuilds and the planned Plex integration behave.
+how rendering, rebuilds and the Plex push behave.
 
 ## Template format
 
@@ -165,6 +166,29 @@ title with no score from one source shows no gap.
 </g>
 ```
 
+### Fitted text
+
+A `<text>` with `data-scryer-fit` is sized to a box instead of overflowing
+it.
+
+- `data-scryer-fit` is `x y width height`, in viewBox units.
+- `data-scryer-fit-lines` is how many lines the text may wrap onto, 1 to 4.
+  Without it the text stays on one line.
+- The text's own `font-size` is the largest size used. It shrinks only as
+  far as needed for its words to fit the box's width in the allowed lines,
+  and the lines' height to fit the box. It never goes below 6.
+- Lines break between words. The block is centred vertically in the box.
+  `x` and `text-anchor` place each line horizontally as usual; the text's
+  own `y` is ignored.
+- The text is measured with the embedded font, as it will be drawn.
+- A fitted `<text>` may contain only text and placeholders, no child
+  elements.
+
+```xml
+<text x="150" font-size="44" text-anchor="middle"
+      data-scryer-fit="58 115 184 110" data-scryer-fit-lines="2">{{edition_label}}</text>
+```
+
 ### Restrictions
 
 A template is rejected if it:
@@ -177,7 +201,9 @@ A template is rejected if it:
 - references a logo that is not bundled, or uses an id starting with
   `scryer-logo-`;
 - has a stack without both attributes, an unknown direction, or a step that
-  is not a positive number.
+  is not a positive number;
+- uses `data-scryer-fit` on anything but `<text>`, with a malformed box,
+  with a line limit outside 1 to 4, or on a `<text>` holding elements.
 
 The settings page can check a template before it is saved.
 
@@ -261,7 +287,9 @@ that from memory, not the database.
 
 - disables overlays in every library;
 - serves every stored original again;
-- removes rendered outputs and their state.
+- removes rendered outputs and their state;
+- with the Plex push in use, uploads the stored originals back to Plex and
+  unlocks their poster fields (see below).
 
 Stored originals are kept.
 
@@ -274,6 +302,9 @@ template in the format above.
   edition, series status, ratings, free text). Each has a position, size, font size,
   colours, background opacity, corner radius and alignment, and can be
   dragged on the preview.
+- Text fit is Fixed size, Shrink to fit, or Wrap onto up to 2 or 3 lines,
+  written as `data-scryer-fit`. New badges shrink to fit; edition badges wrap
+  onto 2 lines.
 - Each badge picks one field, the values to show for (`All` means any value)
   and the values to hide for. Hide wins, as `data-scryer-unless` does.
   Options are labelled as the badge prints them, for example `4K (2160p)`.
@@ -289,18 +320,67 @@ template in the format above.
   from that title's scores, or sample scores on the placeholder. Nothing is
   stored.
 
-## Plex (planned, not yet built)
+## Plex
 
-A future setting will push rendered posters to Plex:
+With **Push posters to Plex** on (Settings > Poster overlays > Plex), each
+overlaid poster also becomes the poster of the title's Plex item.
 
-1. Upload the poster to the Plex item (`POST /library/metadata/{ratingKey}/posters`).
-2. Lock the poster field so a metadata refresh does not revert it.
-3. Delete the upload it replaces, so Plex's metadata folder does not grow.
+### Which items
 
-The Plex item is found through Scryer's existing media-server item mappings.
-The reconcile pass will compare the poster Plex serves with the last pushed
-output. A poster without the marker means someone else changed it; that image
-becomes the new original.
+- Every enabled Plex connection with a selected server and a stored token
+  is used. Requests go to the connection's server URL with the token in a
+  header.
+- A title is pushed to the Plex item that Scryer's media-server catalog
+  scan matched it to (the same match behind "Play on Plex" links). A title
+  with no match is skipped until the scan finds one.
+- Only titles in libraries with overlays enabled are pushed. Episodes and
+  seasons are not.
+
+### Pushing
+
+- The full-size overlay is uploaded (`POST /library/metadata/{ratingKey}/posters`)
+  and the poster field is locked, so Plex's metadata refreshes keep it.
+- Scryer records, per connection and title, which output it uploaded and
+  the item's `thumb` path straight after. A poster is uploaded again only
+  when the rendered output changes, so a pass over an unchanged library
+  makes one light read per title and no uploads.
+- A failed push is recorded on the title, counted on the settings page and
+  retried on the next pass. It never fails the render.
+
+### Posters changed in Plex
+
+When the item's `thumb` no longer matches the one recorded after Scryer's
+upload, Scryer reads the poster Plex now shows. If it lacks the overlay
+marker, someone chose another poster in Plex: Scryer leaves it alone, also
+when its own overlay later changes, and counts it as "changed in Plex".
+Selecting Scryer's poster in Plex again resumes pushing.
+
+### Maintenance hours
+
+Nothing is changed in Plex during its scheduled maintenance hours, read from
+the server's `ButlerStartHour` and `ButlerEndHour` settings (rechecked every
+ten minutes). Uploads and restores due in the window wait, and a pass runs
+when it ends. Plex keeps these hours in the server's local time and Scryer
+compares them in its own, so both should run in the same time zone.
+Rendering in Scryer is not paused.
+
+### Turning it off
+
+Turning the push off, disabling overlays for a library, or "Revert all"
+uploads the stored original back to each pushed item and unlocks its poster
+field. A poster that was changed in Plex is left as it is. Scryer then
+forgets the item.
+
+### Nothing is deleted in Plex
+
+Each upload adds a file to the item's folder in Plex's metadata. Scryer
+never deletes anything on the server; Plex's own **Clean Bundles** task
+(Settings > Troubleshooting) removes uploads no longer in use.
+
+### Backups
+
+Which item received which upload is reset on restore, so the first pass
+after a restore uploads each poster again.
 
 Scryer must be the only tool drawing overlays on these posters. Disable
 Kometa or Agregarr overlays for the same libraries before enabling the Plex

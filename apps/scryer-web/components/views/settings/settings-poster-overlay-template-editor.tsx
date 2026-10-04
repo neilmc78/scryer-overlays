@@ -542,6 +542,28 @@ function BadgeFields({
             onChange={(event) => onChange({ background: event.target.value })}
           />
         </div>
+        <div className={`space-y-1.5 ${element.ratings ? "hidden" : ""}`}>
+          <Label htmlFor={id("fit")}>{t("settings.posterOverlays.textFit")}</Label>
+          <Select
+            value={String(element.fitLines)}
+            disabled={busy}
+            onValueChange={(value) => onChange({ fitLines: Number(value) })}
+          >
+            <SelectTrigger id={id("fit")} className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="0">{t("settings.posterOverlays.textFitOff")}</SelectItem>
+              <SelectItem value="1">{t("settings.posterOverlays.textFitShrink")}</SelectItem>
+              <SelectItem value="2">
+                {t("settings.posterOverlays.textFitWrap", { lines: 2 })}
+              </SelectItem>
+              <SelectItem value="3">
+                {t("settings.posterOverlays.textFitWrap", { lines: 3 })}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <div className={`col-span-2 space-y-1.5 sm:col-span-1 ${element.ratings ? "hidden" : ""}`}>
           <Label htmlFor={id("align")}>{t("settings.posterOverlays.textAlign")}</Label>
           <Select

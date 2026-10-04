@@ -233,3 +233,20 @@ test("a ratings badge covers every tile it can draw", () => {
     { x: -400, y: 300, width: 640, height: 200 },
   );
 });
+
+test("fitted text is written as a box and opens again", () => {
+  const edition = newElement("edition", "e");
+  assert.equal(edition.fitLines, 2);
+  const svg = serializeOverlay([edition]);
+  assert.match(svg, /data-scryer-fit="[\d. ]+" data-scryer-fit-lines="2"/);
+  assert.deepEqual(withoutKeys(parseOverlay(svg, keys())), withoutKeys([edition]));
+
+  const shrink = { ...edition, fitLines: 1 };
+  const shrinkSvg = serializeOverlay([shrink]);
+  assert.ok(shrinkSvg.includes("data-scryer-fit=") && !shrinkSvg.includes("fit-lines"));
+  assert.deepEqual(withoutKeys(parseOverlay(shrinkSvg, keys())), withoutKeys([shrink]));
+
+  // A box the editor would not write is left to the SVG editor.
+  const moved = svg.replace(/data-scryer-fit="[^"]*"/, 'data-scryer-fit="0 0 10 10"');
+  assert.equal(parseOverlay(moved, keys()), null);
+});

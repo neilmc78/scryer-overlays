@@ -1,6 +1,7 @@
 export type PosterOverlaySettings = {
   parallelism: number;
   reconcileIntervalSeconds: number;
+  plexPushEnabled: boolean;
 };
 
 export type PosterOverlayLibrary = {
@@ -26,6 +27,9 @@ export type PosterOverlayCounts = {
   rendered: number;
   failed: number;
   noArtwork: number;
+  plexPushed: number;
+  plexFailed: number;
+  plexChanged: number;
 };
 
 /** A library-wide pass, such as a requested rebuild. */

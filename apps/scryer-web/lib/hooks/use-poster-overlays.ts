@@ -135,6 +135,31 @@ export function usePosterOverlays() {
     [run, showStatus, t],
   );
 
+  const setPlexPush = React.useCallback(
+    async (enabled: boolean) => {
+      if (!overview) {
+        return;
+      }
+      const saved = await run(
+        updatePosterOverlaySettingsMutation,
+        {
+          input: {
+            parallelism: overview.settings.parallelism,
+            reconcileIntervalSeconds: overview.settings.reconcileIntervalSeconds,
+            plexPushEnabled: enabled,
+          },
+        },
+        "settings.posterOverlays.saveError",
+      );
+      if (saved) {
+        showStatus(
+          t(enabled ? "settings.posterOverlays.plexPushOn" : "settings.posterOverlays.plexPushOff"),
+        );
+      }
+    },
+    [overview, run, showStatus, t],
+  );
+
   const saveTemplate = React.useCallback(
     async (draft: PosterOverlayTemplateDraft) => {
       const saved = await run(
@@ -208,6 +233,7 @@ export function usePosterOverlays() {
     reload,
     setLibrary,
     saveSettings,
+    setPlexPush,
     saveTemplate,
     deleteTemplate,
     rebuild,

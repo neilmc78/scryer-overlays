@@ -21,6 +21,34 @@ const VERSION_ATTR: &str = "data-scryer-version";
 const IF_ATTR: &str = "data-scryer-if";
 const UNLESS_ATTR: &str = "data-scryer-unless";
 const STACK_ATTR: &str = "data-scryer-stack";
+/// On `<text>`: `x y width height`, the box the text must fit in. The text
+/// shrinks from its own `font-size`, wraps onto up to
+/// `data-scryer-fit-lines` lines, and is centred vertically in the box.
+const FIT_ATTR: &str = "data-scryer-fit";
+const FIT_LINES_ATTR: &str = "data-scryer-fit-lines";
+pub const MAX_FIT_LINES: usize = 4;
+/// Distance between wrapped lines, as a multiple of the font size.
+const FIT_LINE_HEIGHT: f64 = 1.15;
+/// Half of Inter's cap height: a baseline this far below a point centres
+/// capitals on it.
+const FIT_CAP_CENTER: f64 = 0.36;
+const MIN_FIT_FONT_SIZE: f64 = 6.0;
+
+/// Measures text for fitting. Widths are at font size 100 and exclude
+/// letter spacing.
+pub trait TextMeasure {
+    fn width_at_100(&self, text: &str) -> f64;
+}
+
+/// A rough measure (0.62em per character) for checking a template without
+/// the renderer's font.
+pub struct ApproximateMeasure;
+
+impl TextMeasure for ApproximateMeasure {
+    fn width_at_100(&self, text: &str) -> f64 {
+        text.chars().count() as f64 * 62.0
+    }
+}
 const STEP_ATTR: &str = "data-scryer-step";
 
 /// `<use href="#scryer-logo-imdb"/>` draws a bundled logo. The renderer adds
@@ -78,8 +106,19 @@ fn invalid(message: impl Into<String>) -> AppError {
     AppError::Validation(format!("overlay template: {}", message.into()))
 }
 
-/// Resolve conditionals and placeholders against `values`.
+/// Resolve conditionals and placeholders against `values`, fitting text
+/// with an approximate measure.
 pub fn preprocess(svg: &str, values: &BTreeMap<&'static str, String>) -> AppResult<String> {
+    preprocess_measured(svg, values, &ApproximateMeasure)
+}
+
+/// Resolve conditionals and placeholders against `values`, fitting text
+/// with `measure`.
+pub fn preprocess_measured(
+    svg: &str,
+    values: &BTreeMap<&'static str, String>,
+    measure: &dyn TextMeasure,
+) -> AppResult<String> {
     if svg.len() > MAX_TEMPLATE_BYTES {
         return Err(invalid(format!(
             "template exceeds {MAX_TEMPLATE_BYTES} bytes"
@@ -107,11 +146,18 @@ pub fn preprocess(svg: &str, values: &BTreeMap<&'static str, String>) -> AppResu
                     continue;
                 }
                 check_element(&start, &mut saw_root)?;
+                let fit = text_fit(&start)?;
                 match emit_element(&start, values, &mut open, &mut logos)? {
-                    Some(element) => {
-                        open.push(stack_layout(&start)?);
-                        write(&mut writer, Event::Start(element))?;
-                    }
+                    Some(element) => match fit {
+                        Some(fit) => {
+                            let content = fitted_text_content(&mut reader, values)?;
+                            write_fitted_text(&mut writer, element, fit, &content, measure)?;
+                        }
+                        None => {
+                            open.push(stack_layout(&start)?);
+                            write(&mut writer, Event::Start(element))?;
+                        }
+                    },
                     None => skip_depth = 1,
                 }
             }
@@ -120,6 +166,7 @@ pub fn preprocess(svg: &str, values: &BTreeMap<&'static str, String>) -> AppResu
                     continue;
                 }
                 check_element(&start, &mut saw_root)?;
+                text_fit(&start)?;
                 if let Some(element) = emit_element(&start, values, &mut open, &mut logos)? {
                     write(&mut writer, Event::Empty(element))?;
                 }
@@ -179,6 +226,7 @@ pub fn validate(svg: &str) -> AppResult<()> {
             Event::Eof => return Ok(()),
             Event::Start(start) | Event::Empty(start) => {
                 stack_layout(&start)?;
+                text_fit(&start)?;
                 referenced_logo(&start)?;
                 check_reserved_id(&start)?;
                 for attribute in start.attributes() {
@@ -188,7 +236,11 @@ pub fn validate(svg: &str) -> AppResult<()> {
                     if key == IF_ATTR || key == UNLESS_ATTR {
                         evaluate_condition(&attribute.value, &values)?;
                         check_condition_values(&attribute.value)?;
-                    } else if key == STACK_ATTR || key == STEP_ATTR {
+                    } else if key == STACK_ATTR
+                        || key == STEP_ATTR
+                        || key == FIT_ATTR
+                        || key == FIT_LINES_ATTR
+                    {
                         // Checked together below.
                     } else {
                         substitute(&attribute.value, &values)?;
@@ -236,6 +288,254 @@ fn check_element(start: &BytesStart<'_>, saw_root: &mut bool) -> AppResult<()> {
             version.value
         ))),
     }
+}
+
+/// The box and line limit of a fitted `<text>`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TextFit {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    lines: usize,
+}
+
+/// The fit an element declares, checked even where it never renders.
+fn text_fit(start: &BytesStart<'_>) -> AppResult<Option<TextFit>> {
+    let attribute = |name: &str| -> AppResult<Option<String>> {
+        Ok(start
+            .try_get_attribute(name)
+            .map_err(|error| invalid(format!("bad attribute: {error}")))?
+            .map(|attribute| attribute.value.trim().to_string()))
+    };
+    let fit = attribute(FIT_ATTR)?;
+    let lines = attribute(FIT_LINES_ATTR)?;
+    let Some(fit) = fit else {
+        if lines.is_some() {
+            return Err(invalid(format!("{FIT_LINES_ATTR} needs {FIT_ATTR}")));
+        }
+        return Ok(None);
+    };
+    if start.local_name().as_ref() != "text" {
+        return Err(invalid(format!("{FIT_ATTR} is only allowed on <text>")));
+    }
+    let numbers = fit
+        .split([' ', ','])
+        .filter(|part| !part.is_empty())
+        .map(|part| part.parse::<f64>().ok().filter(|value| value.is_finite()))
+        .collect::<Option<Vec<_>>>()
+        .filter(|numbers| numbers.len() == 4 && numbers[2] > 0.0 && numbers[3] > 0.0)
+        .ok_or_else(|| {
+            invalid(format!(
+                "{FIT_ATTR} must be \"x y width height\" with a positive size, not \"{fit}\""
+            ))
+        })?;
+    let lines = match lines {
+        None => 1,
+        Some(lines) => lines
+            .parse::<usize>()
+            .ok()
+            .filter(|lines| (1..=MAX_FIT_LINES).contains(lines))
+            .ok_or_else(|| {
+                invalid(format!(
+                    "{FIT_LINES_ATTR} must be 1 to {MAX_FIT_LINES}, not \"{lines}\""
+                ))
+            })?,
+    };
+    Ok(Some(TextFit {
+        x: numbers[0],
+        y: numbers[1],
+        width: numbers[2],
+        height: numbers[3],
+        lines,
+    }))
+}
+
+/// The text inside a fitted `<text>`, placeholders resolved and unescaped.
+/// It may hold only text: no child elements.
+fn fitted_text_content(
+    reader: &mut Reader<&[u8]>,
+    values: &BTreeMap<&'static str, String>,
+) -> AppResult<String> {
+    let mut raw = String::new();
+    loop {
+        match reader
+            .read_event()
+            .map_err(|error| invalid(format!("malformed XML: {error}")))?
+        {
+            Event::Text(text) => raw.push_str(&substitute(&text, values)?),
+            Event::GeneralRef(reference) => {
+                raw.push('&');
+                raw.push_str(reference.as_ref());
+                raw.push(';');
+            }
+            Event::Comment(_) => {}
+            Event::End(_) => break,
+            Event::Eof => return Err(invalid("unterminated <text>")),
+            _ => {
+                return Err(invalid(format!(
+                    "a <text> with {FIT_ATTR} may contain only text and placeholders"
+                )));
+            }
+        }
+    }
+    quick_xml::escape::unescape(&raw)
+        .map(|text| text.into_owned())
+        .map_err(|error| invalid(format!("bad text: {error}")))
+}
+
+fn attribute_number(element: &BytesStart<'_>, name: &str) -> AppResult<Option<f64>> {
+    Ok(element
+        .try_get_attribute(name)
+        .map_err(|error| invalid(format!("bad attribute: {error}")))?
+        .and_then(|attribute| {
+            attribute
+                .value
+                .trim()
+                .trim_end_matches("px")
+                .parse::<f64>()
+                .ok()
+        })
+        .filter(|value| value.is_finite()))
+}
+
+/// Writes a fitted `<text>`: the largest font size up to its own at which
+/// the words wrap into the allowed lines inside the box, one `<tspan>` per
+/// line, the block centred vertically.
+fn write_fitted_text(
+    writer: &mut Writer<Vec<u8>>,
+    element: BytesStart<'static>,
+    fit: TextFit,
+    content: &str,
+    measure: &dyn TextMeasure,
+) -> AppResult<()> {
+    let max_size = attribute_number(&element, "font-size")?.unwrap_or(16.0);
+    let spacing = attribute_number(&element, "letter-spacing")?.unwrap_or(0.0);
+    let x = attribute_number(&element, "x")?.unwrap_or(fit.x);
+    let (size, lines) = fit_words(content, max_size, spacing, fit, measure);
+
+    let mut rewritten = BytesStart::new("text");
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|error| invalid(format!("bad attribute: {error}")))?;
+        if !matches!(attribute.key.0, "font-size" | "y") {
+            rewritten.push_attribute(attribute);
+        }
+    }
+    let line_height = size * FIT_LINE_HEIGHT;
+    let center = fit.y + fit.height / 2.0;
+    let first =
+        center - (lines.len().saturating_sub(1) as f64) * line_height / 2.0 + size * FIT_CAP_CENTER;
+    rewritten.push_attribute(("font-size", format_number(size).as_str()));
+    rewritten.push_attribute(("y", format_number(first).as_str()));
+    write(writer, Event::Start(rewritten))?;
+    for (index, line) in lines.iter().enumerate() {
+        let mut tspan = BytesStart::new("tspan");
+        tspan.push_attribute(("x", format_number(x).as_str()));
+        tspan.push_attribute((
+            "y",
+            format_number(first + index as f64 * line_height).as_str(),
+        ));
+        write(writer, Event::Start(tspan))?;
+        write(writer, Event::Text(BytesText::new(line)))?;
+        write(
+            writer,
+            Event::End(quick_xml::events::BytesEnd::new("tspan")),
+        )?;
+    }
+    write(writer, Event::End(quick_xml::events::BytesEnd::new("text")))
+}
+
+fn format_number(value: f64) -> String {
+    let rounded = (value * 100.0).round() / 100.0;
+    format!("{rounded}")
+}
+
+/// The font size and lines for `content` in `fit`.
+fn fit_words(
+    content: &str,
+    max_size: f64,
+    spacing: f64,
+    fit: TextFit,
+    measure: &dyn TextMeasure,
+) -> (f64, Vec<String>) {
+    let words = content.split_whitespace().collect::<Vec<_>>();
+    if words.is_empty() {
+        return (max_size, Vec::new());
+    }
+    let widths = words
+        .iter()
+        .map(|word| measure.width_at_100(word))
+        .collect::<Vec<_>>();
+    let space = (measure.width_at_100("x x") - 2.0 * measure.width_at_100("x")).max(0.0);
+    let chars = words
+        .iter()
+        .map(|word| word.chars().count() as f64)
+        .collect::<Vec<_>>();
+    let word_width =
+        |index: usize, size: f64| widths[index] * size / 100.0 + chars[index] * spacing;
+    let space_width = |size: f64| space * size / 100.0 + spacing;
+
+    // Greedy wrap at `size`: each line as word indices, and the widest.
+    let wrap = |size: f64| -> (Vec<Vec<usize>>, f64) {
+        let mut lines: Vec<Vec<usize>> = Vec::new();
+        let mut current = 0.0;
+        let mut widest: f64 = 0.0;
+        for index in 0..words.len() {
+            let width = word_width(index, size);
+            match lines.last_mut() {
+                Some(line) if current + space_width(size) + width <= fit.width => {
+                    line.push(index);
+                    current += space_width(size) + width;
+                }
+                _ => {
+                    lines.push(vec![index]);
+                    current = width;
+                }
+            }
+            widest = widest.max(current);
+        }
+        (lines, widest)
+    };
+    let fits = |size: f64| -> bool {
+        let (lines, widest) = wrap(size);
+        lines.len() <= fit.lines
+            && widest <= fit.width
+            && lines.len() as f64 * size * FIT_LINE_HEIGHT <= fit.height * FIT_LINE_HEIGHT
+    };
+
+    let floor = MIN_FIT_FONT_SIZE.min(max_size);
+    let size = if fits(max_size) {
+        max_size
+    } else if !fits(floor) {
+        floor
+    } else {
+        let (mut low, mut high) = (floor, max_size);
+        for _ in 0..24 {
+            let middle = (low + high) / 2.0;
+            if fits(middle) {
+                low = middle;
+            } else {
+                high = middle;
+            }
+        }
+        low
+    };
+    let (lines, _) = wrap(size);
+    let mut lines = lines
+        .into_iter()
+        .map(|line| {
+            line.into_iter()
+                .map(|index| words[index])
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect::<Vec<_>>();
+    // Text that cannot fit even at the smallest size keeps its first lines.
+    if lines.len() > fit.lines {
+        let rest = lines.split_off(fit.lines - 1).join(" ");
+        lines.push(rest);
+    }
+    (size, lines)
 }
 
 /// A `data-scryer-stack` group: each child it keeps is moved one `step`
@@ -429,7 +729,7 @@ fn rewrite_element<'a>(
                     return Ok(None);
                 }
             }
-            VERSION_ATTR | STACK_ATTR | STEP_ATTR => {}
+            VERSION_ATTR | STACK_ATTR | STEP_ATTR | FIT_ATTR | FIT_LINES_ATTR => {}
             "transform" if !translated => {
                 let own = substitute(&attribute.value, values)?;
                 rewritten.push_attribute((

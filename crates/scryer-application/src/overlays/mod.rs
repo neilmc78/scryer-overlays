@@ -3,6 +3,7 @@
 //! `docs/poster-overlays.md`.
 
 mod fields;
+mod plex;
 mod ports;
 mod runtime;
 mod service;
@@ -17,10 +18,12 @@ pub use fields::{
     condition_values, edition_from_file_name, edition_token, input_hash,
     is_possible_condition_value, template_version,
 };
+pub use plex::{PLEX_POSTER_CHANGED_IN_PLEX, PlexSyncCounts, maintenance_remaining};
 pub use ports::{
     DEFAULT_OVERLAY_PARALLELISM, DEFAULT_OVERLAY_RECONCILE_INTERVAL_SECONDS,
-    MAX_OVERLAY_PARALLELISM, MIN_OVERLAY_RECONCILE_INTERVAL_SECONDS, PosterOverlayEngine,
-    PosterOverlayInputs, PosterOverlayLibraryConfig, PosterOverlayPreviewPoster,
+    MAX_OVERLAY_PARALLELISM, MIN_OVERLAY_RECONCILE_INTERVAL_SECONDS, PlexMaintenanceWindow,
+    PlexPosterItem, PosterOverlayEngine, PosterOverlayInputs, PosterOverlayLibraryConfig,
+    PosterOverlayPlexClient, PosterOverlayPlexState, PosterOverlayPreviewPoster,
     PosterOverlayPreviewRequest, PosterOverlayRenderRequest, PosterOverlayRendered,
     PosterOverlayRepository, PosterOverlaySettings, PosterOverlayState, PosterOverlayStatusCounts,
     PosterOverlayTemplate, PosterOverlayVariant,

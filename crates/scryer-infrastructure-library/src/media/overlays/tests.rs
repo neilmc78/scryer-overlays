@@ -655,3 +655,82 @@ fn every_bundled_logo_renders() {
         );
     }
 }
+
+// ── Fitted text ────────────────────────────────────────────────────────────
+
+fn font_size(svg: &str) -> f64 {
+    let start = svg.find("font-size=\"").expect("font-size") + "font-size=\"".len();
+    svg[start..start + svg[start..].find('"').unwrap()]
+        .parse()
+        .unwrap()
+}
+
+#[test]
+fn fitted_text_shrinks_to_its_box_and_wraps_when_allowed() {
+    let text = |lines: &str| {
+        template(&format!(
+            r##"<text x="50" y="0" font-size="40" data-scryer-fit="0 0 200 120"{lines}>{{{{edition_label}}}}</text>"##
+        ))
+    };
+    let edition = values(&[("edition_label", "UNRATED EDITION")]);
+
+    let one_line = preprocess(&text(""), &edition).unwrap();
+    assert_eq!(one_line.matches("<tspan").count(), 1, "{one_line}");
+    assert!(font_size(&one_line) < 40.0, "shrunk to fit: {one_line}");
+    assert!(!one_line.contains("data-scryer-fit"));
+
+    let two_lines = preprocess(&text(r#" data-scryer-fit-lines="2""#), &edition).unwrap();
+    assert_eq!(two_lines.matches("<tspan").count(), 2, "{two_lines}");
+    assert!(two_lines.contains(">UNRATED</tspan>") && two_lines.contains(">EDITION</tspan>"));
+    assert!(
+        font_size(&two_lines) > font_size(&one_line),
+        "wrapping keeps the text larger"
+    );
+
+    // Short text keeps its own size.
+    let short = preprocess(&text(""), &values(&[("edition_label", "IMAX")])).unwrap();
+    assert_eq!(font_size(&short), 40.0);
+    // Missing text renders nothing.
+    let empty = preprocess(&text(""), &empty_values()).unwrap();
+    assert!(!empty.contains("<tspan"), "{empty}");
+}
+
+#[test]
+fn fitted_text_misuse_is_rejected() {
+    for body in [
+        r##"<rect data-scryer-fit="0 0 10 10" width="1" height="1"/>"##,
+        r##"<text data-scryer-fit="0 0 10">x</text>"##,
+        r##"<text data-scryer-fit="0 0 10 -1">x</text>"##,
+        r##"<text data-scryer-fit="0 0 10 10" data-scryer-fit-lines="9">x</text>"##,
+        r##"<text data-scryer-fit-lines="2">x</text>"##,
+        r##"<text data-scryer-fit="0 0 10 10"><tspan>x</tspan></text>"##,
+    ] {
+        assert!(validate(&template(body)).is_err(), "{body}");
+    }
+}
+
+#[test]
+fn fitted_text_stays_inside_its_box_when_rendered() {
+    // A 400x200 box at (200, 300) of the 1000x1500 viewBox; the 500x750
+    // preview halves it to x 100..300, y 150..250.
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1500" data-scryer-version="1"><text x="400" y="0" font-size="200" fill="#ff0000" text-anchor="middle" data-scryer-fit="200 300 400 200" data-scryer-fit-lines="2">{{edition_label}}</text></svg>"##;
+    let jpeg = OverlayRenderer::new()
+        .render_preview(
+            None,
+            svg,
+            &values(&[("edition_label", "DIRECTOR'S CUT EXTENDED")]),
+        )
+        .expect("preview");
+    let image = image::load_from_memory(&jpeg).unwrap().to_rgb8();
+    let red = |pixel: &image::Rgb<u8>| pixel.0[0] > 200 && pixel.0[1] < 80 && pixel.0[2] < 80;
+    let mut inside = 0;
+    for (x, y, pixel) in image.enumerate_pixels() {
+        if !red(pixel) {
+            continue;
+        }
+        let within = (96..=304).contains(&x) && (146..=254).contains(&y);
+        assert!(within, "text drawn outside its box at ({x}, {y})");
+        inside += 1;
+    }
+    assert!(inside > 200, "text drawn inside the box");
+}
