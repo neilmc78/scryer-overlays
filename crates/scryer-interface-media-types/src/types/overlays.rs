@@ -4,11 +4,11 @@
 use async_graphql::{ID, InputObject, SimpleObject};
 use chrono::{DateTime, Utc};
 use scryer_application::overlays::{
-    CHANNEL_LAYOUTS, OverlayAudio, OverlayHdr, OverlayRatingSource, OverlayResolution,
-    OverlaySampleValues, OverlaySeriesStatus, OverlaySource, OverlayVideoCodec,
-    PosterOverlayLibraryConfig, PosterOverlayOverview, PosterOverlayPassProgress,
-    PosterOverlayPreviewChoice, PosterOverlaySettings, PosterOverlayStatusCounts,
-    PosterOverlayTemplate, TEMPLATE_FIELDS, TEMPLATE_SPEC_VERSION,
+    CHANNEL_LAYOUTS, OverlayAudio, OverlayHdr, OverlayResolution, OverlaySampleValues,
+    OverlaySeriesStatus, OverlaySource, OverlayVideoCodec, PosterOverlayLibraryConfig,
+    PosterOverlayOverview, PosterOverlayPassProgress, PosterOverlayPreviewChoice,
+    PosterOverlaySettings, PosterOverlayStatusCounts, PosterOverlayTemplate, TEMPLATE_FIELDS,
+    TEMPLATE_SPEC_VERSION,
 };
 
 /// Render settings shared by every library.
