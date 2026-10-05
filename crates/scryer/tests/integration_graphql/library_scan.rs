@@ -1801,25 +1801,9 @@ async fn library_movie_scan_keeps_media_of_a_title_recorded_at_the_library_root(
 #[tokio::test]
 async fn title_scan_refuses_a_title_recorded_at_the_library_root() {
     let ctx = TestContext::new().await;
-    seed_typed_settings_definitions(&ctx).await;
     let media_root = tempfile::tempdir().expect("media root tempdir");
-    update_library_paths_for_scan(
-        &ctx,
-        "/tmp/movies-unused",
-        media_root.path().to_string_lossy().as_ref(),
-        "/tmp/anime-unused",
-    )
-    .await;
-
-    let title = create_catalog_title(
-        &ctx,
-        "Rooted Show",
-        MediaFacet::Series,
-        vec![ExternalId::new("tvdb".to_string(), "123458".to_string())],
-        vec![],
-        false,
-    )
-    .await;
+    let (title, _collection) =
+        create_series_scan_title(&ctx, media_root.path(), "Rooted Show", vec![]).await;
     ctx.titles
         .set_folder_path(&title.id, media_root.path().to_string_lossy().as_ref())
         .await
