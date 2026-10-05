@@ -1032,6 +1032,54 @@ async fn swapping_folders_gives_each_title_the_other_folder() {
 /// hand the root to the other title, and its rescan would read every file in
 /// the library as its own.
 #[tokio::test]
+async fn reconciling_a_title_recorded_at_the_library_root_is_refused() {
+    let fixture = FolderMatchFixture::new().await;
+    let bystander_folder = fixture.folder("Bystander Title (2022)");
+    let bystander_file = fixture.write_media(&bystander_folder, "Bystander.Title.2022.1080p.mkv");
+    fixture.scanner.set_files(&[bystander_file.as_path()]).await;
+    let rooted = fixture
+        .create_title_with_folder("Rooted Title", fixture.root.path())
+        .await;
+    let bystander = create_movie_title_with_folder(
+        &fixture.app,
+        &fixture.user,
+        "Bystander Title",
+        bystander_folder.as_path(),
+    )
+    .await;
+    fixture.seed_media_row(&bystander.id, &bystander_file).await;
+
+    let error = fixture
+        .app
+        .reconcile_title_folder(&fixture.user, &rooted.id)
+        .await
+        .expect_err("a root record is refused");
+    assert!(
+        matches!(error, AppError::Validation(_)),
+        "unexpected error: {error}"
+    );
+    assert!(
+        fixture
+            .media_files
+            .list_media_files_for_title(&rooted.id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "nothing is attached to the rooted title"
+    );
+    assert_eq!(
+        fixture
+            .media_files
+            .list_media_files_for_title(&bystander.id)
+            .await
+            .unwrap()
+            .len(),
+        1,
+        "the bystander keeps its file"
+    );
+}
+
+#[tokio::test]
 async fn a_title_recorded_at_the_library_root_cannot_swap_its_record_away() {
     let fixture = FolderMatchFixture::new().await;
     let owned_folder = fixture.folder("Holder Title (2021)");

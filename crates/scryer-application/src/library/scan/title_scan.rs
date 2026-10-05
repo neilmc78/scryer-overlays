@@ -2165,6 +2165,10 @@ impl AppUseCase {
             .as_deref()
             .filter(|folder| !folder.trim().is_empty())
             .ok_or_else(|| AppError::Validation("title has no owned folder".into()))?;
+        // The scoped walk below attaches whatever the folder holds, so a
+        // record that is a library root would hand the title every file in
+        // the library.
+        crate::folder_ownership::ensure_title_folder_is_not_a_library_root(self, &title).await?;
         if !episodic_title_directory_present(&stored_path_to_path_buf(folder)).await? {
             return Err(AppError::Validation("owned folder is unavailable".into()));
         }
