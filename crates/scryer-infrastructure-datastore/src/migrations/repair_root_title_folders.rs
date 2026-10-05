@@ -32,10 +32,14 @@
 //! (or a later rename, which now records the planned folder) can correct it.
 //! Re-running finds nothing left to repair, so the repair is idempotent.
 //!
-//! A title folder that ended up *deeper* than the title's real folder (an
-//! un-flatten with a custom season template could do that) is only logged: a
-//! too-narrow folder never sweeps up other titles, and repairing it would mean
-//! guessing between a season folder and a nested layout.
+//! A rename could also leave the record *deeper* than the title's real folder:
+//! it re-derived the folder from each moved file, and a file landing in a
+//! season folder whose name it did not recognise (`Specials`, or a custom
+//! season template) recorded that season folder. Such a title has media files
+//! outside its recorded folder. The record is moved up one level, to the
+//! folder containing the recorded one, when every media file of the title is
+//! inside that folder, it is a valid title folder, and no other title records
+//! or has media in an overlapping folder. Otherwise it is only logged.
 
 use std::collections::HashMap;
 
@@ -90,7 +94,8 @@ struct LeftAlone {
 struct RepairPlan {
     repairs: Vec<TitleFolderRepair>,
     left_alone: Vec<LeftAlone>,
-    /// Titles whose folder looks deeper than their files imply; logged only.
+    /// Titles whose folder holds only some of their files and whose containing
+    /// folder could not be recorded instead; logged only.
     too_deep: Vec<(String, String)>,
 }
 
@@ -199,6 +204,7 @@ fn build_repair_plan(
     // Pass one: which recorded folders are wrong, and what the files imply.
     let mut candidates = Vec::<(&TitleRow, &str, &'static str, Option<String>)>::new();
     let mut trusted_folders = Vec::<(&str, &str)>::new();
+    let mut too_deep = Vec::<(&TitleRow, &str)>::new();
     let mut plan = RepairPlan::default();
     for title in titles {
         let Some(folder) = recorded_folder(title) else {
@@ -226,14 +232,14 @@ fn build_repair_plan(
                         .iter()
                         .any(|path| !stored_path_is_inside_folder(folder, path))
                 {
-                    plan.too_deep.push((title.id.clone(), folder.to_string()));
+                    too_deep.push((title, folder));
                 }
                 trusted_folders.push((title.id.as_str(), folder));
             }
         }
     }
 
-    if candidates.is_empty() {
+    if candidates.is_empty() && too_deep.is_empty() {
         return plan;
     }
 
@@ -304,7 +310,50 @@ fn build_repair_plan(
             root_folder_id,
         });
     }
+
+    // Pass three: a record that holds only some of the title's files moves up
+    // to the folder containing it, when that folder holds all of them and is
+    // free.
+    for (title, folder) in too_deep {
+        let paths = media_by_title
+            .get(title.id.as_str())
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let library_roots = library_roots_for(&title.library_id);
+        let containing = containing_folder(folder).filter(|containing| {
+            paths
+                .iter()
+                .all(|path| stored_path_is_inside_folder(containing, path))
+                && title_folder_root_violation(containing, library_roots, &all_roots).is_none()
+                && !taken_folders.overlaps_another_titles(&title.id, containing)
+                && !media_owners.another_title_has_media_inside(&title.id, containing)
+        });
+        let Some(containing) = containing else {
+            plan.too_deep.push((title.id.clone(), folder.to_string()));
+            continue;
+        };
+        let root_folder_id = most_specific_root_id(roots, &title.library_id, &containing)
+            .filter(|root_id| title.root_folder_id.as_deref() != Some(root_id.as_str()));
+        taken_folders.insert(&title.id, &containing);
+        plan.repairs.push(TitleFolderRepair {
+            title_id: title.id.clone(),
+            folder_path: containing,
+            root_folder_id,
+        });
+    }
     plan
+}
+
+/// The folder directly containing `folder`, in the spelling `folder` is stored
+/// in. Stored paths keep the separators of the host that wrote them, so the
+/// cut is whichever separator leaves a folder `folder` is strictly within.
+fn containing_folder(folder: &str) -> Option<String> {
+    let trimmed = folder.trim().trim_end_matches(['/', '\\']);
+    trimmed
+        .rmatch_indices(['/', '\\'])
+        .map(|(index, _)| &trimmed[..index])
+        .find(|candidate| !candidate.is_empty() && path_is_strictly_within(folder, candidate))
+        .map(str::to_string)
 }
 
 /// The titles that own one key of an index. Only "is there an owner other
@@ -460,7 +509,7 @@ fn log_plan(plan: &RepairPlan) {
             title_id = %repair.title_id,
             folder_path = %repair.folder_path,
             root_folder_id = ?repair.root_folder_id,
-            "repaired a title folder that pointed at or above a library root"
+            "repaired a title folder that did not match where the title's files are"
         );
     }
     for left in &plan.left_alone {
@@ -880,21 +929,121 @@ mod tests {
     }
 
     #[test]
-    fn a_too_deep_folder_is_only_reported() {
+    fn a_folder_recorded_as_the_specials_folder_is_repaired_to_the_title_folder() {
         let plan = build_repair_plan(
             &roots(),
-            &[title("t1", "/media/tv/Synthetic Show/S02")],
+            &[title("t1", "/media/tv/Synthetic Show/Specials")],
             &[
-                media("t1", "/media/tv/Synthetic Show/S01/e1.mkv"),
-                media("t1", "/media/tv/Synthetic Show/S02/e2.mkv"),
+                media("t1", "/media/tv/Synthetic Show/Season 1/e1.mkv"),
+                media("t1", "/media/tv/Synthetic Show/Specials/s1.mkv"),
+            ],
+        );
+        assert_eq!(
+            plan.repairs,
+            vec![TitleFolderRepair {
+                title_id: "t1".to_string(),
+                folder_path: "/media/tv/Synthetic Show".to_string(),
+                root_folder_id: None,
+            }]
+        );
+        assert!(plan.too_deep.is_empty());
+    }
+
+    #[test]
+    fn a_windows_style_specials_record_is_repaired_in_its_own_spelling() {
+        let roots = vec![root("root-d", "series", r"D:\Media\TV")];
+        let mut row = title("t1", r"D:\Media\TV\Synthetic Show\Specials");
+        row.root_folder_id = Some("root-d".to_string());
+        let plan = build_repair_plan(
+            &roots,
+            &[row],
+            &[
+                media("t1", r"D:\Media\TV\Synthetic Show\Season 1\e1.mkv"),
+                media("t1", r"D:\Media\TV\Synthetic Show\Specials\s1.mkv"),
+            ],
+        );
+        assert_eq!(
+            repaired(&plan, "t1").as_deref(),
+            Some(r"D:\Media\TV\Synthetic Show")
+        );
+    }
+
+    #[test]
+    fn a_too_deep_record_in_a_nested_layout_moves_up_one_level_only() {
+        let plan = build_repair_plan(
+            &roots(),
+            &[title("t1", "/media/tv/Group/Synthetic Show/Specials")],
+            &[
+                media("t1", "/media/tv/Group/Synthetic Show/Season 1/e1.mkv"),
+                media("t1", "/media/tv/Group/Synthetic Show/Specials/s1.mkv"),
+            ],
+        );
+        assert_eq!(
+            repaired(&plan, "t1").as_deref(),
+            Some("/media/tv/Group/Synthetic Show")
+        );
+    }
+
+    #[test]
+    fn a_too_deep_record_is_only_reported_when_the_containing_folder_is_not_free() {
+        let deep = "/media/tv/Synthetic Show/Specials";
+        let reported = vec![("t1".to_string(), deep.to_string())];
+
+        // Files of the title outside the containing folder.
+        let plan = build_repair_plan(
+            &roots(),
+            &[title("t1", "/media/tv/Group/Synthetic Show/Specials")],
+            &[
+                media("t1", "/media/tv/Group/Synthetic Show/Specials/s1.mkv"),
+                media("t1", "/media/tv/Group/Elsewhere/e1.mkv"),
             ],
         );
         assert!(plan.repairs.is_empty());
-        assert!(plan.left_alone.is_empty());
-        assert_eq!(
-            plan.too_deep,
-            vec![("t1".to_string(), "/media/tv/Synthetic Show/S02".to_string())]
+        assert_eq!(plan.too_deep.len(), 1);
+
+        // Another title has media in the containing folder.
+        let plan = build_repair_plan(
+            &roots(),
+            &[title("t1", deep)],
+            &[
+                media("t1", "/media/tv/Synthetic Show/Season 1/e1.mkv"),
+                media("t1", "/media/tv/Synthetic Show/Specials/s1.mkv"),
+                media("other", "/media/tv/Synthetic Show/Season 1/other.mkv"),
+            ],
         );
+        assert!(plan.repairs.is_empty());
+        assert_eq!(plan.too_deep, reported);
+
+        // Another title records a folder inside the containing folder.
+        let plan = build_repair_plan(
+            &roots(),
+            &[
+                title("t1", deep),
+                title("other", "/media/tv/Synthetic Show/Season 1"),
+            ],
+            &[
+                media("t1", "/media/tv/Synthetic Show/Season 1/e1.mkv"),
+                media("t1", "/media/tv/Synthetic Show/Specials/s1.mkv"),
+            ],
+        );
+        assert!(plan.repairs.is_empty());
+        assert_eq!(plan.too_deep, reported);
+    }
+
+    #[test]
+    fn repairing_a_too_deep_record_twice_changes_nothing_the_second_time() {
+        let files = [
+            media("t1", "/media/tv/Synthetic Show/Season 1/e1.mkv"),
+            media("t1", "/media/tv/Synthetic Show/Specials/s1.mkv"),
+        ];
+        let first = build_repair_plan(
+            &roots(),
+            &[title("t1", "/media/tv/Synthetic Show/Specials")],
+            &files,
+        );
+        let repaired_folder = repaired(&first, "t1").expect("repaired");
+        let second = build_repair_plan(&roots(), &[title("t1", &repaired_folder)], &files);
+        assert_eq!(second, RepairPlan::default());
     }
 
     #[test]
