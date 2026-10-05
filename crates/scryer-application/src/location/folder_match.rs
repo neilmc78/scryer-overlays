@@ -226,6 +226,9 @@ struct FolderMatchContext {
     current_root: Option<LibraryRoot>,
     /// The other title owning `selected_folder`, when there is one.
     owner: Option<Title>,
+    /// The title's recorded folder is a library root or holds one. Such a
+    /// record is damage to correct, not a folder another title can be given.
+    current_folder_spans_a_library_root: bool,
 }
 
 impl FolderMatchContext {
@@ -253,7 +256,7 @@ impl FolderMatchContext {
             FolderMatchOwnership::OwnedByAnotherTitle => {
                 let mut resolutions = Vec::new();
                 // Trading folders needs a folder to trade.
-                if self.current_folder().is_some() {
+                if self.current_folder().is_some() && !self.current_folder_spans_a_library_root {
                     resolutions.push(FolderMatchResolution::Swap);
                 }
                 resolutions.push(FolderMatchResolution::TakeOver);
@@ -347,6 +350,8 @@ impl AppUseCase {
         let owner =
             crate::folder_ownership::find_other_folder_owner(self, &title, &selected_folder)
                 .await?;
+        let current_folder_spans_a_library_root =
+            crate::folder_ownership::title_folder_spans_a_library_root(self, &title).await?;
 
         Ok(FolderMatchContext {
             title,
@@ -355,6 +360,7 @@ impl AppUseCase {
             selected_root,
             current_root,
             owner,
+            current_folder_spans_a_library_root,
         })
     }
 
@@ -655,6 +661,15 @@ impl AppUseCase {
                 ))
             })?
             .to_string();
+        // Swapping would hand the library root to the other title, whose
+        // rescan would then read every file under it as its own.
+        if context.current_folder_spans_a_library_root {
+            return Err(AppError::Validation(format!(
+                "the recorded folder for {} ({}) is a library root, not a folder to swap; take over the folder instead",
+                context.title.name,
+                crate::stored_paths::stored_path_to_display_string(&title_folder)
+            )));
+        }
         let owner_folder = title_folder_path(&owner)
             .ok_or_else(|| {
                 AppError::Repository(format!(
