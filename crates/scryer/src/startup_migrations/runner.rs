@@ -449,7 +449,7 @@ impl ApplicationMigrator {
                     self.run_retryable(spec, migration_0011::migrate(self.settings.clone()))
                         .await;
                 }
-                // Runs from `run_empty_duplicate_title_folder_cleanup`, once
+                // Starts from `spawn_empty_duplicate_title_folder_cleanup`, once
                 // the library roots are reconciled.
                 migration_0017::ID => {}
                 _ => unreachable!("application-ready migration registry and dispatcher must agree"),
@@ -461,11 +461,12 @@ impl ApplicationMigrator {
     /// The one-time removal of empty title folders an old rename left behind.
     ///
     /// It gets one attempt, ever: the ledger row is written first, and the
-    /// cleanup runs only if this process is the one that wrote it and this
+    /// cleanup starts only if this process is the one that wrote it and this
     /// start is an upgrade from an affected release. A failure, a skipped
-    /// start, and an interrupted run are all final. It runs to completion
-    /// here, before anything that moves files has started.
-    pub(crate) async fn run_empty_duplicate_title_folder_cleanup(
+    /// start, and an interrupted run are all final. The cleanup itself runs in
+    /// the background so a large or unresponsive library cannot hold up
+    /// startup.
+    pub(crate) async fn spawn_empty_duplicate_title_folder_cleanup(
         &mut self,
         app: &AppUseCase,
         previous_version: Option<&str>,
@@ -476,7 +477,10 @@ impl ApplicationMigrator {
         {
             return;
         }
-        migration_0017::run(app).await;
+        let app = app.clone();
+        std::mem::drop(tokio::spawn(async move {
+            migration_0017::run(&app).await;
+        }));
     }
 
     async fn claim_empty_duplicate_title_folder_cleanup(

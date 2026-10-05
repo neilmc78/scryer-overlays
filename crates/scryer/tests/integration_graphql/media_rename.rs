@@ -3474,6 +3474,25 @@ async fn empty_duplicate_title_folders_are_removed_and_everything_else_is_kept()
     title("Still Water", "93083").await;
     let unrecorded_title_dir = empty_seasons("Still Water (2024)");
 
+    // The title's recorded folder was never created, so this is its only folder.
+    let never_moved = title("Hollow Reed", "93084").await;
+    set_title_folder_path(
+        &ctx,
+        &never_moved.id,
+        &root.join("Hollow Reed (2024) 93084"),
+    )
+    .await;
+    let only_folder = empty_seasons("Hollow Reed (2024)");
+
+    // Two titles share a name and year; one has no folder record, so the bare
+    // folder could be its own.
+    let twin = title("Twin Lanterns", "93085").await;
+    let twin_dir = empty_seasons("Twin Lanterns (2024) 93085");
+    set_title_folder_path(&ctx, &twin.id, &twin_dir).await;
+    title("Twin Lanterns", "93086").await;
+    let twin_bare = empty_seasons("Twin Lanterns (2024)");
+    let twin_other_id = empty_seasons("Twin Lanterns (2024) 93086");
+
     // Another title tracks a file inside what looks like a leftover.
     let named = title("Amber Signal", "93080").await;
     let named_dir = root.join("Amber Signal (2024) 93080");
@@ -3510,6 +3529,8 @@ async fn empty_duplicate_title_folders_are_removed_and_everything_else_is_kept()
         stored(&holds_a_file),
         stored(&holds_another_folder),
         stored(&tracked_by_another),
+        stored(&only_folder),
+        stored(&twin_bare),
     ];
     expected_kept.sort();
     assert_eq!(kept, expected_kept);
@@ -3531,6 +3552,10 @@ async fn empty_duplicate_title_folders_are_removed_and_everything_else_is_kept()
         &other_case_dir,
         &unrecorded_title_dir,
         &tracked_by_another,
+        &only_folder,
+        &twin_dir,
+        &twin_bare,
+        &twin_other_id,
     ] {
         assert!(
             folder.join("Season 1").is_dir() && folder.join("Specials").is_dir(),
@@ -3547,4 +3572,72 @@ async fn empty_duplicate_title_folders_are_removed_and_everything_else_is_kept()
         .await
         .expect("second cleanup");
     assert!(second.removed.is_empty());
+}
+
+/// While a location operation holds a claim the cleanup removes nothing.
+#[tokio::test]
+async fn empty_duplicate_title_folders_are_kept_while_a_location_operation_is_unfinished() {
+    use scryer_application::LocationOperationRepository;
+    use scryer_application::location::ownership_guard::OwnedEntity;
+    use scryer_infrastructure_library::media::libraries::location_operation_store::LocationOperationStore;
+
+    let ctx = TestContext::new().await;
+    seed_typed_settings_definitions(&ctx).await;
+    let media_root = tempfile::tempdir().expect("media root tempdir");
+    configure_default_library_root(&ctx, MediaFacet::Anime, media_root.path()).await;
+    let root = media_root.path();
+
+    let recorded = create_catalog_title(
+        &ctx,
+        "Lantern Orchard",
+        MediaFacet::Anime,
+        vec![ExternalId::new("tvdb".to_string(), "93077".to_string())],
+        vec![],
+        true,
+    )
+    .await;
+    let recorded_dir = root.join("Lantern Orchard (2024) 93077");
+    std::fs::create_dir_all(&recorded_dir).expect("recorded dir");
+    set_title_folder_path(&ctx, &recorded.id, &recorded_dir).await;
+    let leftover = root.join("Lantern Orchard (2024)");
+    std::fs::create_dir_all(leftover.join("Season 1")).expect("leftover");
+
+    // An unrelated title is mid-move.
+    let moving = create_catalog_title(
+        &ctx,
+        "Pale Meridian",
+        MediaFacet::Anime,
+        vec![ExternalId::new("tvdb".to_string(), "93081".to_string())],
+        vec![],
+        true,
+    )
+    .await;
+    let library_id = scryer_domain::default_library_id_for_facet(&MediaFacet::Anime);
+    let root_id = default_library_root_id(&ctx, &MediaFacet::Anime).await;
+    let operation_id =
+        super::location_operations::seed_queued_operation(&ctx, &library_id, &root_id).await;
+    let store = LocationOperationStore::new(ctx.db.datastore());
+    store
+        .claim_location_operation_ownership(&operation_id, &[OwnedEntity::Title(moving.id.clone())])
+        .await
+        .expect("claim");
+
+    let report = ctx
+        .app
+        .remove_empty_duplicate_title_folders()
+        .await
+        .expect("cleanup");
+    assert!(report.removed.is_empty());
+    assert!(leftover.join("Season 1").is_dir(), "nothing is removed");
+
+    store
+        .release_location_operation_ownership(&operation_id)
+        .await
+        .expect("release");
+    let report = ctx
+        .app
+        .remove_empty_duplicate_title_folders()
+        .await
+        .expect("cleanup after release");
+    assert_eq!(report.removed, vec![leftover.to_string_lossy().to_string()]);
 }

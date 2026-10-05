@@ -7,27 +7,28 @@
 //!
 //! - it sits directly under a configured library root;
 //! - its name is a title's `Name (Year)`, alone or followed by text carrying
-//!   one of that title's own external ids, and that title's recorded folder is
-//!   another folder directly under the same root whose name starts the same
-//!   way;
+//!   one of that title's own external ids, and no other title's name fits it;
+//! - that title's recorded folder is directly under the same root, is named
+//!   the same way, is on disk as an ordinary directory, and is a different
+//!   directory;
 //! - no title records it or a folder inside it, no library root is it or sits
 //!   inside it, and no title tracks a file in it, comparing paths without
 //!   regard to case or Unicode form;
-//! - no location operation owns the title it is named after;
+//! - no location operation is unfinished;
 //! - it holds nothing but empty directories named like season folders.
 //!
-//! Anything else is left alone. Directories are removed with `remove_dir`,
-//! which refuses a directory that still holds anything, so an entry that
-//! appears after the check stops the removal.
+//! Anything else is left alone. It runs while the application is serving, so
+//! the catalog is read again before each removal. Directories are removed
+//! with `remove_dir`, which refuses a directory that still holds anything, so
+//! an entry that appears after the check stops the removal.
 
 use std::path::{Path, PathBuf};
 
 use scryer_domain::Title;
-use tracing::{debug, warn};
+use tracing::{info, warn};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::library::rename::{build_title_folder_tokens, sanitize_filesystem_component};
-use crate::location::ownership_guard::RENAME_APPLY_ENTRY;
 use crate::stored_paths::{
     folder_paths_match, is_escaped_stored_path, path_identity_key, path_to_stored_string,
     stored_path_to_path_buf,
@@ -50,7 +51,20 @@ pub struct EmptyDuplicateTitleFolderReport {
 enum FolderOutcome {
     Removed,
     Kept(&'static str),
-    Failed(std::io::Error),
+    Failed {
+        error: std::io::Error,
+        /// Empty season folders already removed when the error stopped it.
+        season_folders_removed: usize,
+    },
+}
+
+impl FolderOutcome {
+    fn failed(error: std::io::Error) -> Self {
+        Self::Failed {
+            error,
+            season_folders_removed: 0,
+        }
+    }
 }
 
 impl AppUseCase {
@@ -72,10 +86,25 @@ impl AppUseCase {
                 (!folder.is_empty()).then_some((title, folder))
             })
             .collect::<Vec<_>>();
+        // Every title's name rule, with or without a folder record.
+        let name_rules = titles
+            .iter()
+            .filter_map(|title| Some((title.id.as_str(), NameRule::for_title(title)?)))
+            .collect::<Vec<_>>();
         // Loaded on the first folder that gets far enough to need it.
         let mut tracked_files: Option<Vec<String>> = None;
 
         let mut report = EmptyDuplicateTitleFolderReport::default();
+        if !self.location_ownership_open_claims().await?.is_empty() {
+            info!("one-time title folder cleanup skipped: a location operation is unfinished");
+            return Ok(report);
+        }
+        info!(
+            roots = roots.len(),
+            titles = recorded.len(),
+            "one-time cleanup of empty title folders left by an old rename started"
+        );
+
         let mut visited_roots = Vec::<&str>::new();
         for root in &roots {
             if is_escaped_stored_path(root)
@@ -87,7 +116,8 @@ impl AppUseCase {
             }
             visited_roots.push(root);
 
-            // Titles whose recorded folder is directly under this root.
+            // Titles whose recorded folder is directly under this root and is
+            // itself named after the title.
             let siblings = recorded
                 .iter()
                 .filter(|(_, folder)| {
@@ -97,7 +127,13 @@ impl AppUseCase {
                             folder_paths_match(&path_to_stored_string(parent), root)
                         })
                 })
-                .copied()
+                .filter_map(|(title, folder)| {
+                    let rule = NameRule::for_title(title)?;
+                    let recorded_path = stored_path_to_path_buf(folder);
+                    let recorded_name = recorded_path.file_name()?.to_str()?;
+                    rule.matches(recorded_name)
+                        .then_some((*title, recorded_path.clone(), rule))
+                })
                 .collect::<Vec<_>>();
             if siblings.is_empty() {
                 continue;
@@ -113,61 +149,86 @@ impl AppUseCase {
             };
 
             for directory in directories {
-                let stored = path_to_stored_string(&directory);
                 let Some(name) = directory.file_name().and_then(|name| name.to_str()) else {
                     continue;
                 };
                 // Windows resolves a name ending in a dot or a space to the
                 // name without it, which is a different folder.
-                if is_escaped_stored_path(&stored) || name.ends_with(['.', ' ']) {
-                    continue;
-                }
-                if recorded
-                    .iter()
-                    .any(|(_, folder)| is_or_is_inside(folder, &stored))
-                    || roots.iter().any(|other| is_or_is_inside(other, &stored))
-                {
+                if name.ends_with(['.', ' ']) {
                     continue;
                 }
                 let owners = siblings
                     .iter()
-                    .filter(|(title, folder)| {
-                        let recorded_name = stored_path_to_path_buf(folder)
-                            .file_name()
-                            .and_then(|name| name.to_str())
-                            .map(str::to_string)
-                            .unwrap_or_default();
-                        folder_name_is_one_of_the_titles(name, title)
-                            && folder_name_is_one_of_the_titles(&recorded_name, title)
-                    })
-                    .map(|(title, _)| *title)
+                    .filter(|(_, _, rule)| rule.matches(name))
                     .collect::<Vec<_>>();
                 if owners.is_empty() {
                     continue;
                 }
+                let stored = path_to_stored_string(&directory);
+                // The name could as well be the folder of a title that is not
+                // one of the owners: one with no folder record, or recorded
+                // somewhere else.
+                if name_rules.iter().any(|(id, rule)| {
+                    rule.matches(name) && !owners.iter().any(|(title, _, _)| title.id == *id)
+                }) {
+                    info!(folder = %stored, reason = "another title has the same name", "not removed by the one-time title folder cleanup");
+                    report.kept.push(stored);
+                    continue;
+                }
+                if is_escaped_stored_path(&stored)
+                    || recorded
+                        .iter()
+                        .any(|(_, folder)| is_or_is_inside(folder, &stored))
+                    || roots.iter().any(|other| is_or_is_inside(other, &stored))
+                {
+                    continue;
+                }
 
+                let owner_titles = owners
+                    .iter()
+                    .map(|(title, _, _)| *title)
+                    .collect::<Vec<_>>();
                 if let Some(reason) = self
-                    .reason_to_keep_folder(&owners, &stored, &mut tracked_files)
+                    .reason_to_keep_folder(&owner_titles, &stored, &mut tracked_files)
                     .await?
                 {
-                    debug!(folder = %stored, reason, "not removed by the one-time title folder cleanup");
+                    info!(folder = %stored, reason, "not removed by the one-time title folder cleanup");
                     report.kept.push(stored);
                     continue;
                 }
 
                 let target = directory.clone();
                 let root_path = stored_path_to_path_buf(root);
-                match run_blocking(move || Ok(remove_leftover_folder(&root_path, &target))).await {
+                let recorded_folders = owners
+                    .iter()
+                    .map(|(_, folder, _)| folder.clone())
+                    .collect::<Vec<_>>();
+                let outcome = run_blocking(move || {
+                    Ok(remove_leftover_folder(
+                        &root_path,
+                        &target,
+                        &recorded_folders,
+                    ))
+                })
+                .await;
+                match outcome {
                     Ok(FolderOutcome::Removed) => {
                         warn!(folder = %stored, "removed an empty title folder a rename left behind");
                         report.removed.push(stored);
                     }
                     Ok(FolderOutcome::Kept(reason)) => {
-                        debug!(folder = %stored, reason, "not removed by the one-time title folder cleanup");
+                        info!(folder = %stored, reason, "not removed by the one-time title folder cleanup");
                         report.kept.push(stored);
                     }
-                    Ok(FolderOutcome::Failed(error)) | Err(error) => {
-                        warn!(folder = %stored, error = %error, "could not remove an empty title folder a rename left behind");
+                    Ok(FolderOutcome::Failed {
+                        error,
+                        season_folders_removed,
+                    }) => {
+                        warn!(folder = %stored, error = %error, season_folders_removed, "could not finish removing an empty title folder a rename left behind");
+                        report.failed.push(stored);
+                    }
+                    Err(error) => {
+                        warn!(folder = %stored, error = %error, "could not inspect an empty title folder a rename left behind");
                         report.failed.push(stored);
                     }
                 }
@@ -184,24 +245,25 @@ impl AppUseCase {
         folder: &str,
         tracked_files: &mut Option<Vec<String>>,
     ) -> AppResult<Option<&'static str>> {
+        if !self.location_ownership_open_claims().await?.is_empty() {
+            return Ok(Some("a location operation is unfinished"));
+        }
+        // Read again: this runs while the application is serving requests.
+        let titles = self.services.catalog.titles.list(None, None).await?;
         for owner in owners {
-            if self
-                .location_ownership_denial_for_title(&RENAME_APPLY_ENTRY, &owner.id)
-                .await?
-                .is_some()
-            {
-                return Ok(Some("a location operation owns the title"));
-            }
-            let Some(current) = self.services.catalog.titles.get_by_id(&owner.id).await? else {
+            let Some(current) = titles.iter().find(|title| title.id == owner.id) else {
                 return Ok(Some("the title is gone"));
             };
-            if current
-                .folder_path
-                .as_deref()
-                .is_none_or(|recorded| is_or_is_inside(recorded, folder))
-            {
+            if current.folder_path != owner.folder_path {
                 return Ok(Some("the title's folder record changed"));
             }
+        }
+        if titles
+            .iter()
+            .filter_map(|title| title.folder_path.as_deref())
+            .any(|recorded| is_or_is_inside(recorded, folder))
+        {
+            return Ok(Some("a title records it"));
         }
 
         if tracked_files.is_none() {
@@ -355,8 +417,56 @@ fn empty_season_folders(directory: &Path) -> std::io::Result<Result<Vec<PathBuf>
     Ok(Ok(seasons))
 }
 
-/// Remove `directory` when it holds nothing but empty season folders.
-fn remove_leftover_folder(root: &Path, directory: &Path) -> FolderOutcome {
+/// Whether two existing paths are one directory, however each is spelled.
+fn same_directory(left: &Path, right: &Path) -> std::io::Result<bool> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let (left, right) = (std::fs::metadata(left)?, std::fs::metadata(right)?);
+        if left.dev() == right.dev() && left.ino() == right.ino() {
+            return Ok(true);
+        }
+    }
+    Ok(std::fs::canonicalize(left)? == std::fs::canonicalize(right)?)
+}
+
+/// Why `directory` is not a duplicate of the folders its titles record:
+/// every one of those must be on disk as an ordinary directory, and be a
+/// different directory.
+fn reason_it_is_not_a_duplicate(
+    directory: &Path,
+    recorded_folders: &[PathBuf],
+) -> std::io::Result<Option<&'static str>> {
+    if recorded_folders.is_empty() {
+        return Ok(Some("no title records a folder beside it"));
+    }
+    for recorded in recorded_folders {
+        match std::fs::symlink_metadata(recorded) {
+            Ok(metadata) if is_plain_directory(&metadata) => {}
+            Ok(_) => {
+                return Ok(Some(
+                    "the title's recorded folder is not an ordinary directory",
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Some("the title's recorded folder is not on disk"));
+            }
+            Err(error) => return Err(error),
+        }
+        if same_directory(directory, recorded)? {
+            return Ok(Some("it is the title's recorded folder"));
+        }
+    }
+    Ok(None)
+}
+
+/// Remove `directory` when it holds nothing but empty season folders and the
+/// folders in `recorded_folders` are all on disk elsewhere.
+fn remove_leftover_folder(
+    root: &Path,
+    directory: &Path,
+    recorded_folders: &[PathBuf],
+) -> FolderOutcome {
     let same_filesystem = std::fs::symlink_metadata(root).and_then(|root| {
         Ok(on_the_same_filesystem(
             &root,
@@ -366,21 +476,32 @@ fn remove_leftover_folder(root: &Path, directory: &Path) -> FolderOutcome {
     match same_filesystem {
         Ok(true) => {}
         Ok(false) => return FolderOutcome::Kept("it is a mount point"),
-        Err(error) => return FolderOutcome::Failed(error),
+        Err(error) => return FolderOutcome::failed(error),
     }
     let seasons = match empty_season_folders(directory) {
         Ok(Ok(seasons)) => seasons,
         Ok(Err(reason)) => return FolderOutcome::Kept(reason),
-        Err(error) => return FolderOutcome::Failed(error),
+        Err(error) => return FolderOutcome::failed(error),
     };
-    for season in &seasons {
+    match reason_it_is_not_a_duplicate(directory, recorded_folders) {
+        Ok(None) => {}
+        Ok(Some(reason)) => return FolderOutcome::Kept(reason),
+        Err(error) => return FolderOutcome::failed(error),
+    }
+    for (removed, season) in seasons.iter().enumerate() {
         if let Err(error) = std::fs::remove_dir(season) {
-            return FolderOutcome::Failed(error);
+            return FolderOutcome::Failed {
+                error,
+                season_folders_removed: removed,
+            };
         }
     }
     match std::fs::remove_dir(directory) {
         Ok(()) => FolderOutcome::Removed,
-        Err(error) => FolderOutcome::Failed(error),
+        Err(error) => FolderOutcome::Failed {
+            error,
+            season_folders_removed: seasons.len(),
+        },
     }
 }
 
@@ -388,45 +509,66 @@ fn comparable_name(name: &str) -> String {
     name.nfc().collect::<String>().to_lowercase()
 }
 
-/// Whether `folder_name` is the title's `Name (Year)`, alone or followed by
-/// text that carries one of the title's own external ids. A title with no
-/// year matches nothing.
-fn folder_name_is_one_of_the_titles(folder_name: &str, title: &Title) -> bool {
-    let tokens = build_title_folder_tokens(title, title.year);
-    let token = |name: &str| {
-        tokens
-            .get(name)
-            .map(|value| value.trim())
-            .unwrap_or_default()
-    };
-    let (title_name, year) = (token("title"), token("year"));
-    let ids = title
-        .external_ids
-        .iter()
-        .map(|id| id.value.as_str())
-        .chain(title.imdb_id.as_deref())
-        .collect::<Vec<_>>();
-    folder_name_matches(folder_name, title_name, year, &ids)
+/// The external id sources a folder template can render into a folder name.
+const FOLDER_NAME_ID_SOURCES: [&str; 6] = ["imdb", "tmdb", "tvdb", "anidb", "mal", "anilist"];
+
+/// An id shorter than this is too easily an ordinary number in a folder name.
+const SHORTEST_FOLDER_NAME_ID: usize = 3;
+
+/// Which folder names are one title's: its `Name (Year)`, alone or followed
+/// by text that carries one of the title's own external ids.
+struct NameRule {
+    prefix: String,
+    ids: Vec<String>,
 }
 
-fn folder_name_matches(folder_name: &str, title_name: &str, year: &str, ids: &[&str]) -> bool {
-    if title_name.is_empty() || year.is_empty() {
-        return false;
+impl NameRule {
+    /// `None` for a title with no name or no year, which matches nothing.
+    fn for_title(title: &Title) -> Option<Self> {
+        let tokens = build_title_folder_tokens(title, title.year);
+        let token = |name: &str| {
+            tokens
+                .get(name)
+                .map(|value| value.trim())
+                .unwrap_or_default()
+        };
+        let ids = title
+            .external_ids
+            .iter()
+            .filter(|id| {
+                FOLDER_NAME_ID_SOURCES
+                    .iter()
+                    .any(|source| id.source.eq_ignore_ascii_case(source))
+            })
+            .map(|id| id.value.as_str())
+            .chain(title.imdb_id.as_deref())
+            .collect::<Vec<_>>();
+        Self::new(token("title"), token("year"), &ids)
     }
-    let prefix = comparable_name(&sanitize_filesystem_component(&format!(
-        "{title_name} ({year})"
-    )));
-    let folder_name = comparable_name(folder_name);
-    let Some(rest) = folder_name.strip_prefix(&prefix) else {
-        return false;
-    };
-    if rest.is_empty() {
-        return true;
+
+    fn new(title_name: &str, year: &str, ids: &[&str]) -> Option<Self> {
+        if title_name.is_empty() || year.is_empty() {
+            return None;
+        }
+        Some(Self {
+            prefix: comparable_name(&sanitize_filesystem_component(&format!(
+                "{title_name} ({year})"
+            ))),
+            ids: ids
+                .iter()
+                .map(|id| comparable_name(id.trim()))
+                .filter(|id| id.chars().count() >= SHORTEST_FOLDER_NAME_ID)
+                .collect(),
+        })
     }
-    ids.iter()
-        .map(|id| comparable_name(id.trim()))
-        .filter(|id| !id.is_empty())
-        .any(|id| contains_whole_word(rest, &id))
+
+    fn matches(&self, folder_name: &str) -> bool {
+        let folder_name = comparable_name(folder_name);
+        let Some(rest) = folder_name.strip_prefix(&self.prefix) else {
+            return false;
+        };
+        rest.is_empty() || self.ids.iter().any(|id| contains_whole_word(rest, id))
+    }
 }
 
 /// Whether `text` contains `word` with no letter or digit on either side.
@@ -442,6 +584,17 @@ fn contains_whole_word(text: &str, word: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn folder_name_matches(folder_name: &str, title_name: &str, year: &str, ids: &[&str]) -> bool {
+        NameRule::new(title_name, year, ids).is_some_and(|rule| rule.matches(folder_name))
+    }
+
+    /// The folder a title records, beside the leftover.
+    fn recorded(temp: &tempfile::TempDir) -> Vec<PathBuf> {
+        let folder = temp.path().join("Synthetic Show (2024) 93077");
+        std::fs::create_dir_all(&folder).expect("recorded folder");
+        vec![folder]
+    }
+
     fn leftover(temp: &tempfile::TempDir) -> PathBuf {
         let folder = temp.path().join("Synthetic Show (2024)");
         std::fs::create_dir_all(folder.join("Season 1")).expect("season");
@@ -454,7 +607,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let folder = leftover(&temp);
         assert!(matches!(
-            remove_leftover_folder(temp.path(), &folder),
+            remove_leftover_folder(temp.path(), &folder, &recorded(&temp)),
             FolderOutcome::Removed
         ));
         assert!(!folder.exists());
@@ -468,7 +621,7 @@ mod tests {
         let kept = folder.join("Specials").join("poster.jpg");
         std::fs::write(&kept, b"x").expect("file");
         assert!(matches!(
-            remove_leftover_folder(temp.path(), &folder),
+            remove_leftover_folder(temp.path(), &folder, &recorded(&temp)),
             FolderOutcome::Kept(_)
         ));
         assert!(kept.is_file());
@@ -481,7 +634,7 @@ mod tests {
         let folder = leftover(&temp);
         std::fs::write(folder.join("desktop.ini"), b"x").expect("file");
         assert!(matches!(
-            remove_leftover_folder(temp.path(), &folder),
+            remove_leftover_folder(temp.path(), &folder, &recorded(&temp)),
             FolderOutcome::Kept(_)
         ));
         assert!(folder.join("Season 1").is_dir(), "nothing is removed");
@@ -493,7 +646,7 @@ mod tests {
         let folder = leftover(&temp);
         std::fs::create_dir_all(folder.join("Extras")).expect("extras");
         assert!(matches!(
-            remove_leftover_folder(temp.path(), &folder),
+            remove_leftover_folder(temp.path(), &folder, &recorded(&temp)),
             FolderOutcome::Kept(_)
         ));
         assert!(folder.join("Season 1").is_dir(), "nothing is removed");
@@ -506,7 +659,7 @@ mod tests {
         let folder = leftover(&temp);
         std::fs::create_dir_all(folder.join("Season 1").join("Subs")).expect("nested");
         assert!(matches!(
-            remove_leftover_folder(temp.path(), &folder),
+            remove_leftover_folder(temp.path(), &folder, &recorded(&temp)),
             FolderOutcome::Kept(_)
         ));
         assert!(folder.join("Season 1").join("Subs").is_dir());
@@ -522,7 +675,7 @@ mod tests {
         let folder = leftover(&temp);
         std::os::unix::fs::symlink(&elsewhere, folder.join("Season 2")).expect("symlink");
         assert!(matches!(
-            remove_leftover_folder(temp.path(), &folder),
+            remove_leftover_folder(temp.path(), &folder, &recorded(&temp)),
             FolderOutcome::Kept(_)
         ));
         assert!(elsewhere.is_dir());
@@ -544,6 +697,78 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
+    fn junction(link: &Path, target: &Path) {
+        let status = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .expect("run mklink");
+        assert!(status.success(), "mklink /J failed");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_keeps_the_folder_and_its_target() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let elsewhere = temp.path().join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).expect("elsewhere");
+        let folder = leftover(&temp);
+        junction(&folder.join("Season 2"), &elsewhere);
+        assert!(matches!(
+            remove_leftover_folder(temp.path(), &folder, &recorded(&temp)),
+            FolderOutcome::Kept(_)
+        ));
+        assert!(elsewhere.is_dir());
+        assert!(folder.join("Season 2").exists(), "the junction is left");
+        assert!(folder.join("Season 1").is_dir(), "nothing is removed");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_junction_is_never_a_candidate_or_removed_as_one() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let elsewhere = temp.path().join("elsewhere");
+        std::fs::create_dir_all(elsewhere.join("Season 1")).expect("elsewhere");
+        let root = temp.path().join("root");
+        std::fs::create_dir_all(root.join("Plain")).expect("plain");
+        let linked = root.join("Synthetic Show (2024)");
+        junction(&linked, &elsewhere);
+        assert_eq!(
+            child_directories(&root).expect("list"),
+            vec![root.join("Plain")]
+        );
+        assert!(matches!(
+            remove_leftover_folder(&root, &linked, &recorded(&temp)),
+            FolderOutcome::Kept(_)
+        ));
+        assert!(linked.exists(), "the junction is left");
+        assert!(elsewhere.join("Season 1").is_dir());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_hidden_file_keeps_the_folder() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let folder = leftover(&temp);
+        let hidden = folder.join("Season 1").join("Thumbs.db");
+        std::fs::write(&hidden, b"x").expect("file");
+        let status = std::process::Command::new("attrib")
+            .args(["+h", "+s"])
+            .arg(&hidden)
+            .status()
+            .expect("run attrib");
+        assert!(status.success());
+        assert!(matches!(
+            remove_leftover_folder(temp.path(), &folder, &recorded(&temp)),
+            FolderOutcome::Kept(_)
+        ));
+        assert!(hidden.is_file());
+        assert!(folder.join("Specials").is_dir(), "nothing is removed");
+    }
+
     #[cfg(unix)]
     #[test]
     fn an_unreadable_season_folder_fails_without_removing_anything() {
@@ -554,12 +779,80 @@ mod tests {
         let locked = folder.join("Season 1");
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).expect("lock");
         let readable_anyway = std::fs::read_dir(&locked).is_ok();
-        let outcome = remove_leftover_folder(temp.path(), &folder);
+        let outcome = remove_leftover_folder(temp.path(), &folder, &recorded(&temp));
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).expect("unlock");
         // A privileged test user can read the folder regardless.
         if !readable_anyway {
-            assert!(matches!(outcome, FolderOutcome::Failed(_)));
+            assert!(matches!(outcome, FolderOutcome::Failed { .. }));
             assert!(folder.join("Specials").is_dir(), "nothing is removed");
+        }
+    }
+
+    #[test]
+    fn a_folder_is_kept_when_the_recorded_folder_is_not_on_disk() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let folder = leftover(&temp);
+        let missing = vec![temp.path().join("Synthetic Show (2024) 93077")];
+        assert!(matches!(
+            remove_leftover_folder(temp.path(), &folder, &missing),
+            FolderOutcome::Kept(_)
+        ));
+        assert!(matches!(
+            remove_leftover_folder(temp.path(), &folder, &[]),
+            FolderOutcome::Kept(_)
+        ));
+        assert!(folder.join("Season 1").is_dir(), "nothing is removed");
+    }
+
+    #[test]
+    fn a_folder_is_kept_when_any_recorded_folder_is_missing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let folder = leftover(&temp);
+        let mut folders = recorded(&temp);
+        folders.push(temp.path().join("Synthetic Show (2024) 93078"));
+        assert!(matches!(
+            remove_leftover_folder(temp.path(), &folder, &folders),
+            FolderOutcome::Kept(_)
+        ));
+        assert!(folder.join("Season 1").is_dir(), "nothing is removed");
+    }
+
+    #[test]
+    fn a_folder_is_kept_when_it_is_the_recorded_folder_under_another_spelling() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let folder = leftover(&temp);
+        let respelled = vec![folder.join("Season 1").join("..")];
+        assert!(matches!(
+            remove_leftover_folder(temp.path(), &folder, &respelled),
+            FolderOutcome::Kept(_)
+        ));
+        assert!(folder.join("Season 1").is_dir(), "nothing is removed");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_recorded_folder_spelled_with_a_trailing_dot_is_the_same_folder() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let folder = leftover(&temp);
+        let mut dotted = folder.clone().into_os_string();
+        dotted.push(".");
+        assert!(matches!(
+            remove_leftover_folder(temp.path(), &folder, &[PathBuf::from(dotted)]),
+            FolderOutcome::Kept(_)
+        ));
+        assert!(folder.join("Season 1").is_dir(), "nothing is removed");
+    }
+
+    #[test]
+    fn an_id_must_be_long_enough_to_count() {
+        let matches =
+            |name: &str| folder_name_matches(name, "Synthetic Show", "2011", &["2", "42"]);
+        assert!(matches("Synthetic Show (2011)"));
+        for name in [
+            "Synthetic Show (2011) - Copy (2)",
+            "Synthetic Show (2011) 42",
+        ] {
+            assert!(!matches(name), "{name}");
         }
     }
 
