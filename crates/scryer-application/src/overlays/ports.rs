@@ -79,6 +79,10 @@ pub struct PosterOverlayInputs {
     pub content_status: Option<String>,
     /// The title's stored external ratings.
     pub ratings: Vec<crate::TitleExternalRating>,
+    /// `titles.name`, for finding a movie's versions in Plex.
+    pub title_name: Option<String>,
+    /// The title's TMDB id, which confirms a Plex item is this title.
+    pub tmdb_id: Option<String>,
     pub files: Vec<OverlayMediaFacts>,
 }
 
@@ -115,7 +119,9 @@ pub struct PosterOverlayPlexState {
     pub title_id: String,
     /// The Plex item (`ratingKey`) the poster was uploaded to.
     pub provider_item_id: String,
-    /// The rendered output uploaded; `None` until an upload succeeds.
+    /// Identity of what was uploaded: the title's output hash, or for one
+    /// version of a movie, that version's input hash. `None` until an
+    /// upload succeeds.
     pub pushed_output_hash: Option<String>,
     /// The item's `thumb` right after the upload. A different value later
     /// means the poster was changed in Plex.
@@ -175,13 +181,25 @@ pub trait PosterOverlayRepository: Send + Sync {
         &self,
         connection_id: &str,
         title_id: &str,
+        provider_item_id: &str,
     ) -> AppResult<Option<PosterOverlayPlexState>>;
     async fn save_plex_state(&self, state: &PosterOverlayPlexState) -> AppResult<()>;
-    async fn delete_plex_state(&self, connection_id: &str, title_id: &str) -> AppResult<()>;
-    /// Every Plex push record, keyset-paged by `(title_id, connection_id)`.
+    async fn delete_plex_state(
+        &self,
+        connection_id: &str,
+        title_id: &str,
+        provider_item_id: &str,
+    ) -> AppResult<()>;
+    /// Every Plex push record for one title.
+    async fn list_plex_states_for_title(
+        &self,
+        title_id: &str,
+    ) -> AppResult<Vec<PosterOverlayPlexState>>;
+    /// Every Plex push record, keyset-paged by
+    /// `(title_id, connection_id, provider_item_id)`.
     async fn list_plex_states(
         &self,
-        after: Option<(&str, &str)>,
+        after: Option<(&str, &str, &str)>,
         limit: usize,
     ) -> AppResult<Vec<PosterOverlayPlexState>>;
 
@@ -286,6 +304,17 @@ pub struct PlexPosterItem {
     pub thumb: Option<String>,
 }
 
+/// One version of a movie in Plex: its own item, with the edition Plex
+/// shows and the files it plays.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PlexMovieVersion {
+    pub item: PlexPosterItem,
+    /// Plex's `editionTitle`, such as `Theatrical Cut`.
+    pub edition_title: Option<String>,
+    /// Paths of the item's files, as Plex sees them.
+    pub files: Vec<String>,
+}
+
 /// Hours Plex runs its scheduled maintenance, in the server's local time.
 /// `end_hour` may be earlier than `start_hour` for a window past midnight.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -305,6 +334,15 @@ pub trait PosterOverlayPlexClient: Send + Sync {
         connection: &scryer_domain::MediaServerConnection,
         rating_key: &str,
     ) -> AppResult<Option<PlexPosterItem>>;
+    /// Movie items titled `title` whose external ids include
+    /// `tmdb://{tmdb_id}`: one per version when Plex splits a movie by
+    /// edition.
+    async fn find_movie_versions(
+        &self,
+        connection: &scryer_domain::MediaServerConnection,
+        title: &str,
+        tmdb_id: &str,
+    ) -> AppResult<Vec<PlexMovieVersion>>;
     /// The bytes of the item's selected poster.
     async fn current_poster(
         &self,

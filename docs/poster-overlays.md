@@ -348,6 +348,27 @@ overlaid poster also becomes the poster of the title's Plex item.
 - A failed push is recorded on the title, counted on the settings page and
   retried on the next pass. It never fails the render.
 
+### Movies with several versions
+
+Plex can show a movie with several editions as one item per edition. Scryer's
+catalog match then finds more than one item for the title and links none, so
+the push looks the versions up itself:
+
+- It searches Plex's movies by the title's name and keeps only items whose
+  external ids include the title's TMDB id.
+- Each item is matched to Scryer's files by file name, or by its edition name
+  when the file names differ.
+- Each version gets a poster built only from its own files, so its badges and
+  `{{edition_label}}` show that version alone. Scryer itself keeps showing one
+  poster for the title.
+- Version posters are rendered when they change and uploaded straight to
+  Plex; nothing is stored for them on disk.
+- An item a title no longer uses, such as its single item before Plex split
+  it into versions, gets the original poster back.
+
+This applies to movies whose files carry two or more editions. A movie with
+one Plex item uses the catalog match as before.
+
 ### Posters changed in Plex
 
 When the item's `thumb` no longer matches the one recorded after Scryer's

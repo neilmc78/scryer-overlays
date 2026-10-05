@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use reqwest::StatusCode;
 use scryer_application::overlays::{
-    PlexMaintenanceWindow, PlexPosterItem, PosterOverlayPlexClient,
+    PlexMaintenanceWindow, PlexMovieVersion, PlexPosterItem, PosterOverlayPlexClient,
 };
 use scryer_application::{AppError, AppResult};
 use scryer_domain::MediaServerConnection;
@@ -193,6 +193,82 @@ impl PosterOverlayPlexClient for HttpPlexPosterClient {
             section_id,
             thumb: json_string(metadata.get("thumb")),
         }))
+    }
+
+    async fn find_movie_versions(
+        &self,
+        connection: &MediaServerConnection,
+        title: &str,
+        tmdb_id: &str,
+    ) -> AppResult<Vec<PlexMovieVersion>> {
+        // Plex filters only on its own plex:// guid, so search by title and
+        // confirm each hit by the TMDB id among its external ids.
+        let mut url = self.server_url(connection, "library/all").await?;
+        url.query_pairs_mut()
+            .append_pair("type", "1")
+            .append_pair("title", title)
+            .append_pair("includeGuids", "1");
+        let response = self
+            .client
+            .get(url)
+            .header("Accept", "application/json")
+            .header("X-Plex-Token", token(connection)?)
+            .send()
+            .await
+            .map_err(|error| request_failed("version search", error))?;
+        if !response.status().is_success() {
+            return Err(bad_status("version search", response.status()));
+        }
+        let body = response.json::<Value>().await.map_err(|_| {
+            AppError::Repository("Plex version search returned unreadable JSON".into())
+        })?;
+        let wanted = format!("tmdb://{}", tmdb_id.trim());
+        let items = body
+            .get("MediaContainer")
+            .and_then(|container| container.get("Metadata"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        Ok(items
+            .iter()
+            .filter(|item| json_string(item.get("type")).as_deref() == Some("movie"))
+            .filter(|item| {
+                item.get("Guid")
+                    .and_then(Value::as_array)
+                    .is_some_and(|guids| {
+                        guids
+                            .iter()
+                            .any(|guid| json_string(guid.get("id")).as_deref() == Some(&wanted))
+                    })
+            })
+            .filter_map(|item| {
+                let rating_key = json_string(item.get("ratingKey"))?;
+                let files = item
+                    .get("Media")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|media| {
+                        media
+                            .get("Part")
+                            .and_then(Value::as_array)
+                            .cloned()
+                            .unwrap_or_default()
+                    })
+                    .filter_map(|part| json_string(part.get("file")))
+                    .collect();
+                Some(PlexMovieVersion {
+                    item: PlexPosterItem {
+                        rating_key,
+                        item_type: "movie".into(),
+                        section_id: json_string(item.get("librarySectionID")).unwrap_or_default(),
+                        thumb: json_string(item.get("thumb")),
+                    },
+                    edition_title: json_string(item.get("editionTitle")),
+                    files,
+                })
+            })
+            .collect())
     }
 
     async fn current_poster(
@@ -549,6 +625,56 @@ mod tests {
         assert_eq!(client.item(&connection, "42").await.unwrap(), None);
         // The address is reused rather than looked up again.
         assert_eq!(client.item(&connection, "42").await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn finds_each_version_of_a_movie_by_title_and_tmdb_id() {
+        let server = MockServer::start().await;
+        let item = |key: &str, edition: &str, tmdb: &str, file: &str| {
+            json!({
+                "ratingKey": key, "type": "movie", "librarySectionID": 1,
+                "editionTitle": edition, "thumb": format!("/library/metadata/{key}/thumb/1"),
+                "Guid": [{"id": "imdb://tt0090605"}, {"id": format!("tmdb://{tmdb}")}],
+                "Media": [{"Part": [{"file": file}]}]
+            })
+        };
+        Mock::given(method("GET"))
+            .and(path("/library/all"))
+            .and(query_param("type", "1"))
+            .and(query_param("title", "Aliens"))
+            .and(query_param("includeGuids", "1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "MediaContainer": {"Metadata": [
+                    item("23485", "Special Edition", "679",
+                         "/mnt/media/Movies/Aliens (1986)/Aliens - {edition-Special Edition} (1986).mp4"),
+                    item("23486", "Theatrical Cut", "679",
+                         "/mnt/media/Movies/Aliens (1986)/Aliens 1986 - {edition-Theatrical Cut}.mp4"),
+                    // Same words in the title, a different movie.
+                    item("23421", "Theatrical", "440",
+                         "/mnt/media/Movies/Aliens vs Predator - Requiem (2007)/AVPR.mkv")
+                ]}
+            })))
+            .mount(&server)
+            .await;
+        let versions = HttpPlexPosterClient::new()
+            .find_movie_versions(&connection(&server.uri()), "Aliens", "679")
+            .await
+            .unwrap();
+        assert_eq!(
+            versions
+                .iter()
+                .map(|version| (
+                    version.item.rating_key.as_str(),
+                    version.edition_title.as_deref(),
+                    version.item.section_id.as_str()
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                ("23485", Some("Special Edition"), "1"),
+                ("23486", Some("Theatrical Cut"), "1")
+            ]
+        );
+        assert!(versions[0].files[0].ends_with("{edition-Special Edition} (1986).mp4"));
     }
 
     #[tokio::test]

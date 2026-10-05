@@ -4,6 +4,7 @@
 
 #![cfg(feature = "image-processing")]
 
+use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -13,8 +14,8 @@ use chrono::Utc;
 use image::{ImageFormat, Rgb, RgbImage};
 use scryer_application::MediaServerConnectionRepository;
 use scryer_application::overlays::{
-    AppPosterOverlayServices, PlexMaintenanceWindow, PlexPosterItem, PosterOverlayOutcome,
-    PosterOverlayPlexClient, PosterOverlayRepository, PosterOverlaySettings,
+    AppPosterOverlayServices, PlexMaintenanceWindow, PlexMovieVersion, PlexPosterItem,
+    PosterOverlayOutcome, PosterOverlayPlexClient, PosterOverlayRepository, PosterOverlaySettings,
     overlay_title_for_proxy_source,
 };
 use scryer_application::{
@@ -31,6 +32,7 @@ use scryer_infrastructure_library::images::ImageProxyStore;
 use scryer_infrastructure_library::media::canonical_tags::replace_title_metadata_ratings_tx;
 use scryer_infrastructure_library::overlays::{
     OverlayEngine, OverlaySourceFetch, PosterOverlayStore, add_marker, has_marker,
+    marker_input_hash,
 };
 use scryer_infrastructure_sql::runtime::{SqlArg, SqlRuntime, StoreDatastore};
 
@@ -665,6 +667,15 @@ impl PosterOverlayPlexClient for FakePlex {
         Ok(*self.maintenance.lock().unwrap())
     }
 
+    async fn find_movie_versions(
+        &self,
+        _connection: &MediaServerConnection,
+        _title: &str,
+        _tmdb_id: &str,
+    ) -> AppResult<Vec<PlexMovieVersion>> {
+        Ok(Vec::new())
+    }
+
     async fn set_poster_locked(
         &self,
         _connection: &MediaServerConnection,
@@ -676,8 +687,11 @@ impl PosterOverlayPlexClient for FakePlex {
     }
 }
 
-/// One enabled Plex connection with the title matched to `PLEX_ITEM`.
-struct FakeConnections;
+/// One enabled Plex connection; with `mapped`, the title is matched to
+/// `PLEX_ITEM`, as the catalog scan does for a title with one Plex item.
+struct FakeConnections {
+    mapped: bool,
+}
 
 fn plex_connection() -> MediaServerConnection {
     MediaServerConnection {
@@ -724,18 +738,18 @@ impl MediaServerConnectionRepository for FakeConnections {
         entity_kind: MediaServerPlaybackEntityKind,
         entity_id: &str,
     ) -> AppResult<Vec<MediaServerPlaybackItem>> {
-        Ok(
-            (entity_kind == MediaServerPlaybackEntityKind::Title && entity_id == TITLE)
-                .then(|| MediaServerPlaybackItem {
-                    connection_id: PLEX_CONNECTION.into(),
-                    entity_kind,
-                    entity_id: entity_id.into(),
-                    provider_item_id: PLEX_ITEM.into(),
-                    last_seen_at: Utc::now(),
-                })
-                .into_iter()
-                .collect(),
-        )
+        Ok((self.mapped
+            && entity_kind == MediaServerPlaybackEntityKind::Title
+            && entity_id == TITLE)
+            .then(|| MediaServerPlaybackItem {
+                connection_id: PLEX_CONNECTION.into(),
+                entity_kind,
+                entity_id: entity_id.into(),
+                provider_item_id: PLEX_ITEM.into(),
+                last_seen_at: Utc::now(),
+            })
+            .into_iter()
+            .collect())
     }
     async fn replace_playback_items_for_connection(
         &self,
@@ -844,7 +858,7 @@ async fn pushes_to_plex_only_on_change_and_respects_posters_changed_there(
         store.clone(),
         Arc::new(OverlayEngine::new(data_dir, fetch.clone()).unwrap()),
     )
-    .with_plex(Arc::new(FakeConnections), plex.clone());
+    .with_plex(Arc::new(FakeConnections { mapped: true }), plex.clone());
     store.set_library_config(LIBRARY, true, None).await.unwrap();
 
     // Push off: rendering never touches Plex.
@@ -879,7 +893,7 @@ async fn pushes_to_plex_only_on_change_and_respects_posters_changed_there(
         store.clone(),
         Arc::new(OverlayEngine::new(data_dir, fetch.clone()).unwrap()),
     )
-    .with_plex(Arc::new(FakeConnections), plex.clone());
+    .with_plex(Arc::new(FakeConnections { mapped: true }), plex.clone());
     exec(
         &datastore,
         "UPDATE media_files SET video_width = 3840, video_height = 2160 WHERE id = 'file-1'",
@@ -896,7 +910,7 @@ async fn pushes_to_plex_only_on_change_and_respects_posters_changed_there(
         store.clone(),
         Arc::new(OverlayEngine::new(data_dir, fetch.clone()).unwrap()),
     )
-    .with_plex(Arc::new(FakeConnections), plex.clone());
+    .with_plex(Arc::new(FakeConnections { mapped: true }), plex.clone());
     overlays.reconcile().await.unwrap();
     assert_eq!(plex.snapshot().2, 2);
 
@@ -932,7 +946,7 @@ async fn pushes_to_plex_only_on_change_and_respects_posters_changed_there(
     assert!(!has_marker(&shown) && !locked);
     assert!(
         store
-            .get_plex_state(PLEX_CONNECTION, TITLE)
+            .get_plex_state(PLEX_CONNECTION, TITLE, PLEX_ITEM)
             .await
             .unwrap()
             .is_none()
@@ -951,9 +965,297 @@ async fn pushes_to_plex_only_on_change_and_respects_posters_changed_there(
     assert_eq!(plex.snapshot().0, chosen);
     assert!(
         store
-            .get_plex_state(PLEX_CONNECTION, TITLE)
+            .get_plex_state(PLEX_CONNECTION, TITLE, PLEX_ITEM)
             .await
             .unwrap()
             .is_none()
+    );
+}
+
+// ── Plex: a movie with several versions ──────────────────────────────────
+
+/// Plex items keyed by ratingKey, and the versions a title search finds.
+#[derive(Default)]
+struct FakeVersionedPlex {
+    items: Mutex<HashMap<String, FakePlexItem>>,
+    versions: Mutex<Vec<PlexMovieVersion>>,
+}
+
+impl FakeVersionedPlex {
+    fn add_version(&self, rating_key: &str, edition: &str, file: &str) {
+        self.items
+            .lock()
+            .unwrap()
+            .insert(rating_key.into(), FakePlexItem::default());
+        self.versions.lock().unwrap().push(PlexMovieVersion {
+            item: PlexPosterItem {
+                rating_key: rating_key.into(),
+                item_type: "movie".into(),
+                section_id: "1".into(),
+                thumb: None,
+            },
+            edition_title: Some(edition.into()),
+            files: vec![file.into()],
+        });
+    }
+
+    fn poster(&self, rating_key: &str) -> (Vec<u8>, bool, usize) {
+        let items = self.items.lock().unwrap();
+        let item = &items[rating_key];
+        (item.poster.clone(), item.locked, item.uploads)
+    }
+}
+
+#[async_trait]
+impl PosterOverlayPlexClient for FakeVersionedPlex {
+    async fn item(
+        &self,
+        _connection: &MediaServerConnection,
+        rating_key: &str,
+    ) -> AppResult<Option<PlexPosterItem>> {
+        Ok(self
+            .items
+            .lock()
+            .unwrap()
+            .get(rating_key)
+            .map(|item| PlexPosterItem {
+                rating_key: rating_key.into(),
+                item_type: "movie".into(),
+                section_id: "1".into(),
+                thumb: Some(format!(
+                    "/library/metadata/{rating_key}/thumb/{}",
+                    item.version
+                )),
+            }))
+    }
+
+    async fn find_movie_versions(
+        &self,
+        _connection: &MediaServerConnection,
+        title: &str,
+        tmdb_id: &str,
+    ) -> AppResult<Vec<PlexMovieVersion>> {
+        assert_eq!((title, tmdb_id), ("Fixture", "679"));
+        Ok(self.versions.lock().unwrap().clone())
+    }
+
+    async fn current_poster(
+        &self,
+        _connection: &MediaServerConnection,
+        item: &PlexPosterItem,
+    ) -> AppResult<Option<Vec<u8>>> {
+        Ok(self
+            .items
+            .lock()
+            .unwrap()
+            .get(&item.rating_key)
+            .map(|item| item.poster.clone()))
+    }
+
+    async fn upload_poster(
+        &self,
+        _connection: &MediaServerConnection,
+        item: &PlexPosterItem,
+        jpeg: Vec<u8>,
+    ) -> AppResult<()> {
+        let mut items = self.items.lock().unwrap();
+        let item = items.get_mut(&item.rating_key).unwrap();
+        item.poster = jpeg;
+        item.version += 1;
+        item.uploads += 1;
+        Ok(())
+    }
+
+    async fn maintenance_window(
+        &self,
+        _connection: &MediaServerConnection,
+    ) -> AppResult<Option<PlexMaintenanceWindow>> {
+        Ok(None)
+    }
+
+    async fn set_poster_locked(
+        &self,
+        _connection: &MediaServerConnection,
+        item: &PlexPosterItem,
+        locked: bool,
+    ) -> AppResult<()> {
+        self.items
+            .lock()
+            .unwrap()
+            .get_mut(&item.rating_key)
+            .unwrap()
+            .locked = locked;
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn each_version_of_a_movie_gets_its_own_poster_in_plex_sqlite() {
+    let dir = tempfile::tempdir().unwrap();
+    let services = SqliteServices::new(dir.path().join("scryer.db").to_string_lossy())
+        .await
+        .expect("sqlite services");
+    each_version_of_a_movie_gets_its_own_poster_in_plex(services.datastore(), dir.path()).await;
+}
+
+#[tokio::test]
+async fn each_version_of_a_movie_gets_its_own_poster_in_plex_postgres() {
+    let Some(admin_url) = std::env::var("SCRYER_TEST_POSTGRES_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+    else {
+        eprintln!("skipping PostgreSQL Plex versions test; SCRYER_TEST_POSTGRES_URL is not set");
+        return;
+    };
+    let database = format!("scryer_overlay_{}", uuid::Uuid::new_v4().simple());
+    let admin = sqlx::PgPool::connect(&admin_url)
+        .await
+        .expect("postgres admin");
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {database}")))
+        .execute(&admin)
+        .await
+        .expect("create test database");
+    let mut url = url::Url::parse(&admin_url).expect("postgres url");
+    url.set_path(&format!("/{database}"));
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let services = PostgresServices::new_with_mode(url.as_str(), MigrationMode::Apply)
+            .await
+            .expect("postgres services");
+        each_version_of_a_movie_gets_its_own_poster_in_plex(services.datastore(), dir.path()).await;
+    }
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE {database} WITH (FORCE)"
+    )))
+    .execute(&admin)
+    .await
+    .expect("drop test database");
+}
+
+async fn each_version_of_a_movie_gets_its_own_poster_in_plex(
+    datastore: StoreDatastore,
+    data_dir: &std::path::Path,
+) {
+    seed(&datastore).await;
+    let now = Utc::now();
+    exec(
+        &datastore,
+        "INSERT INTO media_server_connections (id, provider, display_name, base_url, created_at, updated_at)
+         VALUES ({}, 'plex', 'Plex', 'http://plex.local:32400', {}, {})",
+        vec![
+            SqlArg::Text(PLEX_CONNECTION.into()),
+            SqlArg::Timestamp(now),
+            SqlArg::Timestamp(now),
+        ],
+    )
+    .await;
+    exec(
+        &datastore,
+        "INSERT INTO title_external_ids (id, title_id, source, external_id, created_at)
+         VALUES ('ext-1', {}, 'tmdb', '679', {})",
+        vec![SqlArg::Text(TITLE.into()), SqlArg::Timestamp(now)],
+    )
+    .await;
+    // Two versions: a 1080p theatrical cut and a 4K special edition, each
+    // named with its edition tag.
+    exec(
+        &datastore,
+        "UPDATE media_files SET file_path = '/movies/Fixture/Fixture {edition-Theatrical Cut}.mkv'
+          WHERE id = 'file-1'",
+        vec![],
+    )
+    .await;
+    exec(
+        &datastore,
+        "INSERT INTO media_files (id, title_id, file_path, size_bytes, created_at,
+                                  video_width, video_height, audio_codec, audio_channels)
+         VALUES ('file-2', {}, '/movies/Fixture/Fixture {edition-Special Edition}.mkv', 1, {},
+                 3840, 2160, 'ac3', 6)",
+        vec![SqlArg::Text(TITLE.into()), SqlArg::Timestamp(now)],
+    )
+    .await;
+
+    let fetch = Arc::new(ScriptedFetch::default());
+    fetch.serve(poster(10));
+    let plex = Arc::new(FakeVersionedPlex::default());
+    // Plex sees the theatrical cut under another root, matched by file
+    // name; the special edition's file name differs, so it is matched by
+    // its edition name.
+    plex.add_version(
+        "v-theatrical",
+        "Theatrical Cut",
+        "/data/Movies/Fixture/Fixture {edition-Theatrical Cut}.mkv",
+    );
+    plex.add_version(
+        "v-special",
+        "Special Edition",
+        "/data/Movies/Fixture/fixture-special.mkv",
+    );
+    let store = Arc::new(PosterOverlayStore::new(datastore.clone()));
+    let overlays = AppPosterOverlayServices::new(
+        store.clone(),
+        Arc::new(OverlayEngine::new(data_dir, fetch.clone()).unwrap()),
+    )
+    .with_plex(Arc::new(FakeConnections { mapped: false }), plex.clone());
+    store.set_library_config(LIBRARY, true, None).await.unwrap();
+    set_plex_push(&store, true).await;
+
+    // Each version gets a poster of its own, built from its own file.
+    let summary = overlays.reconcile().await.unwrap();
+    assert_eq!(summary.plex.pushed, 2);
+    let (theatrical, locked, uploads) = plex.poster("v-theatrical");
+    assert!(has_marker(&theatrical) && locked);
+    assert_eq!(uploads, 1);
+    let (special, _, _) = plex.poster("v-special");
+    let title_marker = marker_input_hash(
+        &overlays
+            .image(TITLE, "original")
+            .await
+            .unwrap()
+            .unwrap()
+            .bytes,
+    );
+    let markers = [marker_input_hash(&theatrical), marker_input_hash(&special)];
+    assert_ne!(markers[0], markers[1], "each version's poster differs");
+    assert!(
+        !markers.contains(&title_marker),
+        "neither is the merged poster"
+    );
+    assert_eq!(store.status_counts().await.unwrap().plex_pushed, 2);
+
+    // Nothing changed: no uploads.
+    overlays.reconcile().await.unwrap();
+    assert_eq!(
+        (plex.poster("v-theatrical").2, plex.poster("v-special").2),
+        (1, 1)
+    );
+
+    // Upgrading one version re-uploads only that version.
+    exec(
+        &datastore,
+        "UPDATE media_files SET video_width = 1280, video_height = 720 WHERE id = 'file-2'",
+        vec![],
+    )
+    .await;
+    overlays.reconcile().await.unwrap();
+    assert_eq!(
+        (plex.poster("v-theatrical").2, plex.poster("v-special").2),
+        (1, 2)
+    );
+
+    // Push off: both versions get the original back.
+    set_plex_push(&store, false).await;
+    let summary = overlays.reconcile().await.unwrap();
+    assert_eq!(summary.plex.restored, 2);
+    for key in ["v-theatrical", "v-special"] {
+        let (shown, locked, _) = plex.poster(key);
+        assert!(!has_marker(&shown) && !locked, "{key} restored");
+    }
+    assert!(
+        store
+            .list_plex_states_for_title(TITLE)
+            .await
+            .unwrap()
+            .is_empty()
     );
 }

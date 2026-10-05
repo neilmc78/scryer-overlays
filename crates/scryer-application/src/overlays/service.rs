@@ -835,6 +835,21 @@ fn sample_ratings() -> Vec<crate::TitleExternalRating> {
     .collect()
 }
 
+/// The template a library uses: its own, or the built-in one when it has
+/// none or the template was deleted.
+pub(crate) async fn template_svg_for(
+    overlays: &AppPosterOverlayServices,
+    template_id: Option<&str>,
+) -> AppResult<String> {
+    Ok(match template_id {
+        Some(template_id) => match overlays.repository.get_template(template_id).await? {
+            Some(template) => template.svg,
+            None => overlays.engine.builtin_template().to_string(),
+        },
+        None => overlays.engine.builtin_template().to_string(),
+    })
+}
+
 pub(crate) fn presented_version(output_hash: &str) -> &str {
     let end = output_hash
         .char_indices()
@@ -898,13 +913,7 @@ async fn process_title(
     let original_hash = blake3_hex(&original);
     state.original_hash = Some(original_hash.clone());
 
-    let template_svg = match inputs.template_id.as_deref() {
-        Some(template_id) => match repository.get_template(template_id).await? {
-            Some(template) => template.svg,
-            None => engine.builtin_template().to_string(),
-        },
-        None => engine.builtin_template().to_string(),
-    };
+    let template_svg = template_svg_for(overlays, inputs.template_id.as_deref()).await?;
     let version = template_version(&template_svg);
     let fields = OverlayFields::aggregate(&inputs.files)
         .with_title(inputs.facet.as_deref(), inputs.content_status.as_deref())

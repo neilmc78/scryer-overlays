@@ -223,7 +223,9 @@ impl PosterOverlayRepository for PosterOverlayStore {
     async fn load_inputs(&self, title_id: &str) -> AppResult<Option<PosterOverlayInputs>> {
         let Some(title) = SqlRuntime::fetch_optional(
             self.read(),
-            "SELECT t.id, t.library_id, t.facet, t.content_status, t.poster_url,
+            "SELECT t.id, t.name, t.library_id, t.facet, t.content_status, t.poster_url,
+                    (SELECT MIN(x.external_id) FROM title_external_ids x
+                      WHERE x.title_id = t.id AND x.source = 'tmdb') AS tmdb_id,
                     pol.enabled, pol.template_id, ti.source_url, ti.source_etag
                FROM titles t
                LEFT JOIN poster_overlay_libraries pol ON pol.library_id = t.library_id
@@ -288,6 +290,8 @@ impl PosterOverlayRepository for PosterOverlayStore {
             facet: title.opt_text("facet")?,
             content_status: title.opt_text("content_status")?,
             ratings,
+            title_name: title.opt_text("name")?,
+            tmdb_id: title.opt_text("tmdb_id")?,
             files,
         }))
     }
@@ -468,16 +472,18 @@ impl PosterOverlayRepository for PosterOverlayStore {
         &self,
         connection_id: &str,
         title_id: &str,
+        provider_item_id: &str,
     ) -> AppResult<Option<PosterOverlayPlexState>> {
         SqlRuntime::fetch_optional(
             self.read(),
             "SELECT connection_id, title_id, provider_item_id, pushed_output_hash, pushed_thumb,
                     pushed_at, last_error
                FROM poster_overlay_plex_state
-              WHERE connection_id = {} AND title_id = {}",
+              WHERE connection_id = {} AND title_id = {} AND provider_item_id = {}",
             &[
                 SqlArg::Text(connection_id.to_string()),
                 SqlArg::Text(title_id.to_string()),
+                SqlArg::Text(provider_item_id.to_string()),
             ],
         )
         .await?
@@ -493,8 +499,7 @@ impl PosterOverlayRepository for PosterOverlayStore {
                 (connection_id, title_id, provider_item_id, pushed_output_hash, pushed_thumb,
                  pushed_at, last_error, updated_at)
              VALUES ({}, {}, {}, {}, {}, {}, {}, {})
-             ON CONFLICT (connection_id, title_id) DO UPDATE SET
-                provider_item_id = excluded.provider_item_id,
+             ON CONFLICT (connection_id, title_id, provider_item_id) DO UPDATE SET
                 pushed_output_hash = excluded.pushed_output_hash,
                 pushed_thumb = excluded.pushed_thumb,
                 pushed_at = excluded.pushed_at,
@@ -515,38 +520,69 @@ impl PosterOverlayRepository for PosterOverlayStore {
         Ok(())
     }
 
-    async fn delete_plex_state(&self, connection_id: &str, title_id: &str) -> AppResult<()> {
+    async fn delete_plex_state(
+        &self,
+        connection_id: &str,
+        title_id: &str,
+        provider_item_id: &str,
+    ) -> AppResult<()> {
         SqlRuntime::execute_write(
             &self.datastore,
             "delete_poster_overlay_plex_state",
-            "DELETE FROM poster_overlay_plex_state WHERE connection_id = {} AND title_id = {}",
+            "DELETE FROM poster_overlay_plex_state
+              WHERE connection_id = {} AND title_id = {} AND provider_item_id = {}",
             vec![
                 SqlArg::Text(connection_id.to_string()),
                 SqlArg::Text(title_id.to_string()),
+                SqlArg::Text(provider_item_id.to_string()),
             ],
         )
         .await?;
         Ok(())
     }
 
-    async fn list_plex_states(
+    async fn list_plex_states_for_title(
         &self,
-        after: Option<(&str, &str)>,
-        limit: usize,
+        title_id: &str,
     ) -> AppResult<Vec<PosterOverlayPlexState>> {
-        let (after_title, after_connection) = after.unwrap_or(("", ""));
         SqlRuntime::fetch_all(
             self.read(),
             "SELECT connection_id, title_id, provider_item_id, pushed_output_hash, pushed_thumb,
                     pushed_at, last_error
                FROM poster_overlay_plex_state
-              WHERE title_id > {} OR (title_id = {} AND connection_id > {})
-              ORDER BY title_id, connection_id
+              WHERE title_id = {}
+              ORDER BY connection_id, provider_item_id",
+            &[SqlArg::Text(title_id.to_string())],
+        )
+        .await?
+        .iter()
+        .map(plex_state_from_row)
+        .collect()
+    }
+
+    async fn list_plex_states(
+        &self,
+        after: Option<(&str, &str, &str)>,
+        limit: usize,
+    ) -> AppResult<Vec<PosterOverlayPlexState>> {
+        let (after_title, after_connection, after_item) = after.unwrap_or(("", "", ""));
+        SqlRuntime::fetch_all(
+            self.read(),
+            "SELECT connection_id, title_id, provider_item_id, pushed_output_hash, pushed_thumb,
+                    pushed_at, last_error
+               FROM poster_overlay_plex_state
+              WHERE title_id > {}
+                 OR (title_id = {} AND connection_id > {})
+                 OR (title_id = {} AND connection_id = {} AND provider_item_id > {})
+              ORDER BY title_id, connection_id, provider_item_id
               LIMIT {}",
             &[
                 SqlArg::Text(after_title.to_string()),
                 SqlArg::Text(after_title.to_string()),
                 SqlArg::Text(after_connection.to_string()),
+                SqlArg::Text(after_title.to_string()),
+                SqlArg::Text(after_connection.to_string()),
+                SqlArg::Text(after_item.to_string()),
                 SqlArg::I64(i64::try_from(limit).unwrap_or(i64::MAX)),
             ],
         )
@@ -584,13 +620,12 @@ impl PosterOverlayRepository for PosterOverlayStore {
         let plex = SqlRuntime::fetch_optional(
             self.read(),
             "SELECT COALESCE(SUM(CASE WHEN p.last_error IS NULL
-                                       AND p.pushed_output_hash = s.output_hash
+                                       AND p.pushed_output_hash IS NOT NULL
                                       THEN 1 ELSE 0 END), 0) AS pushed,
                     COALESCE(SUM(CASE WHEN p.last_error = {} THEN 1 ELSE 0 END), 0) AS changed,
                     COALESCE(SUM(CASE WHEN p.last_error IS NOT NULL AND p.last_error <> {}
                                       THEN 1 ELSE 0 END), 0) AS failed
-               FROM poster_overlay_plex_state p
-               LEFT JOIN poster_overlay_state s ON s.title_id = p.title_id",
+               FROM poster_overlay_plex_state p",
             &[
                 SqlArg::Text(PLEX_POSTER_CHANGED_IN_PLEX.to_string()),
                 SqlArg::Text(PLEX_POSTER_CHANGED_IN_PLEX.to_string()),

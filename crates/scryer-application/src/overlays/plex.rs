@@ -13,19 +13,22 @@
 //! off, or a title's library no longer has overlays, the stored original is
 //! uploaded back and the poster field unlocked.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use chrono::{Local, NaiveTime, Timelike, Utc};
 use scryer_domain::{MediaServerConnection, MediaServerPlaybackEntityKind, MediaServerProvider};
 
+use super::fields::{
+    OverlayFields, OverlayMediaFacts, blake3_hex, edition_token, input_hash, template_version,
+};
 use super::ports::{
     PlexMaintenanceWindow, PlexPosterItem, PosterOverlayPlexClient, PosterOverlayPlexState,
-    PosterOverlayVariant,
+    PosterOverlayRenderRequest, PosterOverlayVariant,
 };
-use super::service::{AppPosterOverlayServices, OVERLAY_PASS_PAGE};
-use crate::{AppResult, MediaServerConnectionRepository};
+use super::service::{AppPosterOverlayServices, OVERLAY_PASS_PAGE, template_svg_for};
+use crate::{AppError, AppResult, MediaServerConnectionRepository};
 
 /// Recorded on a title whose poster was replaced in Plex after Scryer
 /// pushed one; Scryer leaves that poster alone.
@@ -217,10 +220,46 @@ enum PushOutcome {
     ChangedInPlex,
 }
 
+/// What a push uploads.
+enum PosterSource<'a> {
+    /// The title's rendered overlay.
+    Rendered(&'a [u8]),
+    /// One version of a movie, rendered only when it is uploaded.
+    Version(PosterOverlayRenderRequest),
+}
+
+/// One Plex item a title's poster goes to on a connection.
+struct PushTarget<'a> {
+    rating_key: String,
+    /// Identity of the poster: compared with what was last uploaded.
+    change_key: String,
+    source: PosterSource<'a>,
+}
+
+/// What rendering a movie's versions needs, read once per title.
+struct VersionContext {
+    files: Vec<OverlayMediaFacts>,
+    facet: Option<String>,
+    content_status: Option<String>,
+    ratings: Vec<crate::TitleExternalRating>,
+    title_name: String,
+    tmdb_id: String,
+    original: Vec<u8>,
+    original_hash: String,
+    template_svg: String,
+    template_version: String,
+}
+
+/// The file name in a path, whichever separator it uses.
+fn file_name(path: &str) -> &str {
+    path.rsplit(['/', '\\']).next().unwrap_or(path)
+}
+
 impl AppPosterOverlayServices {
     /// Bring the title's poster on every Plex server up to date with its
-    /// rendered overlay. Failures are recorded on the title's push state and
-    /// never fail the render.
+    /// rendered overlay. A movie Plex shows as several versions gets one
+    /// poster per version instead. Failures are recorded on the push records
+    /// and never fail the render.
     pub(crate) async fn sync_plex(&self, title_id: &str) -> PlexSyncCounts {
         let mut counts = PlexSyncCounts::default();
         let Some(plex) = self.plex.as_ref() else {
@@ -249,59 +288,96 @@ impl AppPosterOverlayServices {
                 return counts;
             }
         };
+        // Read only for a title Plex has no single item for.
+        let mut versions: Option<Option<VersionContext>> = None;
         for connection in &connections {
-            let Some(rating_key) = mappings
-                .iter()
-                .find(|(connection_id, _)| connection_id == &connection.id)
-                .map(|(_, key)| key.as_str())
-            else {
-                continue;
-            };
             if plex.in_maintenance(connection).await {
                 counts.deferred += 1;
                 continue;
             }
-            match self
-                .push_one(
-                    plex,
-                    connection,
-                    title_id,
+            let mapped = mappings
+                .iter()
+                .find(|(connection_id, _)| connection_id == &connection.id)
+                .map(|(_, key)| key.clone());
+            let targets = match mapped {
+                Some(rating_key) => vec![PushTarget {
                     rating_key,
-                    &output_hash,
-                    &poster,
-                )
-                .await
-            {
-                Ok(PushOutcome::Pushed) => counts.pushed += 1,
-                Ok(PushOutcome::Unchanged) => counts.unchanged += 1,
-                Ok(PushOutcome::ChangedInPlex) => counts.changed_in_plex += 1,
-                Err(error) => {
-                    let message = error.to_string();
-                    tracing::warn!(
-                        title_id,
-                        connection_id = %connection.id,
-                        error = %message,
-                        "poster overlay push to Plex failed"
-                    );
-                    let _ = self
-                        .repository
-                        .save_plex_state(&PosterOverlayPlexState {
-                            connection_id: connection.id.clone(),
-                            title_id: title_id.to_string(),
-                            provider_item_id: rating_key.to_string(),
-                            last_error: Some(message),
-                            ..self
-                                .repository
-                                .get_plex_state(&connection.id, title_id)
-                                .await
-                                .ok()
-                                .flatten()
-                                .unwrap_or_default()
-                        })
-                        .await;
-                    counts.failed += 1;
+                    change_key: output_hash.clone(),
+                    source: PosterSource::Rendered(&poster),
+                }],
+                None => {
+                    if versions.is_none() {
+                        versions = Some(match self.version_context(title_id).await {
+                            Ok(context) => context,
+                            Err(error) => {
+                                tracing::warn!(title_id, %error, "could not read a title's versions for a Plex push");
+                                None
+                            }
+                        });
+                    }
+                    let Some(context) = versions.as_ref().and_then(Option::as_ref) else {
+                        continue;
+                    };
+                    match self.version_targets(plex, connection, context).await {
+                        Ok(targets) => targets,
+                        Err(error) => {
+                            tracing::warn!(
+                                title_id,
+                                connection_id = %connection.id,
+                                %error,
+                                "could not find a movie's versions in Plex"
+                            );
+                            counts.failed += 1;
+                            continue;
+                        }
+                    }
+                }
+            };
+            if targets.is_empty() {
+                continue;
+            }
+            let current = targets
+                .iter()
+                .map(|target| target.rating_key.clone())
+                .collect::<HashSet<_>>();
+            for target in targets {
+                let rating_key = target.rating_key.clone();
+                match self.push_one(plex, connection, title_id, target).await {
+                    Ok(PushOutcome::Pushed) => counts.pushed += 1,
+                    Ok(PushOutcome::Unchanged) => counts.unchanged += 1,
+                    Ok(PushOutcome::ChangedInPlex) => counts.changed_in_plex += 1,
+                    Err(error) => {
+                        let message = error.to_string();
+                        tracing::warn!(
+                            title_id,
+                            connection_id = %connection.id,
+                            error = %message,
+                            "poster overlay push to Plex failed"
+                        );
+                        let _ = self
+                            .repository
+                            .save_plex_state(&PosterOverlayPlexState {
+                                connection_id: connection.id.clone(),
+                                title_id: title_id.to_string(),
+                                provider_item_id: rating_key.clone(),
+                                last_error: Some(message),
+                                ..self
+                                    .repository
+                                    .get_plex_state(&connection.id, title_id, &rating_key)
+                                    .await
+                                    .ok()
+                                    .flatten()
+                                    .unwrap_or_default()
+                            })
+                            .await;
+                        counts.failed += 1;
+                    }
                 }
             }
+            counts.merge(
+                self.restore_superseded(plex, connection, title_id, &current)
+                    .await,
+            );
         }
         counts
     }
@@ -326,36 +402,149 @@ impl AppPosterOverlayServices {
         Ok((connections, mappings))
     }
 
+    /// What rendering the title's versions needs, or `None` when the title
+    /// is not a movie with files in two or more editions.
+    async fn version_context(&self, title_id: &str) -> AppResult<Option<VersionContext>> {
+        let Some(inputs) = self.repository.load_inputs(title_id).await? else {
+            return Ok(None);
+        };
+        let editions = inputs
+            .files
+            .iter()
+            .filter_map(OverlayMediaFacts::edition_name)
+            .map(|edition| edition_token(&edition))
+            .filter(|token| !token.is_empty())
+            .collect::<HashSet<_>>();
+        let (Some(title_name), Some(tmdb_id)) = (inputs.title_name.clone(), inputs.tmdb_id.clone())
+        else {
+            return Ok(None);
+        };
+        if editions.len() < 2 || inputs.facet.as_deref() != Some("movie") {
+            return Ok(None);
+        }
+        let Some(original) = self
+            .engine
+            .read_original(title_id)
+            .await?
+            .filter(|bytes| !self.engine.has_marker(bytes))
+        else {
+            return Ok(None);
+        };
+        let template_svg = template_svg_for(self, inputs.template_id.as_deref()).await?;
+        Ok(Some(VersionContext {
+            original_hash: blake3_hex(&original),
+            template_version: template_version(&template_svg),
+            template_svg,
+            original,
+            files: inputs.files,
+            facet: inputs.facet,
+            content_status: inputs.content_status,
+            ratings: inputs.ratings,
+            title_name,
+            tmdb_id,
+        }))
+    }
+
+    /// One target per version of the movie on this connection, each built
+    /// from only that version's files. A version is matched to Scryer's
+    /// files by file name, else by its edition name.
+    async fn version_targets(
+        &self,
+        plex: &PlexPush,
+        connection: &MediaServerConnection,
+        context: &VersionContext,
+    ) -> AppResult<Vec<PushTarget<'static>>> {
+        let versions = plex
+            .client
+            .find_movie_versions(connection, &context.title_name, &context.tmdb_id)
+            .await?;
+        // A single item is the core match's to find.
+        if versions.len() < 2 {
+            return Ok(Vec::new());
+        }
+        let mut targets = Vec::new();
+        for version in versions {
+            let names = version
+                .files
+                .iter()
+                .map(|path| file_name(path))
+                .collect::<HashSet<_>>();
+            let mut files = context
+                .files
+                .iter()
+                .filter(|facts| {
+                    facts
+                        .file_path
+                        .as_deref()
+                        .is_some_and(|path| names.contains(file_name(path)))
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            if files.is_empty()
+                && let Some(edition) = version.edition_title.as_deref()
+            {
+                let wanted = edition_token(edition);
+                files = context
+                    .files
+                    .iter()
+                    .filter(|facts| {
+                        !wanted.is_empty()
+                            && facts.edition_name().map(|name| edition_token(&name))
+                                == Some(wanted.clone())
+                    })
+                    .cloned()
+                    .collect();
+            }
+            if files.is_empty() {
+                continue;
+            }
+            for facts in &mut files {
+                facts.additional = false;
+            }
+            let fields = OverlayFields::aggregate(&files)
+                .with_title(context.facet.as_deref(), context.content_status.as_deref())
+                .with_ratings(&context.ratings);
+            let input = input_hash(&context.original_hash, &context.template_version, &fields);
+            targets.push(PushTarget {
+                rating_key: version.item.rating_key,
+                change_key: input.clone(),
+                source: PosterSource::Version(PosterOverlayRenderRequest {
+                    original: context.original.clone(),
+                    template_svg: context.template_svg.clone(),
+                    values: fields.template_values(),
+                    input_hash: input,
+                }),
+            });
+        }
+        Ok(targets)
+    }
+
     async fn push_one(
         &self,
         plex: &PlexPush,
         connection: &MediaServerConnection,
         title_id: &str,
-        rating_key: &str,
-        output_hash: &str,
-        poster: &[u8],
+        target: PushTarget<'_>,
     ) -> AppResult<PushOutcome> {
+        let rating_key = target.rating_key.as_str();
         let state = self
             .repository
-            .get_plex_state(&connection.id, title_id)
+            .get_plex_state(&connection.id, title_id, rating_key)
             .await?;
         let Some(item) = plex.client.item(connection, rating_key).await? else {
-            // The mapping points at an item Plex no longer has; the next
-            // catalog scan corrects it.
+            // The item is gone from Plex; the next catalog scan or version
+            // lookup finds its replacement.
             if state.is_some() {
                 self.repository
-                    .delete_plex_state(&connection.id, title_id)
+                    .delete_plex_state(&connection.id, title_id, rating_key)
                     .await?;
             }
             return Ok(PushOutcome::Unchanged);
         };
 
-        if let Some(state) = state
-            .as_ref()
-            .filter(|state| state.provider_item_id == rating_key && state.pushed_thumb.is_some())
-        {
+        if let Some(state) = state.as_ref().filter(|state| state.pushed_thumb.is_some()) {
             if item.thumb == state.pushed_thumb {
-                if state.pushed_output_hash.as_deref() == Some(output_hash) {
+                if state.pushed_output_hash.as_deref() == Some(target.change_key.as_str()) {
                     if state.last_error.is_some() {
                         self.repository
                             .save_plex_state(&PosterOverlayPlexState {
@@ -380,9 +569,19 @@ impl AppPosterOverlayServices {
             }
         }
 
-        plex.client
-            .upload_poster(connection, &item, poster.to_vec())
-            .await?;
+        let poster = match target.source {
+            PosterSource::Rendered(bytes) => bytes.to_vec(),
+            PosterSource::Version(request) => self
+                .engine
+                .render(request)
+                .await?
+                .variants
+                .into_iter()
+                .find(|(variant, _)| *variant == PosterOverlayVariant::Full)
+                .map(|(_, bytes)| bytes)
+                .ok_or_else(|| AppError::Repository("the version poster did not render".into()))?,
+        };
+        plex.client.upload_poster(connection, &item, poster).await?;
         plex.client
             .set_poster_locked(connection, &item, true)
             .await?;
@@ -396,13 +595,46 @@ impl AppPosterOverlayServices {
                 connection_id: connection.id.clone(),
                 title_id: title_id.to_string(),
                 provider_item_id: rating_key.to_string(),
-                pushed_output_hash: Some(output_hash.to_string()),
+                pushed_output_hash: Some(target.change_key),
                 pushed_thumb: thumb,
                 pushed_at: Some(Utc::now()),
                 last_error: None,
             })
             .await?;
         Ok(PushOutcome::Pushed)
+    }
+
+    /// Put the original back on items of this title that are no longer its
+    /// targets on `connection`, such as the single item a movie had before
+    /// Plex split it into versions.
+    async fn restore_superseded(
+        &self,
+        plex: &PlexPush,
+        connection: &MediaServerConnection,
+        title_id: &str,
+        current: &HashSet<String>,
+    ) -> PlexSyncCounts {
+        let mut counts = PlexSyncCounts::default();
+        let states = match self.repository.list_plex_states_for_title(title_id).await {
+            Ok(states) => states,
+            Err(error) => {
+                tracing::warn!(title_id, %error, "could not list a title's Plex pushes");
+                return counts;
+            }
+        };
+        for state in states.iter().filter(|state| {
+            state.connection_id == connection.id && !current.contains(&state.provider_item_id)
+        }) {
+            match self.restore_one(plex, connection, state).await {
+                Ok(true) => counts.restored += 1,
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::warn!(title_id, %error, "could not restore a superseded Plex poster");
+                    counts.failed += 1;
+                }
+            }
+        }
+        counts
     }
 
     /// Whether the poster Plex shows now carries Scryer's marker.
@@ -434,14 +666,14 @@ impl AppPosterOverlayServices {
                 return counts;
             }
         };
-        let mut after: Option<(String, String)> = None;
+        let mut after: Option<(String, String, String)> = None;
         loop {
             let page = match self
                 .repository
                 .list_plex_states(
-                    after
-                        .as_ref()
-                        .map(|(title, connection)| (title.as_str(), connection.as_str())),
+                    after.as_ref().map(|(title, connection, item)| {
+                        (title.as_str(), connection.as_str(), item.as_str())
+                    }),
                     OVERLAY_PASS_PAGE,
                 )
                 .await
@@ -455,7 +687,11 @@ impl AppPosterOverlayServices {
             let Some(last) = page.last() else {
                 break;
             };
-            after = Some((last.title_id.clone(), last.connection_id.clone()));
+            after = Some((
+                last.title_id.clone(),
+                last.connection_id.clone(),
+                last.provider_item_id.clone(),
+            ));
             for state in &page {
                 let active = push_enabled
                     && matches!(
@@ -530,7 +766,11 @@ impl AppPosterOverlayServices {
             changed = true;
         }
         self.repository
-            .delete_plex_state(&state.connection_id, &state.title_id)
+            .delete_plex_state(
+                &state.connection_id,
+                &state.title_id,
+                &state.provider_item_id,
+            )
             .await?;
         Ok(changed)
     }

@@ -22,11 +22,11 @@ pub use plex::{PLEX_POSTER_CHANGED_IN_PLEX, PlexSyncCounts, maintenance_remainin
 pub use ports::{
     DEFAULT_OVERLAY_PARALLELISM, DEFAULT_OVERLAY_RECONCILE_INTERVAL_SECONDS,
     MAX_OVERLAY_PARALLELISM, MIN_OVERLAY_RECONCILE_INTERVAL_SECONDS, PlexMaintenanceWindow,
-    PlexPosterItem, PosterOverlayEngine, PosterOverlayInputs, PosterOverlayLibraryConfig,
-    PosterOverlayPlexClient, PosterOverlayPlexState, PosterOverlayPreviewPoster,
-    PosterOverlayPreviewRequest, PosterOverlayRenderRequest, PosterOverlayRendered,
-    PosterOverlayRepository, PosterOverlaySettings, PosterOverlayState, PosterOverlayStatusCounts,
-    PosterOverlayTemplate, PosterOverlayVariant,
+    PlexMovieVersion, PlexPosterItem, PosterOverlayEngine, PosterOverlayInputs,
+    PosterOverlayLibraryConfig, PosterOverlayPlexClient, PosterOverlayPlexState,
+    PosterOverlayPreviewPoster, PosterOverlayPreviewRequest, PosterOverlayRenderRequest,
+    PosterOverlayRendered, PosterOverlayRepository, PosterOverlaySettings, PosterOverlayState,
+    PosterOverlayStatusCounts, PosterOverlayTemplate, PosterOverlayVariant,
 };
 pub use runtime::{drain_overlay_events, start_poster_overlay_worker};
 pub use service::{

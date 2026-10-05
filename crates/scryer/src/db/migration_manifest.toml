@@ -2800,6 +2800,23 @@ file = "postgres/migrations/0269_poster_overlay_plex_state.sql"
 engine = "postgres"
 scope = "all"
 
+[[migration]]
+version = 270
+description = "poster overlay plex versions"
+checksum_algo = "blake3"
+
+[[migration.steps]]
+kind = "sql"
+file = "migrations/0270_poster_overlay_plex_versions.sql"
+engine = "sqlite"
+scope = "all"
+
+[[migration.steps]]
+kind = "sql"
+file = "postgres/migrations/0270_poster_overlay_plex_versions.sql"
+engine = "postgres"
+scope = "all"
+
 [[baseline]]
 through_version = 254
 file = "baselines/0254_baseline.sql"
