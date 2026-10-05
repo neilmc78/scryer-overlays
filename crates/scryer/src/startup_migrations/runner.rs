@@ -25,6 +25,7 @@ use super::{
     _0012_legacy_newznab_wrappers_01822 as migration_0012,
     _0013_indexer_request_accounting as migration_0013,
     _0016_maintenance_show_fact_rearm as migration_0016,
+    _0017_empty_duplicate_title_folders as migration_0017,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -133,6 +134,12 @@ const MIGRATIONS: &[MigrationSpec] = &[
         id: migration_0016::ID,
         description: "require destructive maintenance-rule review after show facts become executable",
         phase: MigrationPhase::Early,
+        legacy_state_key: None,
+    },
+    MigrationSpec {
+        id: migration_0017::ID,
+        description: "remove the empty title folders an old rename left behind",
+        phase: MigrationPhase::ApplicationReady,
         legacy_state_key: None,
     },
 ];
@@ -432,6 +439,22 @@ impl ApplicationMigrator {
                 "0011_long_tail_reconverge_default" => {
                     self.run_retryable(spec, migration_0011::migrate(self.settings.clone()))
                         .await;
+                }
+                migration_0017::ID => {
+                    // Recorded before it runs, and only run once recorded: it
+                    // gets one attempt and is never retried.
+                    match self.ledger.record(spec, 0).await {
+                        Ok(()) => {
+                            self.applied.insert(spec.id.to_string());
+                            let app = app.clone();
+                            std::mem::drop(tokio::spawn(async move {
+                                migration_0017::run(&app).await;
+                            }));
+                        }
+                        Err(error) => {
+                            tracing::warn!(migration_id = spec.id, error = %error, "application migration skipped because it could not be recorded first");
+                        }
+                    }
                 }
                 _ => unreachable!("application-ready migration registry and dispatcher must agree"),
             }

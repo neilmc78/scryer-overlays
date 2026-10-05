@@ -197,6 +197,7 @@ pub use import::srrdb::{SRRDB_API_BASE_URL, SrrdbHttpFilenameLookup};
 pub use import::upgrade;
 pub use integration::tracked_downloads;
 pub use library::filesystem_walk;
+pub use library::leftover_title_folders::EmptyDuplicateTitleFolderReport;
 pub use library::recycle_bin;
 pub use metrics_support::describe_freshness_and_health_metrics;
 pub use notifications::runtime::{

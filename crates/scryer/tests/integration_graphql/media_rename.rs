@@ -3402,3 +3402,87 @@ async fn apply_media_rename_removes_the_title_folder_but_not_the_directory_above
         0
     );
 }
+
+/// The one-time cleanup removes only the file-free folder named after a title
+/// that is recorded in a sibling folder, and a second run finds nothing.
+#[tokio::test]
+async fn empty_duplicate_title_folders_are_removed_and_everything_else_is_kept() {
+    let ctx = TestContext::new().await;
+    seed_typed_settings_definitions(&ctx).await;
+    let media_root = tempfile::tempdir().expect("media root tempdir");
+    configure_default_library_root(&ctx, MediaFacet::Anime, media_root.path()).await;
+    let root = media_root.path();
+
+    let recorded = create_catalog_title(
+        &ctx,
+        "Lantern Orchard",
+        MediaFacet::Anime,
+        vec![ExternalId::new("tvdb".to_string(), "93077".to_string())],
+        vec![],
+        true,
+    )
+    .await;
+    let recorded_dir = root.join("Lantern Orchard (2024) 93077");
+    std::fs::create_dir_all(recorded_dir.join("Season 1")).expect("recorded dir");
+    std::fs::write(recorded_dir.join("Season 1").join("episode.mkv"), b"x").expect("episode");
+    set_title_folder_path(&ctx, &recorded.id, &recorded_dir).await;
+
+    // A title whose recorded folder is itself empty: recorded, so never removed.
+    let empty_recorded = create_catalog_title(
+        &ctx,
+        "Quiet Harbor",
+        MediaFacet::Anime,
+        vec![ExternalId::new("tvdb".to_string(), "93078".to_string())],
+        vec![],
+        true,
+    )
+    .await;
+    let empty_recorded_dir = root.join("Quiet Harbor (2024)");
+    std::fs::create_dir_all(&empty_recorded_dir).expect("empty recorded dir");
+    set_title_folder_path(&ctx, &empty_recorded.id, &empty_recorded_dir).await;
+
+    let leftover = root.join("Lantern Orchard (2024) - [tvdbid-93077]");
+    std::fs::create_dir_all(leftover.join("Season 1")).expect("leftover season");
+    std::fs::create_dir_all(leftover.join("Specials")).expect("leftover specials");
+
+    let leftover_with_file = root.join("Lantern Orchard (2024)");
+    std::fs::create_dir_all(leftover_with_file.join("Season 1")).expect("leftover with file");
+    let stray = leftover_with_file.join("Season 1").join("poster.jpg");
+    std::fs::write(&stray, b"x").expect("stray file");
+
+    let unrelated_empty = root.join("Unsorted Imports");
+    std::fs::create_dir_all(unrelated_empty.join("Inbox")).expect("unrelated empty");
+    // Starts with the title's name but is a different word.
+    let longer_name = root.join("Lantern Orchards Collection");
+    std::fs::create_dir_all(&longer_name).expect("longer name");
+
+    let report = ctx
+        .app
+        .remove_empty_duplicate_title_folders()
+        .await
+        .expect("cleanup");
+
+    assert_eq!(report.removed, vec![leftover.to_string_lossy().to_string()]);
+    assert_eq!(
+        report.kept_with_files,
+        vec![leftover_with_file.to_string_lossy().to_string()]
+    );
+    assert!(report.failed.is_empty());
+    assert!(!leftover.exists(), "the empty duplicate is removed");
+    assert!(stray.is_file(), "a duplicate holding a file is kept whole");
+    assert!(unrelated_empty.join("Inbox").is_dir());
+    assert!(longer_name.is_dir());
+    assert!(
+        empty_recorded_dir.is_dir(),
+        "a recorded folder is never removed"
+    );
+    assert!(recorded_dir.join("Season 1").join("episode.mkv").is_file());
+    assert!(root.is_dir());
+
+    let second = ctx
+        .app
+        .remove_empty_duplicate_title_folders()
+        .await
+        .expect("second cleanup");
+    assert!(second.removed.is_empty());
+}
