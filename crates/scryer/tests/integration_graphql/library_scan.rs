@@ -1790,9 +1790,64 @@ async fn library_movie_scan_keeps_media_of_a_title_recorded_at_the_library_root(
             .iter()
             .map(|file| file.file_path.as_str())
             .collect::<Vec<_>>(),
-        vec![movie_path.to_string_lossy().as_ref()],
+        vec![movie_path.to_str().expect("utf-8 movie path")],
         "the title keeps the file it has"
     );
+}
+
+/// A title scan walks the title's recorded folder. When that record is the
+/// library root, the scan refuses instead of reading every other title's
+/// files as this title's.
+#[tokio::test]
+async fn title_scan_refuses_a_title_recorded_at_the_library_root() {
+    let ctx = TestContext::new().await;
+    seed_typed_settings_definitions(&ctx).await;
+    let media_root = tempfile::tempdir().expect("media root tempdir");
+    update_library_paths_for_scan(
+        &ctx,
+        "/tmp/movies-unused",
+        media_root.path().to_string_lossy().as_ref(),
+        "/tmp/anime-unused",
+    )
+    .await;
+
+    let title = create_catalog_title(
+        &ctx,
+        "Rooted Show",
+        MediaFacet::Series,
+        vec![ExternalId::new("tvdb".to_string(), "123458".to_string())],
+        vec![],
+        false,
+    )
+    .await;
+    ctx.titles
+        .set_folder_path(&title.id, media_root.path().to_string_lossy().as_ref())
+        .await
+        .expect("record the library root as the title folder");
+    let other_show = media_root.path().join("Unrelated Show").join("Season 01");
+    std::fs::create_dir_all(&other_show).expect("create unrelated show");
+    std::fs::write(
+        other_show.join("Unrelated.Show.S01E01.mkv"),
+        b"unrelated synthetic episode",
+    )
+    .expect("write unrelated episode");
+
+    let admin = ctx.app.find_or_create_default_user().await.unwrap();
+    let error = ctx
+        .app
+        .scan_title_library(&admin, &title.id)
+        .await
+        .expect_err("a title recorded at the library root is not scanned");
+    assert!(
+        matches!(error, scryer_application::AppError::Validation(_)),
+        "unexpected error: {error}"
+    );
+    let tracked = ctx
+        .media_files
+        .list_media_files_for_title(&title.id)
+        .await
+        .expect("list media files");
+    assert!(tracked.is_empty(), "no other title's file was attached");
 }
 
 #[tokio::test]

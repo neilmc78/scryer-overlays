@@ -39,9 +39,7 @@
 
 use std::collections::HashMap;
 
-use scryer_application::stored_paths::{
-    folder_path_lookup_key, folder_path_match_candidates, folder_paths_match,
-};
+use scryer_application::stored_paths::{folder_path_identity_key, folder_paths_match};
 use scryer_application::title_folder_rules::{
     containing_folder_keys, folder_containment_key, path_is_strictly_within,
     stored_path_is_inside_folder, title_folder_from_media_paths, title_folder_root_violation,
@@ -314,21 +312,21 @@ fn build_repair_plan(
 /// more is all it keeps.
 #[derive(Debug, Default)]
 struct KeyOwners {
-    first: String,
+    first: Option<String>,
     several: bool,
 }
 
 impl KeyOwners {
     fn add(&mut self, title_id: &str) {
-        if self.first.is_empty() {
-            self.first = title_id.to_string();
-        } else if self.first != title_id {
-            self.several = true;
+        match &self.first {
+            None => self.first = Some(title_id.to_string()),
+            Some(first) if first != title_id => self.several = true,
+            Some(_) => {}
         }
     }
 
     fn has_other_than(&self, title_id: &str) -> bool {
-        self.several || self.first != title_id
+        self.several || self.first.as_deref().is_some_and(|first| first != title_id)
     }
 }
 
@@ -340,8 +338,8 @@ fn add_owner(index: &mut HashMap<String, KeyOwners>, key: String, title_id: &str
 /// is, lies inside, or contains another title's.
 #[derive(Debug, Default)]
 struct FolderIndex {
-    /// Every spelling [`folder_paths_match`] could accept, narrowed by key.
-    by_lookup_key: HashMap<String, Vec<(String, String)>>,
+    /// Keyed by what [`folder_paths_match`] compares.
+    by_identity: HashMap<String, KeyOwners>,
     /// Keyed by the folder itself.
     by_folder: HashMap<String, KeyOwners>,
     /// Keyed by the folder and every folder above it.
@@ -352,10 +350,9 @@ struct FolderIndex {
 
 impl FolderIndex {
     fn insert(&mut self, title_id: &str, folder: &str) {
-        self.by_lookup_key
-            .entry(folder_path_lookup_key(folder))
-            .or_default()
-            .push((title_id.to_string(), folder.to_string()));
+        if let Some(identity) = folder_path_identity_key(folder) {
+            add_owner(&mut self.by_identity, identity, title_id);
+        }
         let Some(key) = folder_containment_key(folder) else {
             self.escaped
                 .push((title_id.to_string(), folder.to_string()));
@@ -370,11 +367,9 @@ impl FolderIndex {
     /// Whether a title other than `title_id` records `folder`, a folder inside
     /// it, or a folder containing it.
     fn overlaps_another_titles(&self, title_id: &str, folder: &str) -> bool {
-        let same_folder = folder_path_match_candidates(folder)
-            .iter()
-            .filter_map(|candidate| self.by_lookup_key.get(&folder_path_lookup_key(candidate)))
-            .flatten()
-            .any(|(other_id, other)| other_id != title_id && folder_paths_match(other, folder));
+        let same_folder = folder_path_identity_key(folder)
+            .and_then(|identity| self.by_identity.get(&identity))
+            .is_some_and(|owners| owners.has_other_than(title_id));
         if same_folder {
             return true;
         }

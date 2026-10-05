@@ -1052,11 +1052,11 @@ impl AppUseCase {
 
     /// Record each renamed title's planned folder, once, after its files moved.
     ///
-    /// The folder is recorded once at least one of the title's media files sits
-    /// inside it. A partial apply (skipped, failed or rolled-back items) still
-    /// records it: the files that moved are the title's, and a record left on
-    /// the old folder would have the next scan treat them as a second copy and
-    /// detach them. Files left behind are logged. A folder that cannot be
+    /// The record follows the title's files: the folder is recorded when at
+    /// least as many of them sit inside it as outside it. A scan treats files
+    /// outside the recorded folder as a second copy and detaches them, so after
+    /// a partial apply (skipped, failed or rolled-back items) the record goes
+    /// wherever that costs the fewest. Files left behind are logged. A folder that cannot be
     /// determined leaves the record unchanged.
     async fn persist_rename_title_folders(
         &self,
@@ -1140,11 +1140,13 @@ impl AppUseCase {
                     &file.file_path,
                 )
             });
-        if inside.is_empty() {
+        if inside.len() < outside.len() || inside.is_empty() {
             warn!(
                 title_id = %title.id,
                 folder_path = %folder_path,
-                "keeping the title's previous folder: none of its media files are in the renamed folder"
+                moved = inside.len(),
+                left_behind = outside.len(),
+                "keeping the title's previous folder: most of its media files are not in the renamed folder"
             );
             return Ok(());
         }

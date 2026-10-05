@@ -107,6 +107,28 @@ pub(crate) async fn title_folder_spans_a_library_root(
     }
 }
 
+/// Refuse to place or look for a title's files by a recorded folder that is a
+/// library root or holds one.
+///
+/// Importing by such a record drops the file straight into the library root,
+/// and walking it reads every other title's files as this title's. The
+/// operator corrects the title's folder first.
+pub(crate) async fn ensure_title_folder_is_not_a_library_root(
+    app: &AppUseCase,
+    title: &Title,
+) -> AppResult<()> {
+    if !title_folder_spans_a_library_root(app, title).await? {
+        return Ok(());
+    }
+    Err(AppError::Validation(format!(
+        "the recorded folder for \"{}\" ({}) is a library root, not a title folder; correct the title's folder first",
+        title.name,
+        crate::stored_paths::stored_path_to_display_string(
+            title.folder_path.as_deref().unwrap_or_default()
+        )
+    )))
+}
+
 /// Move a title's stale folder ownership to the folder a scan found its
 /// files in. Returns `false`, changing nothing, when another title already
 /// owns that folder — that is a real conflict, not a heal.

@@ -60,11 +60,39 @@ async fn reclaim_stale_title_folder_for_scan(
     scan_folder_path: &Path,
 ) -> AppResult<bool> {
     if !crate::folder_ownership::title_folder_is_stale(title).await
-        && !crate::folder_ownership::title_folder_spans_a_library_root(app, title).await?
+        && !recorded_at_a_library_root_with_media_in(app, title, scan_folder_path).await?
     {
         return Ok(false);
     }
     crate::folder_ownership::reclaim_stale_title_folder(app, title, scan_folder_path).await
+}
+
+/// Whether `title` records a library root while `scan_folder_path` holds
+/// media the catalog already tracks for it. The tracked media is the evidence
+/// that this folder, and not some other folder matched to the same title, is
+/// the one the record should point at.
+async fn recorded_at_a_library_root_with_media_in(
+    app: &AppUseCase,
+    title: &Title,
+    scan_folder_path: &Path,
+) -> AppResult<bool> {
+    if !crate::folder_ownership::title_folder_spans_a_library_root(app, title).await? {
+        return Ok(false);
+    }
+    let scan_folder_path = path_to_stored_string(scan_folder_path);
+    Ok(app
+        .services
+        .library
+        .media_files
+        .list_media_files_for_title(&title.id)
+        .await?
+        .iter()
+        .any(|media_file| {
+            crate::title_folder_rules::stored_path_is_inside_folder(
+                &scan_folder_path,
+                &media_file.file_path,
+            )
+        }))
 }
 
 async fn claim_series_candidate_folder(

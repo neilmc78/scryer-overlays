@@ -2481,20 +2481,11 @@ impl AppUseCase {
             .merge_target_title_id()
             .and_then(|id| merge_destination_titles.get(id));
 
-        // A merge also lands on the *destination title's* root, not on the
-        // one the request named, when the two differ. FR-063 gives the
-        // destination its placement along with everything else, and a
-        // checkpoint recording a root that does not contain the folder
-        // would be an audit trail nobody can follow.
         // The merged files are routed into the destination title's recorded
         // folder, so that record has to be a title folder too.
         if let Some(destination_title) = merge_destination
-            && source_folder_refusal(
-                destination_title,
-                libraries.get(&destination_title.library_id),
-                all_root_paths,
-            )
-            .is_some()
+            && source_folder_refusal(destination_title, Some(destination_library), all_root_paths)
+                .is_some()
         {
             downgraded = Some(reason_codes::SOURCE_FOLDER_NOT_A_TITLE_FOLDER);
             draft.class = TitleLocationClass::NeedsResolution;
@@ -2506,6 +2497,11 @@ impl AppUseCase {
             return Ok(RootMoveTitleOutcome::settled(draft, downgraded));
         }
 
+        // A merge also lands on the *destination title's* root, not on the
+        // one the request named, when the two differ. FR-063 gives the
+        // destination its placement along with everything else, and a
+        // checkpoint recording a root that does not contain the folder
+        // would be an audit trail nobody can follow.
         let (destination_root_id, destination_root_path) = match merge_destination {
             Some(destination_title)
                 if destination_title.root_folder_id != classified.destination_root_id =>
