@@ -37,7 +37,10 @@ use scryer_domain::{Library, LibraryRoot, MediaFacet, Title, User};
 use serde::{Deserialize, Serialize};
 
 use crate::catalog_workflow::library_path_is_under_root;
-use crate::folder_ownership::{detach_title_media_in_folder, title_folder_path, title_owns_folder};
+use crate::folder_ownership::{
+    detach_title_media_in_folder, detach_title_media_in_folder_except, title_folder_path,
+    title_owns_folder,
+};
 use crate::library_scan_unmatched::{
     LIBRARY_SCAN_FOLDER_OWNERSHIP_CHANGED_BY_USER, build_title_bound_unmatched_scan_item,
     clear_library_scan_unmatched_item, persist_library_scan_unmatched_item,
@@ -326,6 +329,13 @@ impl AppUseCase {
                 ))
             })?;
 
+        if crate::folder_ownership::folder_spans_a_library_root(self, &selected_folder).await? {
+            return Err(AppError::Validation(format!(
+                "folder {} is a library root, not a title folder",
+                crate::stored_paths::stored_path_to_display_string(&selected_folder)
+            )));
+        }
+
         let current_root = title_folder_path(&title).and_then(|current| {
             library
                 .roots
@@ -577,10 +587,11 @@ impl AppUseCase {
 
         let mut detached = 0;
         if let Some(previous) = previous_folder.as_deref() {
-            detached = match detach_title_media_in_folder(
+            detached = match detach_title_media_in_folder_except(
                 self,
                 &title_id,
                 &stored_path_to_path_buf(previous),
+                Some(&context.selected_folder),
             )
             .await
             {
@@ -813,9 +824,13 @@ impl AppUseCase {
         )
         .await?;
         if let Some(previous) = previous_folder {
-            detached +=
-                detach_title_media_in_folder(self, title_id, &stored_path_to_path_buf(previous))
-                    .await?;
+            detached += detach_title_media_in_folder_except(
+                self,
+                title_id,
+                &stored_path_to_path_buf(previous),
+                Some(taken_folder),
+            )
+            .await?;
         }
         let scan = self.reconcile_title_folder(actor, title_id).await?;
         Ok((detached, scan))
