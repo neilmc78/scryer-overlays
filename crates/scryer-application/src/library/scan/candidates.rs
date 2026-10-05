@@ -68,9 +68,12 @@ async fn reclaim_stale_title_folder_for_scan(
 }
 
 /// Whether `title` records a library root while `scan_folder_path` holds
-/// media the catalog already tracks for it. The tracked media is the evidence
-/// that this folder, and not some other folder matched to the same title, is
-/// the one the record should point at.
+/// every media file the catalog tracks for it. The tracked media is the
+/// evidence that this folder, and not some other folder matched to the same
+/// title, is the one the record should point at. Media spread over several
+/// folders is ambiguous: whichever folder a scan reached first would take the
+/// record and the others would then read as second copies, so such a record
+/// stays as it is (and guarded) for the operator to correct.
 async fn recorded_at_a_library_root_with_media_in(
     app: &AppUseCase,
     title: &Title,
@@ -80,14 +83,14 @@ async fn recorded_at_a_library_root_with_media_in(
         return Ok(false);
     }
     let scan_folder_path = path_to_stored_string(scan_folder_path);
-    Ok(app
+    let media_files = app
         .services
         .library
         .media_files
         .list_media_files_for_title(&title.id)
-        .await?
-        .iter()
-        .any(|media_file| {
+        .await?;
+    Ok(!media_files.is_empty()
+        && media_files.iter().all(|media_file| {
             crate::title_folder_rules::stored_path_is_inside_folder(
                 &scan_folder_path,
                 &media_file.file_path,
