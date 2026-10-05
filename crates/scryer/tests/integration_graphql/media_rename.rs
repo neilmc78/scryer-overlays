@@ -159,6 +159,116 @@ async fn flatten_rename_records_the_planned_title_folder() {
     );
 }
 
+/// A rename that moves only some of a title's files still records the folder
+/// they moved into. Left on the old folder, the record would make the next
+/// scan treat the moved files as a second copy and detach them.
+#[tokio::test]
+async fn partly_applied_rename_records_the_folder_the_files_moved_into() {
+    let mut ctx = TestContext::new().await;
+    seed_typed_settings_definitions(&ctx).await;
+    ctx.app = ctx.app.with_test_overrides(|builder| {
+        builder.with_library_renamer(std::sync::Arc::new(FileSystemLibraryRenamer::new()))
+    });
+    let sandbox = tempfile::tempdir().expect("synthetic sandbox");
+    let media_root = sandbox.path().join("Videos/Anime");
+    std::fs::create_dir_all(&media_root).unwrap();
+    configure_library_roots(&ctx, MediaFacet::Anime, &[&media_root]).await;
+    let title = create_catalog_title(
+        &ctx,
+        "Partial Fixture",
+        MediaFacet::Anime,
+        vec![ExternalId::new("tvdb", "93002")],
+        vec!["scryer:season-folder:disabled".into()],
+        true,
+    )
+    .await;
+    let old_folder = media_root.join("Partial Fixture");
+    let season = old_folder.join("Season 01");
+    std::fs::create_dir_all(&season).unwrap();
+    set_title_folder_path(&ctx, &title.id, &old_folder).await;
+    let collection = ctx
+        .shows
+        .create_collection(Collection {
+            id: Id::new().0,
+            title_id: title.id.clone(),
+            collection_type: scryer_domain::CollectionType::Season,
+            collection_index: "1".into(),
+            label: Some("Season 1".into()),
+            ordered_path: None,
+            narrative_order: None,
+            first_episode_number: None,
+            last_episode_number: None,
+            monitored: true,
+            created_at: chrono::Utc::now(),
+        })
+        .await
+        .unwrap();
+    for number in 1..=3 {
+        let episode = create_series_scan_episode(
+            &ctx,
+            &title,
+            &collection,
+            "1",
+            &number.to_string(),
+            &format!("S01E{number:02}"),
+        )
+        .await;
+        let source = season.join(format!("Fixture.S01E{number:02}.mkv"));
+        let bytes = format!("synthetic episode {number}").into_bytes();
+        std::fs::write(&source, &bytes).unwrap();
+        let file_id = ctx
+            .media_files
+            .insert_media_file(&InsertMediaFileInput {
+                title_id: title.id.clone(),
+                file_path: source.to_string_lossy().into_owned(),
+                size_bytes: bytes.len() as i64,
+                quality_label: Some("1080p".into()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        ctx.link_primary_file_to_episode(&title.id, &file_id, &episode.id)
+            .await
+            .unwrap();
+    }
+    let actor = ctx.app.find_or_create_default_user().await.unwrap();
+    let first_preview = ctx
+        .app
+        .preview_rename_for_facet(&actor, MediaFacet::Anime)
+        .await
+        .unwrap();
+    assert_eq!(first_preview.renamable, 3);
+    // An untracked file already sits where one episode would go, so that
+    // episode cannot move.
+    let occupied = first_preview.items[0].proposed_path.clone().unwrap();
+    let expected_folder = media_root.join("Partial Fixture (2024)");
+    std::fs::create_dir_all(&expected_folder).unwrap();
+    std::fs::write(&occupied, b"untracked synthetic video").unwrap();
+
+    let preview = ctx
+        .app
+        .preview_rename_for_facet(&actor, MediaFacet::Anime)
+        .await
+        .unwrap();
+    let result = ctx
+        .app
+        .apply_rename_for_facet(&actor, MediaFacet::Anime, &preview.fingerprint)
+        .await
+        .unwrap();
+    assert_eq!(result.applied, 2, "two episodes move, one stays behind");
+    assert_eq!(
+        std::fs::read(&occupied).unwrap(),
+        b"untracked synthetic video"
+    );
+
+    let stored = ctx.titles.get_by_id(&title.id).await.unwrap().unwrap();
+    assert_eq!(
+        stored.folder_path.as_deref(),
+        expected_folder.to_str(),
+        "the record follows the files that moved"
+    );
+}
+
 #[tokio::test]
 async fn graphql_media_rename_preview_for_anime_uses_media_file_rows() {
     let ctx = TestContext::new().await;

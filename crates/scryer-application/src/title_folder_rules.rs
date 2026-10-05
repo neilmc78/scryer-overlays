@@ -77,6 +77,39 @@ pub fn stored_path_is_inside_folder(folder: &str, path: &str) -> bool {
     under_or_equal(path, folder)
 }
 
+/// The key a plain stored folder is compared under, for callers that index
+/// many folders instead of comparing them pairwise. `None` for an empty path
+/// and for the escape form, which is only ever compared natively.
+pub fn folder_containment_key(folder: &str) -> Option<String> {
+    if is_escaped_stored_path(folder) {
+        return None;
+    }
+    let key = comparable(folder);
+    (!key.is_empty()).then_some(key)
+}
+
+/// The key of every folder a plain stored path is, or lies inside: `folder`
+/// holds `path` exactly when [`folder_containment_key`] of `folder` is one of
+/// these. Empty for the escape form.
+pub fn containing_folder_keys(path: &str) -> Vec<String> {
+    let Some(key) = folder_containment_key(path) else {
+        return Vec::new();
+    };
+    let separator = if cfg!(windows) { '\\' } else { '/' };
+    let mut keys = Vec::new();
+    for (index, _) in key.match_indices(separator) {
+        if index > 0 {
+            keys.push(key[..index].to_string());
+        }
+        // A filesystem or drive root keeps its separator when normalized.
+        keys.push(key[..index + separator.len_utf8()].to_string());
+    }
+    if keys.last() != Some(&key) {
+        keys.push(key);
+    }
+    keys
+}
+
 /// Check `folder` against the roots it must sit inside.
 ///
 /// `library_roots` are the roots of the title's own library; `all_roots` are
@@ -361,6 +394,46 @@ mod tests {
             title_folder_from_media_paths(&drive, [r"D:\Synthetic Show\E01.mkv"]),
             Some(r"D:\Synthetic Show".to_string())
         );
+    }
+
+    #[test]
+    fn containment_keys_agree_with_pairwise_containment() {
+        let folders = [
+            "/",
+            "/media",
+            "/media/tv",
+            "/media/tv/",
+            "/media/tv/Show",
+            "/media/tv/Show 2",
+            "/media/tv/Show/Season 01",
+            r"D:\",
+            r"D:\Media",
+            r"D:\Media\TV\Show",
+            r"\\nas\share",
+            r"\\nas\share\Show",
+        ];
+        let paths = [
+            "/media/tv/Show/Season 01/E01.mkv",
+            "/media/tv/Show 2/E01.mkv",
+            "/media/tv/E01.mkv",
+            "/media/tv/Show",
+            r"D:\Media\TV\Show\Season 01\E01.mkv",
+            r"D:\Show\E01.mkv",
+            r"\\nas\share\Show\E01.mkv",
+        ];
+        for path in paths {
+            let keys = containing_folder_keys(path);
+            for folder in folders {
+                let key = folder_containment_key(folder).expect("plain folder has a key");
+                assert_eq!(
+                    keys.contains(&key),
+                    stored_path_is_inside_folder(folder, path),
+                    "folder {folder:?} against path {path:?}"
+                );
+            }
+        }
+        assert!(containing_folder_keys("scryer-path-v1:u:/media/tv/Show/%FF.mkv").is_empty());
+        assert_eq!(folder_containment_key(""), None);
     }
 
     #[test]

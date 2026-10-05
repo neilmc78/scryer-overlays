@@ -2486,6 +2486,26 @@ impl AppUseCase {
         // destination its placement along with everything else, and a
         // checkpoint recording a root that does not contain the folder
         // would be an audit trail nobody can follow.
+        // The merged files are routed into the destination title's recorded
+        // folder, so that record has to be a title folder too.
+        if let Some(destination_title) = merge_destination
+            && source_folder_refusal(
+                destination_title,
+                libraries.get(&destination_title.library_id),
+                all_root_paths,
+            )
+            .is_some()
+        {
+            downgraded = Some(reason_codes::SOURCE_FOLDER_NOT_A_TITLE_FOLDER);
+            draft.class = TitleLocationClass::NeedsResolution;
+            draft.blocked_reason = Some(format!(
+                "the recorded folder for \"{}\", the title being merged into, is not a title \
+                 folder; correct that title's folder before merging into it",
+                destination_title.name
+            ));
+            return Ok(RootMoveTitleOutcome::settled(draft, downgraded));
+        }
+
         let (destination_root_id, destination_root_path) = match merge_destination {
             Some(destination_title)
                 if destination_title.root_folder_id != classified.destination_root_id =>

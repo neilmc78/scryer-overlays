@@ -52,13 +52,16 @@ async fn persist_title_folder_ownership_conflict(
 /// the folder the scan found its files in. Returns `true` when the title now
 /// owns `scan_folder_path`; `false` leaves the ownership conflict to the
 /// caller. A title whose owned folder is still on disk, or whose owned root
-/// looks unmounted, is never touched.
+/// looks unmounted, is never touched — unless the recorded folder is a library
+/// root or holds one, which no title owns and which is always on disk.
 async fn reclaim_stale_title_folder_for_scan(
     app: &AppUseCase,
     title: &mut Title,
     scan_folder_path: &Path,
 ) -> AppResult<bool> {
-    if !crate::folder_ownership::title_folder_is_stale(title).await {
+    if !crate::folder_ownership::title_folder_is_stale(title).await
+        && !crate::folder_ownership::title_folder_spans_a_library_root(app, title).await?
+    {
         return Ok(false);
     }
     crate::folder_ownership::reclaim_stale_title_folder(app, title, scan_folder_path).await

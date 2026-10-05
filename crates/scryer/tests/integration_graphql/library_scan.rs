@@ -1721,6 +1721,80 @@ async fn library_series_scan_counts_new_title_files_before_post_hydration_scan_p
     );
 }
 
+/// A title whose recorded folder is the library root does not own "another
+/// folder" in any real sense. A scan must not take the root for a second copy
+/// and detach the title's files from the folder they are actually in.
+#[tokio::test]
+async fn library_movie_scan_keeps_media_of_a_title_recorded_at_the_library_root() {
+    let ctx = TestContext::new().await;
+    seed_typed_settings_definitions(&ctx).await;
+    let media_root = tempfile::tempdir().expect("media root tempdir");
+    update_library_paths_for_scan(
+        &ctx,
+        media_root.path().to_string_lossy().as_ref(),
+        "/tmp/series-unused",
+        "/tmp/anime-unused",
+    )
+    .await;
+
+    let title = create_catalog_title(
+        &ctx,
+        "Rooted Movie",
+        MediaFacet::Movie,
+        vec![ExternalId::new("tvdb".to_string(), "123457".to_string())],
+        vec![],
+        false,
+    )
+    .await;
+    ctx.titles
+        .set_folder_path(&title.id, media_root.path().to_string_lossy().as_ref())
+        .await
+        .expect("record the library root as the title folder");
+
+    let movie_dir = media_root.path().join("Rooted Movie (2024)");
+    std::fs::create_dir_all(&movie_dir).expect("create movie dir");
+    let movie_path = movie_dir.join("Rooted.Movie.2024.2160p.WEB-DL.mkv");
+    let movie_file = std::fs::File::create(&movie_path).expect("create movie file");
+    movie_file
+        .set_len(60 * 1024 * 1024)
+        .expect("set movie file size");
+    std::fs::write(
+        movie_dir.join("movie.nfo"),
+        r#"<movie><title>Rooted Movie</title><tvdbid>123457</tvdbid><year>2024</year></movie>"#,
+    )
+    .expect("write movie.nfo");
+    ctx.media_files
+        .insert_media_file(&InsertMediaFileInput {
+            title_id: title.id.clone(),
+            file_path: movie_path.to_string_lossy().into_owned(),
+            size_bytes: 60 * 1024 * 1024,
+            quality_label: Some("2160p".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("track the movie file");
+
+    let admin = ctx.app.find_or_create_default_user().await.unwrap();
+    ctx.app
+        .scan_library(&admin, MediaFacet::Movie)
+        .await
+        .expect("scan movie library");
+
+    let tracked = ctx
+        .media_files
+        .list_media_files_for_title(&title.id)
+        .await
+        .expect("list media files");
+    assert_eq!(
+        tracked
+            .iter()
+            .map(|file| file.file_path.as_str())
+            .collect::<Vec<_>>(),
+        vec![movie_path.to_string_lossy().as_ref()],
+        "the title keeps the file it has"
+    );
+}
+
 #[tokio::test]
 async fn library_movie_scan_records_owned_folder_conflict_without_rehoming_title() {
     let ctx = TestContext::new().await;

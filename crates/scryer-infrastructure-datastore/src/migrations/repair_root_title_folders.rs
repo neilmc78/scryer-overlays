@@ -39,10 +39,12 @@
 
 use std::collections::HashMap;
 
-use scryer_application::stored_paths::folder_paths_match;
+use scryer_application::stored_paths::{
+    folder_path_lookup_key, folder_path_match_candidates, folder_paths_match,
+};
 use scryer_application::title_folder_rules::{
-    path_is_strictly_within, stored_path_is_inside_folder, title_folder_from_media_paths,
-    title_folder_root_violation,
+    containing_folder_keys, folder_containment_key, path_is_strictly_within,
+    stored_path_is_inside_folder, title_folder_from_media_paths, title_folder_root_violation,
 };
 use scryer_application::{AppError, AppResult};
 use sqlx::Row;
@@ -233,9 +235,19 @@ fn build_repair_plan(
         }
     }
 
+    if candidates.is_empty() {
+        return plan;
+    }
+
     // Pass two: repair each candidate whose implied folder is unambiguous and
-    // free, in title order, so two candidates never claim one folder.
-    let mut claimed = Vec::<(String, String)>::new();
+    // free, in title order, so two candidates never claim one folder. Other
+    // titles' folders and files are indexed once; a library can hold thousands
+    // of candidates and far more files, and this runs inside the upgrade.
+    let mut taken_folders = FolderIndex::default();
+    for (title_id, folder) in &trusted_folders {
+        taken_folders.insert(title_id, folder);
+    }
+    let media_owners = MediaOwnerIndex::build(media_files);
     for (title, folder, flagged_because, implied) in candidates {
         let leave = |reason: &'static str| LeftAlone {
             title_id: title.id.clone(),
@@ -274,27 +286,12 @@ fn build_repair_plan(
             ));
             continue;
         }
-        let overlaps = |other: &str| {
-            folder_paths_match(other, &implied)
-                || path_is_strictly_within(other, &implied)
-                || path_is_strictly_within(&implied, other)
-        };
-        if trusted_folders
-            .iter()
-            .any(|(other_id, other)| *other_id != title.id && overlaps(other))
-            || claimed
-                .iter()
-                .any(|(other_id, other)| *other_id != title.id && overlaps(other))
-        {
+        if taken_folders.overlaps_another_titles(&title.id, &implied) {
             plan.left_alone
                 .push(leave("another title records an overlapping folder"));
             continue;
         }
-        let shared = media_files.iter().any(|media_file| {
-            media_file.title_id != title.id
-                && stored_path_is_inside_folder(&implied, &media_file.file_path)
-        });
-        if shared {
+        if media_owners.another_title_has_media_inside(&title.id, &implied) {
             plan.left_alone
                 .push(leave("another title has media files in the implied folder"));
             continue;
@@ -302,7 +299,7 @@ fn build_repair_plan(
 
         let root_folder_id = most_specific_root_id(roots, &title.library_id, &implied)
             .filter(|root_id| title.root_folder_id.as_deref() != Some(root_id.as_str()));
-        claimed.push((title.id.clone(), implied.clone()));
+        taken_folders.insert(&title.id, &implied);
         plan.repairs.push(TitleFolderRepair {
             title_id: title.id.clone(),
             folder_path: implied,
@@ -310,6 +307,131 @@ fn build_repair_plan(
         });
     }
     plan
+}
+
+/// The titles that own one key of an index. Only "is there an owner other
+/// than this title" is ever asked, so the first owner and whether there are
+/// more is all it keeps.
+#[derive(Debug, Default)]
+struct KeyOwners {
+    first: String,
+    several: bool,
+}
+
+impl KeyOwners {
+    fn add(&mut self, title_id: &str) {
+        if self.first.is_empty() {
+            self.first = title_id.to_string();
+        } else if self.first != title_id {
+            self.several = true;
+        }
+    }
+
+    fn has_other_than(&self, title_id: &str) -> bool {
+        self.several || self.first != title_id
+    }
+}
+
+fn add_owner(index: &mut HashMap<String, KeyOwners>, key: String, title_id: &str) {
+    index.entry(key).or_default().add(title_id);
+}
+
+/// The folders titles record, indexed so one lookup answers whether a folder
+/// is, lies inside, or contains another title's.
+#[derive(Debug, Default)]
+struct FolderIndex {
+    /// Every spelling [`folder_paths_match`] could accept, narrowed by key.
+    by_lookup_key: HashMap<String, Vec<(String, String)>>,
+    /// Keyed by the folder itself.
+    by_folder: HashMap<String, KeyOwners>,
+    /// Keyed by the folder and every folder above it.
+    by_containing_folder: HashMap<String, KeyOwners>,
+    /// Folders in the escape form, which only compare natively.
+    escaped: Vec<(String, String)>,
+}
+
+impl FolderIndex {
+    fn insert(&mut self, title_id: &str, folder: &str) {
+        self.by_lookup_key
+            .entry(folder_path_lookup_key(folder))
+            .or_default()
+            .push((title_id.to_string(), folder.to_string()));
+        let Some(key) = folder_containment_key(folder) else {
+            self.escaped
+                .push((title_id.to_string(), folder.to_string()));
+            return;
+        };
+        add_owner(&mut self.by_folder, key, title_id);
+        for key in containing_folder_keys(folder) {
+            add_owner(&mut self.by_containing_folder, key, title_id);
+        }
+    }
+
+    /// Whether a title other than `title_id` records `folder`, a folder inside
+    /// it, or a folder containing it.
+    fn overlaps_another_titles(&self, title_id: &str, folder: &str) -> bool {
+        let same_folder = folder_path_match_candidates(folder)
+            .iter()
+            .filter_map(|candidate| self.by_lookup_key.get(&folder_path_lookup_key(candidate)))
+            .flatten()
+            .any(|(other_id, other)| other_id != title_id && folder_paths_match(other, folder));
+        if same_folder {
+            return true;
+        }
+        let inside_it = folder_containment_key(folder)
+            .and_then(|key| self.by_containing_folder.get(&key))
+            .is_some_and(|owners| owners.has_other_than(title_id));
+        if inside_it {
+            return true;
+        }
+        let containing_it = containing_folder_keys(folder)
+            .iter()
+            .filter_map(|key| self.by_folder.get(key))
+            .any(|owners| owners.has_other_than(title_id));
+        if containing_it {
+            return true;
+        }
+        self.escaped.iter().any(|(other_id, other)| {
+            other_id != title_id
+                && (path_is_strictly_within(other, folder)
+                    || path_is_strictly_within(folder, other))
+        })
+    }
+}
+
+/// Which titles have media files in each folder.
+#[derive(Debug, Default)]
+struct MediaOwnerIndex<'a> {
+    by_containing_folder: HashMap<String, KeyOwners>,
+    /// Files in the escape form, which only compare natively.
+    escaped: Vec<&'a MediaFileRow>,
+}
+
+impl<'a> MediaOwnerIndex<'a> {
+    fn build(media_files: &'a [MediaFileRow]) -> Self {
+        let mut index = Self::default();
+        for media_file in media_files {
+            let keys = containing_folder_keys(&media_file.file_path);
+            if keys.is_empty() {
+                index.escaped.push(media_file);
+                continue;
+            }
+            for key in keys {
+                add_owner(&mut index.by_containing_folder, key, &media_file.title_id);
+            }
+        }
+        index
+    }
+
+    fn another_title_has_media_inside(&self, title_id: &str, folder: &str) -> bool {
+        folder_containment_key(folder)
+            .and_then(|key| self.by_containing_folder.get(&key))
+            .is_some_and(|owners| owners.has_other_than(title_id))
+            || self.escaped.iter().any(|media_file| {
+                media_file.title_id != title_id
+                    && stored_path_is_inside_folder(folder, &media_file.file_path)
+            })
+    }
 }
 
 /// The roots a title of `library_id` must sit inside. A library without roots
@@ -402,7 +524,8 @@ fn root_row_postgres(row: sqlx::postgres::PgRow) -> AppResult<RootRow> {
     })
 }
 
-const TITLES_QUERY: &str = "SELECT id, library_id, root_folder_id, folder_path
+const TITLES_QUERY: &str =
+    "SELECT id, COALESCE(library_id, '') AS library_id, root_folder_id, folder_path
        FROM titles
       WHERE folder_path IS NOT NULL AND folder_path <> ''
       ORDER BY id";

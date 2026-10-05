@@ -1052,11 +1052,12 @@ impl AppUseCase {
 
     /// Record each renamed title's planned folder, once, after its files moved.
     ///
-    /// The folder is recorded only when every one of the title's media files
-    /// now sits inside it. A partial apply (skipped, failed or rolled-back
-    /// items) leaves files where they were, and the record keeps pointing at
-    /// the folder they are in rather than claiming one that does not hold
-    /// them. A folder that cannot be determined leaves the record unchanged.
+    /// The folder is recorded once at least one of the title's media files sits
+    /// inside it. A partial apply (skipped, failed or rolled-back items) still
+    /// records it: the files that moved are the title's, and a record left on
+    /// the old folder would have the next scan treat them as a second copy and
+    /// detach them. Files left behind are logged. A folder that cannot be
+    /// determined leaves the record unchanged.
     async fn persist_rename_title_folders(
         &self,
         preview: &RenamePlan,
@@ -1125,7 +1126,7 @@ impl AppUseCase {
             );
             return Ok(());
         }
-        let stray_file = self
+        let (inside, outside): (Vec<_>, Vec<_>) = self
             .services
             .library
             .media_files
@@ -1133,20 +1134,28 @@ impl AppUseCase {
             .await?
             .into_iter()
             .filter(|file| file.role.is_primary())
-            .find(|file| {
-                !crate::title_folder_rules::stored_path_is_inside_folder(
+            .partition(|file| {
+                crate::title_folder_rules::stored_path_is_inside_folder(
                     folder_path,
                     &file.file_path,
                 )
             });
-        if let Some(stray_file) = stray_file {
+        if inside.is_empty() {
             warn!(
                 title_id = %title.id,
                 folder_path = %folder_path,
-                file_path = %stray_file.file_path,
-                "keeping the title's previous folder: not every media file moved into the renamed folder"
+                "keeping the title's previous folder: none of its media files are in the renamed folder"
             );
             return Ok(());
+        }
+        if let Some(left_behind) = outside.first() {
+            warn!(
+                title_id = %title.id,
+                folder_path = %folder_path,
+                left_behind = outside.len(),
+                file_path = %left_behind.file_path,
+                "recording the renamed title folder although some media files did not move into it"
+            );
         }
         if let Some(owner) =
             crate::folder_ownership::find_other_folder_owner(self, &title, folder_path).await?
