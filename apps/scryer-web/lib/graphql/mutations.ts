@@ -3308,3 +3308,27 @@ export const setMemberListPolicyMutation = `mutation SetMemberListPolicy($userId
     listRequestsLast30d
   }
 }`;
+
+export const setPosterOverlayLibraryMutation = `mutation SetPosterOverlayLibrary($input: SetPosterOverlayLibraryInput!) {
+  setPosterOverlayLibrary(input: $input)
+}`;
+
+export const updatePosterOverlaySettingsMutation = `mutation UpdatePosterOverlaySettings($input: UpdatePosterOverlaySettingsInput!) {
+  updatePosterOverlaySettings(input: $input) { parallelism reconcileIntervalSeconds plexPushEnabled }
+}`;
+
+export const savePosterOverlayTemplateMutation = `mutation SavePosterOverlayTemplate($input: SavePosterOverlayTemplateInput!) {
+  savePosterOverlayTemplate(input: $input) { id name }
+}`;
+
+export const deletePosterOverlayTemplateMutation = `mutation DeletePosterOverlayTemplate($id: ID!) {
+  deletePosterOverlayTemplate(id: $id)
+}`;
+
+export const rebuildPosterOverlaysMutation = `mutation RebuildPosterOverlays {
+  rebuildPosterOverlays
+}`;
+
+export const revertAllPosterOverlaysMutation = `mutation RevertAllPosterOverlays {
+  revertAllPosterOverlays
+}`;

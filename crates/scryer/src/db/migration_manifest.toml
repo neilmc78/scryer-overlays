@@ -2777,6 +2777,23 @@ hook_id = "repair_root_title_folders"
 engine = "all"
 scope = "all"
 
+[[migration]]
+version = 9001
+description = "poster overlays"
+checksum_algo = "blake3"
+
+[[migration.steps]]
+kind = "sql"
+file = "migrations/9001_poster_overlays.sql"
+engine = "sqlite"
+scope = "all"
+
+[[migration.steps]]
+kind = "sql"
+file = "postgres/migrations/9001_poster_overlays.sql"
+engine = "postgres"
+scope = "all"
+
 [[baseline]]
 through_version = 254
 file = "baselines/0254_baseline.sql"

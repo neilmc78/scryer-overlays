@@ -622,10 +622,15 @@ mod tests {
             ("list_exclusion_external_ids", 259),
             ("user_list_policies", 259),
             ("list_sync_runs", 259),
+            ("poster_overlay_libraries", 9001),
+            ("poster_overlay_settings", 9001),
+            ("poster_overlay_templates", 9001),
         ];
         let mut export_tables = vec!["titles".to_string()];
         export_tables.extend(introduced.iter().map(|(table, _)| table.to_string()));
-        for source_version in [224, 225, 233, 234, 235, 236, 258, 259, 260] {
+        for source_version in [
+            224, 225, 233, 234, 235, 236, 258, 259, 260, 264, 265, 267, 268, 9001,
+        ] {
             let mut row_counts = BTreeMap::from_iter([("titles".to_string(), 1)]);
             row_counts.extend(
                 introduced

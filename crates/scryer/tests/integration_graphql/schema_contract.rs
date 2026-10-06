@@ -712,9 +712,14 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     // member policies. Query 174->184. Server-wide list provider settings add
     // one more read: 184->185. Keeping the jobs view current adds
     // `latestJobRuns`, the newest run per job in one read: 185->186.
+    // Poster overlays add the settings overview, template validation and the
+    // editor's live template preview: 186->189. Following a rebuild adds
+    // `posterOverlayPass`, polled without touching the database: 189->190.
     assert!(query_field_names.contains(&"latestJobRuns"));
+    assert!(query_field_names.contains(&"previewPosterOverlayTemplate"));
+    assert!(query_field_names.contains(&"posterOverlayPass"));
     assert_eq!(
-        query_field_count, 186,
+        query_field_count, 190,
         "query fields: {query_field_names:?}"
     );
     // First-class proxies (WP4) add one mutation, resetProxyHostKey: SSH host
@@ -745,8 +750,10 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     // all, unfollow, add and remove an exclusion, and set a member's list
     // policy. 250->259. Changing a list provider's server-wide settings adds
     // one more: 259->260.
+    // Poster overlays add six: per-library enablement, render settings,
+    // template save and delete, rebuild, and revert all: 260->266.
     assert_eq!(
-        mutation_field_count, 260,
+        mutation_field_count, 266,
         "mutation fields: {mutation_field_names:?}"
     );
     // Cross-library transfer (T082, FR-055/FR-056) surfaces destination-title
@@ -1012,9 +1019,17 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     // its failures in two payloads: public types 917->919, OBJECT 497->499.
     assert!(public_type_names.contains(&"RecycleBinRelocationPayload"));
     assert!(public_type_names.contains(&"RecycleBinRelocationFailurePayload"));
-    assert_eq!(public_types.len(), 919);
-    assert_eq!(kind_count("OBJECT"), 499);
-    assert_eq!(kind_count("INPUT_OBJECT"), 232);
+    // Poster overlays add nine payloads (overview, settings, library,
+    // template, counts, validation, preview, and the two sample-option
+    // types) and four inputs (library, settings, template save, preview):
+    // public types 919->932, OBJECT 499->508, INPUT_OBJECT 232->236. Rebuild
+    // progress adds the pass payload: public types 932->933, OBJECT 508->509.
+    assert!(public_type_names.contains(&"PosterOverlayTemplatePreview"));
+    assert!(public_type_names.contains(&"PreviewPosterOverlayTemplateInput"));
+    assert!(public_type_names.contains(&"PosterOverlayPass"));
+    assert_eq!(public_types.len(), 933);
+    assert_eq!(kind_count("OBJECT"), 509);
+    assert_eq!(kind_count("INPUT_OBJECT"), 236);
     assert_eq!(kind_count("ENUM"), 176);
     assert_eq!(kind_count("SCALAR"), 10);
     assert_eq!(kind_count("UNION"), 2);

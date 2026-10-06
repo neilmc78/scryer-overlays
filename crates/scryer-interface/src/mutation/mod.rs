@@ -7,6 +7,7 @@ mod lists;
 mod location;
 mod maintenance_rules;
 mod notifications;
+mod overlays;
 mod recycle_bin;
 mod request_rules;
 mod rules;
@@ -50,4 +51,5 @@ pub struct MutationRoot(
     recycle_bin::RecycleBinMutations,
     interactive_search::InteractiveSearchMutations,
     lists::ListMutations,
+    overlays::PosterOverlayMutations,
 );

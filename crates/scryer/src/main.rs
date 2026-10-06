@@ -138,9 +138,11 @@ use scryer_application::{
     PluginHttpTrustConfigRuntime, PluginInstallationRepository, RUNTIME_PLUGIN_LOAD_CONCURRENCY,
     RuntimePluginLoad, SETTINGS_SCOPE_SYSTEM, SeriesFacetHandler, SubtitlePluginProvider,
     SystemInfoProvider, TitleImageKind, TitleImageRepository,
-    load_runtime_plugin_from_persisted_installation_payload, start_background_acquisition_poller,
-    start_background_auto_backup_scheduler, start_background_download_delete_poller,
-    start_background_library_refresh_loop, start_background_manual_import_poller,
+    load_runtime_plugin_from_persisted_installation_payload,
+    overlays::{AppPosterOverlayServices, start_poster_overlay_worker},
+    start_background_acquisition_poller, start_background_auto_backup_scheduler,
+    start_background_download_delete_poller, start_background_library_refresh_loop,
+    start_background_manual_import_poller,
     start_background_media_server_playback_reconciliation_loop, start_background_subtitle_poller,
     start_background_title_hydration_loop, start_background_title_image_loop,
     start_download_queue_poller_with_options, start_navigation_badge_facts_refresh,
@@ -169,6 +171,7 @@ use scryer_infrastructure_datastore::MigrationMode;
 use scryer_infrastructure_library::media::{
     images::{ImageProxyBlob, ImageProxyRuntime},
     libraries::{renamer::FileSystemLibraryRenamer, scanner::FileSystemLibraryScanner},
+    overlays::{OverlayEngine, PosterOverlayStore},
 };
 use scryer_infrastructure_metadata::metadata::gateway::client::{
     MetadataGatewayClient, SmgEnrollmentConfig,
@@ -1642,6 +1645,11 @@ async fn bootstrap_application(
         )))
         .with_plugin_descriptor_loader(Arc::new(scryer_plugins::WasmPluginDescriptorLoader))
         .with_tracked_download_handle(TrackedDownloadHandle::new(tracked_download_tx))
+        .with_poster_overlays(build_poster_overlays(
+            datastore.datastore(),
+            datastore.media_server_connections(),
+            &data_dir,
+        ))
         .build();
 
     let webauthn = build_webauthn_runtime();
@@ -2115,6 +2123,10 @@ async fn bootstrap_application(
         app_use_case.clone(),
         shutdown_token.child_token(),
     ));
+    tokio::spawn(start_poster_overlay_worker(
+        app_use_case.clone(),
+        shutdown_token.child_token(),
+    ));
     tokio::spawn(start_background_subtitle_poller(
         app_use_case.clone(),
         shutdown_token.child_token(),
@@ -2208,7 +2220,10 @@ async fn bootstrap_application(
         )
         .route(
             "/images/media/{token}/{variant}",
-            get(image_proxy_handler).with_state(image_proxy_runtime),
+            get(media_image_route_handler).with_state(MediaImageRouteState {
+                runtime: image_proxy_runtime,
+                app: app_use_case.clone(),
+            }),
         )
         .route(
             "/api/media-server-avatars/{connection_id}/{user_id}/{image_tag}",
@@ -2220,7 +2235,10 @@ async fn bootstrap_application(
         )
         .route(
             "/images/titles/{title_id}/{kind}/{variant}",
-            get(title_image_handler).with_state(title_images_for_route),
+            get(title_image_route_handler).with_state(TitleImageRouteState {
+                images: title_images_for_route,
+                app: app_use_case.clone(),
+            }),
         )
         .route(
             "/backups/{filename}/download",
@@ -2282,6 +2300,42 @@ async fn bootstrap_application(
     Ok(app)
 }
 
+/// The image proxy route. Title posters reach the client through it, so a
+/// title whose library has overlays enabled gets its rendered poster here;
+/// everything else is proxied unchanged.
+#[derive(Clone)]
+struct MediaImageRouteState {
+    runtime: Arc<ImageProxyRuntime>,
+    app: AppUseCase,
+}
+
+async fn media_image_route_handler(
+    State(state): State<MediaImageRouteState>,
+    headers: HeaderMap,
+    path: AxumPath<(String, String)>,
+) -> Response {
+    let AxumPath((token, variant)) = &path;
+    match state
+        .app
+        .poster_overlay_image_for_media_token(token, variant)
+        .await
+    {
+        // Overlays change when media does, so unlike proxied originals they
+        // are revalidated on every load: an unchanged poster costs a 304.
+        Ok(Some(image)) => {
+            return title_image_response(image.bytes, "image/jpeg", &image.etag, None, &headers);
+        }
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "failed to read poster overlay; serving the proxied poster"
+            );
+        }
+    }
+    image_proxy_handler(State(state.runtime), headers, path).await
+}
+
 async fn image_proxy_handler(
     State(runtime): State<Arc<ImageProxyRuntime>>,
     headers: HeaderMap,
@@ -2331,6 +2385,74 @@ fn image_proxy_response(headers: &HeaderMap, blob: Option<ImageProxyBlob>) -> Re
     response
 }
 
+/// Overlay engine and store. Overlays stay off, and posters are served
+/// unchanged, if the render pool cannot start.
+fn build_poster_overlays(
+    datastore: scryer_infrastructure_sql::runtime::StoreDatastore,
+    media_server_connections: Arc<dyn scryer_application::MediaServerConnectionRepository>,
+    data_dir: &std::path::Path,
+) -> Option<AppPosterOverlayServices> {
+    match OverlayEngine::with_http_fetch(data_dir) {
+        Ok(engine) => Some(
+            AppPosterOverlayServices::new(
+                Arc::new(PosterOverlayStore::new(datastore)),
+                Arc::new(engine),
+            )
+            .with_plex(
+                media_server_connections,
+                Arc::new(
+                    scryer_infrastructure_identity::media_server_posters::HttpPlexPosterClient::new(
+                    ),
+                ),
+            ),
+        ),
+        Err(error) => {
+            tracing::warn!(%error, "poster overlays are unavailable");
+            None
+        }
+    }
+}
+
+/// Poster overlays and the stored images share one route: a title whose
+/// library has overlays enabled gets its rendered poster, everything else
+/// falls through to the stored image unchanged.
+#[derive(Clone)]
+struct TitleImageRouteState {
+    images: Arc<dyn TitleImageRepository>,
+    app: AppUseCase,
+}
+
+async fn title_image_route_handler(
+    State(state): State<TitleImageRouteState>,
+    query: Query<std::collections::HashMap<String, String>>,
+    headers: HeaderMap,
+    path: AxumPath<(String, String, String)>,
+) -> Response {
+    let AxumPath((title_id, kind, variant)) = &path;
+    if TitleImageKind::parse(kind) == Some(TitleImageKind::Poster) {
+        match state.app.poster_overlay_image(title_id, variant).await {
+            Ok(Some(image)) => {
+                return title_image_response(
+                    image.bytes,
+                    "image/jpeg",
+                    &image.etag,
+                    query.get("v").map(String::as_str),
+                    &headers,
+                );
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    title_id = %title_id,
+                    "failed to read poster overlay; serving the stored poster"
+                );
+            }
+        }
+    }
+    title_image_handler(State(state.images), query, headers, path).await
+}
+
 async fn title_image_handler(
     State(repository): State<Arc<dyn TitleImageRepository>>,
     Query(query): Query<std::collections::HashMap<String, String>>,
@@ -2359,10 +2481,26 @@ async fn title_image_handler(
         }
     };
 
-    let etag = title_image_digest_value(&blob.etag).to_string();
+    title_image_response(
+        blob.bytes,
+        &blob.content_type,
+        &blob.etag,
+        query.get("v").map(String::as_str),
+        &headers,
+    )
+}
+
+fn title_image_response(
+    bytes: Vec<u8>,
+    content_type: &str,
+    raw_etag: &str,
+    query_version: Option<&str>,
+    request_headers: &HeaderMap,
+) -> Response {
+    let etag = title_image_digest_value(raw_etag).to_string();
     let quoted_etag = format!("\"{etag}\"");
-    let cache_control = title_image_cache_control(&etag, query.get("v").map(String::as_str));
-    if headers
+    let cache_control = title_image_cache_control(&etag, query_version);
+    if request_headers
         .get(header::IF_NONE_MATCH)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| if_none_match_matches(value, &quoted_etag, &etag))
@@ -2376,10 +2514,10 @@ async fn title_image_handler(
         return response;
     }
 
-    let body_len = blob.bytes.len();
-    let mut response = blob.bytes.into_response();
+    let body_len = bytes.len();
+    let mut response = bytes.into_response();
     let headers = response.headers_mut();
-    if let Ok(value) = HeaderValue::from_str(&blob.content_type) {
+    if let Ok(value) = HeaderValue::from_str(content_type) {
         headers.insert(header::CONTENT_TYPE, value);
     }
     if let Ok(value) = HeaderValue::from_str(&body_len.to_string()) {

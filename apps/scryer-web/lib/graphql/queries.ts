@@ -5597,3 +5597,54 @@ export const listRouteOptionsQuery = `query ListRouteOptions {
     }
   }
 }`;
+
+export const POSTER_OVERLAY_TEMPLATE_FIELDS = `
+    id
+    name
+    svg
+    contentHash
+    createdAt
+    updatedAt
+`;
+
+const POSTER_OVERLAY_PASS_FIELDS = "queued running total processed rendered failed";
+
+export const posterOverlayPassQuery = `query PosterOverlayPass {
+  posterOverlayPass {${POSTER_OVERLAY_PASS_FIELDS}}
+}`;
+
+export const posterOverlaysQuery = `query PosterOverlays {
+  posterOverlays {
+    settings { parallelism reconcileIntervalSeconds plexPushEnabled }
+    libraries { libraryId libraryName facet enabled templateId }
+    templates {${POSTER_OVERLAY_TEMPLATE_FIELDS}}
+    counts { enabledTitles rendered failed noArtwork plexPushed plexFailed plexChanged }
+    pass {${POSTER_OVERLAY_PASS_FIELDS}}
+    builtinTemplate
+    templateSpecVersion
+    templateFields
+    sampleOptions {
+      resolutions { token label }
+      hdr { token label }
+      audio { token label }
+      audioChannels
+      seriesStatus { token label }
+      videoCodec { token label }
+      source { token label }
+    }
+  }
+}`;
+
+export const previewPosterOverlayTemplateQuery = `query PreviewPosterOverlayTemplate($input: PreviewPosterOverlayTemplateInput!) {
+  previewPosterOverlayTemplate(input: $input) {
+    image
+    libraryPoster
+    posterTitleId
+    posterTitleName
+    error
+  }
+}`;
+
+export const validatePosterOverlayTemplateQuery = `query ValidatePosterOverlayTemplate($svg: String!) {
+  validatePosterOverlayTemplate(svg: $svg) { valid error }
+}`;

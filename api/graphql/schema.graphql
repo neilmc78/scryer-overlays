@@ -19873,6 +19873,55 @@ type MutationRoot {
 		"""
 		policy: ListPolicy!
 	): MemberListPolicyPayload!
+	"""
+	Turn overlays on or off for a library and choose its template.
+	Enabling starts a render pass; disabling serves originals at once.
+	"""
+	setPosterOverlayLibrary(
+		"""
+		The library, whether overlays are on, and its template.
+		"""
+		input: SetPosterOverlayLibraryInput!
+	): Boolean!
+	"""
+	Change render parallelism, the safety-net reconcile interval and
+	whether posters are pushed to Plex.
+	"""
+	updatePosterOverlaySettings(
+		"""
+		The complete new settings.
+		"""
+		input: UpdatePosterOverlaySettingsInput!
+	): PosterOverlaySettings!
+	"""
+	Create a template, or replace one when `id` is given. Posters using
+	it are rebuilt.
+	"""
+	savePosterOverlayTemplate(
+		"""
+		The template to create or replace.
+		"""
+		input: SavePosterOverlayTemplateInput!
+	): PosterOverlayTemplate!
+	"""
+	Delete a template. Libraries using it fall back to the built-in one.
+	"""
+	deletePosterOverlayTemplate(
+		"""
+		The template to delete.
+		"""
+		id: ID!
+	): Boolean!
+	"""
+	Start a pass over every enabled library. Posters whose inputs are
+	unchanged are skipped.
+	"""
+	rebuildPosterOverlays: Boolean!
+	"""
+	Disable overlays in every library and serve every original poster
+	again. Returns how many posters were reverted.
+	"""
+	revertAllPosterOverlays: Int!
 }
 
 """
@@ -21324,6 +21373,282 @@ type PostProcessingScriptRunPayload {
 }
 
 """
+Progress across overlay-enabled libraries.
+"""
+type PosterOverlayCounts {
+	"""
+	Titles in libraries with overlays enabled.
+	"""
+	enabledTitles: Int!
+	"""
+	Of those, titles with a rendered poster.
+	"""
+	rendered: Int!
+	"""
+	Of those, titles whose last render failed.
+	"""
+	failed: Int!
+	"""
+	Of those, titles with no poster artwork to draw on yet.
+	"""
+	noArtwork: Int!
+	"""
+	Titles whose current overlay is the poster on a Plex server.
+	"""
+	plexPushed: Int!
+	"""
+	Titles whose last push to a Plex server failed.
+	"""
+	plexFailed: Int!
+	"""
+	Titles whose poster was changed in Plex after a push and left alone.
+	"""
+	plexChanged: Int!
+}
+
+"""
+Whether a library's posters carry overlays, and with which template.
+"""
+type PosterOverlayLibrary {
+	"""
+	The library's identifier.
+	"""
+	libraryId: ID!
+	"""
+	The library's display name.
+	"""
+	libraryName: String!
+	"""
+	The library's media facet: `movie`, `series` or `anime`.
+	"""
+	facet: String!
+	"""
+	Whether posters in this library carry overlays.
+	"""
+	enabled: Boolean!
+	"""
+	Null when the library uses the built-in template.
+	"""
+	templateId: ID
+}
+
+"""
+Everything the poster overlay settings page shows.
+"""
+type PosterOverlayOverview {
+	"""
+	Render settings shared by every library.
+	"""
+	settings: PosterOverlaySettings!
+	"""
+	Overlay enablement and template for every library.
+	"""
+	libraries: [PosterOverlayLibrary!]!
+	"""
+	Custom templates, by name.
+	"""
+	templates: [PosterOverlayTemplate!]!
+	"""
+	Render progress across enabled libraries.
+	"""
+	counts: PosterOverlayCounts!
+	"""
+	The built-in template, a working example of the format.
+	"""
+	builtinTemplate: String!
+	"""
+	Highest `data-scryer-version` this server accepts.
+	"""
+	templateSpecVersion: Int!
+	"""
+	Every field a template may reference.
+	"""
+	templateFields: [String!]!
+	"""
+	Values the template preview can be set to.
+	"""
+	sampleOptions: PosterOverlaySampleOptions!
+	"""
+	The library-wide pass in progress or queued.
+	"""
+	pass: PosterOverlayPass!
+}
+
+"""
+A library-wide overlay pass, such as a requested rebuild.
+"""
+type PosterOverlayPass {
+	"""
+	A pass was requested and has not started yet.
+	"""
+	queued: Boolean!
+	"""
+	A pass is running now.
+	"""
+	running: Boolean!
+	"""
+	Titles the running pass covers.
+	"""
+	total: Int!
+	"""
+	Of those, titles checked so far.
+	"""
+	processed: Int!
+	"""
+	Of those, titles re-rendered so far; unchanged titles are skipped.
+	"""
+	rendered: Int!
+	"""
+	Of those, titles whose render failed.
+	"""
+	failed: Int!
+}
+
+"""
+One value of a badge field: the token conditions match and the label
+placeholders show.
+"""
+type PosterOverlaySampleOption {
+	"""
+	The value conditions such as `data-scryer-if="hdr=dv"` match.
+	"""
+	token: String!
+	"""
+	The text the matching `_label` placeholder shows.
+	"""
+	label: String!
+}
+
+"""
+Every value each badge field can take, best first.
+"""
+type PosterOverlaySampleOptions {
+	"""
+	Values of `resolution` and `resolution_label`.
+	"""
+	resolutions: [PosterOverlaySampleOption!]!
+	"""
+	Values of `hdr` and `hdr_label`.
+	"""
+	hdr: [PosterOverlaySampleOption!]!
+	"""
+	Values of `audio_codec` and `audio_label`.
+	"""
+	audio: [PosterOverlaySampleOption!]!
+	"""
+	Common values of `audio_channels`.
+	"""
+	audioChannels: [String!]!
+	"""
+	Values of `series_status` and `series_status_label`.
+	"""
+	seriesStatus: [PosterOverlaySampleOption!]!
+	"""
+	Values of `video_codec` and `video_codec_label`.
+	"""
+	videoCodec: [PosterOverlaySampleOption!]!
+	"""
+	Values of `source` and `source_label`.
+	"""
+	source: [PosterOverlaySampleOption!]!
+}
+
+"""
+Render settings shared by every library.
+"""
+type PosterOverlaySettings {
+	"""
+	Posters rendered at once; also bounds memory during library-wide
+	rebuilds.
+	"""
+	parallelism: Int!
+	"""
+	Seconds between safety-net passes that pick up missed changes and new
+	upstream artwork.
+	"""
+	reconcileIntervalSeconds: Int!
+	"""
+	Whether rendered posters are uploaded to the Plex items their titles
+	are matched to.
+	"""
+	plexPushEnabled: Boolean!
+}
+
+"""
+A custom overlay template. The format is specified in
+`docs/poster-overlays.md`.
+"""
+type PosterOverlayTemplate {
+	"""
+	The template's identifier.
+	"""
+	id: ID!
+	"""
+	The template's display name.
+	"""
+	name: String!
+	"""
+	The template SVG.
+	"""
+	svg: String!
+	"""
+	blake3 of the SVG; posters rebuild when it changes.
+	"""
+	contentHash: String!
+	"""
+	When the template was created.
+	"""
+	createdAt: DateTime!
+	"""
+	When the template was last changed.
+	"""
+	updatedAt: DateTime!
+}
+
+"""
+A rendered template preview, or why it could not be rendered.
+"""
+type PosterOverlayTemplatePreview {
+	"""
+	`data:image/jpeg;base64,...`; null when the template or sample was
+	rejected.
+	"""
+	image: String
+	"""
+	True when drawn on a poster from the library rather than a neutral
+	placeholder.
+	"""
+	libraryPoster: Boolean!
+	"""
+	The title whose poster the preview is drawn on; pass it back as
+	`posterTitleId` to keep the same poster while editing.
+	"""
+	posterTitleId: ID
+	"""
+	That title's name.
+	"""
+	posterTitleName: String
+	"""
+	Why the template or sample was rejected; null on success.
+	"""
+	error: String
+}
+
+"""
+Result of checking a template without saving it.
+"""
+type PosterOverlayTemplateValidation {
+	"""
+	Whether the template can be saved.
+	"""
+	valid: Boolean!
+	"""
+	Why the template was rejected; null when valid.
+	"""
+	error: String
+}
+
+"""
 Backup filename to prepare for download.
 """
 input PrepareBackupDownloadInput {
@@ -21412,6 +21737,59 @@ input PreviewMaintenanceRuleInput {
 	and is clamped to the preview cap.
 	"""
 	limit: Int
+}
+
+"""
+A draft template and the sample values to preview it with. Empty or
+absent values leave that field unset, as for a title without the data.
+"""
+input PreviewPosterOverlayTemplateInput {
+	"""
+	The draft template SVG.
+	"""
+	svg: String!
+	"""
+	A resolution token from `sampleOptions.resolutions`.
+	"""
+	resolution: String
+	"""
+	An HDR token from `sampleOptions.hdr`.
+	"""
+	hdr: String
+	"""
+	An audio token from `sampleOptions.audio`.
+	"""
+	audio: String
+	"""
+	A layout from `sampleOptions.audioChannels`.
+	"""
+	audioChannels: String
+	"""
+	Free text, as an edition would appear on a release.
+	"""
+	edition: String
+	"""
+	A status token from `sampleOptions.seriesStatus`.
+	"""
+	seriesStatus: String
+	"""
+	A codec token from `sampleOptions.videoCodec`.
+	"""
+	videoCodec: String
+	"""
+	A source token from `sampleOptions.source`.
+	"""
+	source: String
+	"""
+	Draw on a poster from this kind of library: `movie`, `series` or
+	`anime`. Any library when null.
+	"""
+	posterFacet: String
+	"""
+	Keep drawing on this title's poster (from a previous preview's
+	`posterTitleId`); a random one is picked when null.
+	"""
+	posterTitleId: ID
 }
 
 """
@@ -23818,6 +24196,36 @@ type QueryRoot {
 	management permission.
 	"""
 	listMemberPolicies: [MemberListPolicyPayload!]!
+	"""
+	Overlay settings, libraries, templates and progress. Requires
+	catalog or library settings access.
+	"""
+	posterOverlays: PosterOverlayOverview!
+	"""
+	The library-wide overlay pass in progress or queued. Cheap enough to
+	poll while a rebuild runs. Requires catalog or library settings
+	access.
+	"""
+	posterOverlayPass: PosterOverlayPass!
+	"""
+	Check a template against the format without saving it.
+	"""
+	validatePosterOverlayTemplate(
+		"""
+		The template SVG to check.
+		"""
+		svg: String!
+	): PosterOverlayTemplateValidation!
+	"""
+	Render a draft template with sample values for the editor. Nothing
+	is saved. Requires catalog settings management.
+	"""
+	previewPosterOverlayTemplate(
+		"""
+		The draft template and the sample values to show.
+		"""
+		input: PreviewPosterOverlayTemplateInput!
+	): PosterOverlayTemplatePreview!
 }
 
 """
@@ -25854,6 +26262,24 @@ type SaveExternalImportSetupSecretDraftPayload {
 }
 
 """
+A custom template to create or replace.
+"""
+input SavePosterOverlayTemplateInput {
+	"""
+	Null creates a new template.
+	"""
+	id: ID
+	"""
+	The template's display name.
+	"""
+	name: String!
+	"""
+	The template SVG; it must pass validation.
+	"""
+	svg: String!
+}
+
+"""
 Complete quality-profile and scoring-persona settings replacement.
 """
 input SaveQualityProfileSettingsInput {
@@ -26551,6 +26977,24 @@ input SetMyUiSettingsInput {
 	Complete table-column setting list; empty clears all saved column settings.
 	"""
 	tableColumns: [UiTableColumnSettingInput!]!
+}
+
+"""
+Overlay enablement and template for one library.
+"""
+input SetPosterOverlayLibraryInput {
+	"""
+	The library to change.
+	"""
+	libraryId: ID!
+	"""
+	Whether posters in the library carry overlays.
+	"""
+	enabled: Boolean!
+	"""
+	Null selects the built-in template.
+	"""
+	templateId: ID
 }
 
 """
@@ -30798,6 +31242,25 @@ input UpdatePostProcessingScriptInput {
 	Replacement debug state, or null to leave unchanged.
 	"""
 	debug: Boolean
+}
+
+"""
+New render settings, shared by every library.
+"""
+input UpdatePosterOverlaySettingsInput {
+	"""
+	Posters rendered at once.
+	"""
+	parallelism: Int!
+	"""
+	Seconds between safety-net passes.
+	"""
+	reconcileIntervalSeconds: Int!
+	"""
+	Upload rendered posters to matched Plex items; null keeps the
+	current setting.
+	"""
+	plexPushEnabled: Boolean
 }
 
 """

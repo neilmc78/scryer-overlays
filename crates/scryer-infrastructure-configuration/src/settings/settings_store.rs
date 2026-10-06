@@ -17,6 +17,9 @@ use crate::queries::sql_runtime::{
 use crate::settings::read_cache::{CacheLookup, GenerationCache};
 use crate::types::{SettingDefinitionSeed, SettingsValueRecord};
 
+/// First version of the local migration block; see the migration manifest.
+const LOCAL_MIGRATION_START: i64 = 9001;
+
 /// Point reads with defaults are keyed per scope id, and some callers pass a
 /// title id, so this key space grows with the library. The bound keeps it to
 /// a few megabytes; the hot global keys are read back after a reset.
@@ -715,12 +718,15 @@ impl SystemInfoProvider for SettingsStore {
     async fn current_migration_version(&self) -> AppResult<Option<String>> {
         let row = SqlRuntime::fetch_optional(
             self.datastore.read_exec(),
+            // Local additions numbered 9001 and up (poster overlays) are left
+            // out: the key names the upstream schema, which is what backup
+            // restores compare against.
             "SELECT version, description
                FROM _sqlx_migrations
-              WHERE success = {}
+              WHERE success = {} AND version < {}
               ORDER BY version DESC, description DESC
               LIMIT 1",
-            &[SqlArg::Bool(true)],
+            &[SqlArg::Bool(true), SqlArg::I64(LOCAL_MIGRATION_START)],
         )
         .await?;
 
