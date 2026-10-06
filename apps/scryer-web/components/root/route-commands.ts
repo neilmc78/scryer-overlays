@@ -9,6 +9,7 @@ import {
   Download,
   FileText,
   FolderCog,
+  Layers,
   Inbox,
   LayoutDashboard,
   ListChecks,
@@ -479,6 +480,14 @@ export function buildRouteCommands({
           keywords: ["settings", "subtitles", "captions", "srt", "opensubtitles"],
           icon: Captions,
           onSelect: buildNavigate(onNavigate, "settings", "subtitles"),
+        } satisfies RouteCommand, {
+          id: "settings-poster-overlays",
+          label: `${integrationsGroupLabel} / ${t("settings.posterOverlays.title")}`,
+          description: t("settings.posterOverlays.title"),
+          groupLabel: integrationsGroupLabel,
+          keywords: ["settings", "overlays", "posters", "badges", "artwork", "kometa"],
+          icon: Layers,
+          onSelect: buildNavigate(onNavigate, "settings", "posterOverlays"),
         } satisfies RouteCommand]
       : []),
     ...(canManageSystemSettings

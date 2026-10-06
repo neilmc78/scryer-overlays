@@ -777,8 +777,12 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     // census (installed plugin settings, download password retry, and others)
     // brings query fields to 195. Scheduled scripts as jobs add no root field;
     // they ride `jobs`, `jobRuns`, and `triggerJob` with a `customJobId`.
+    // Poster overlays add the settings overview, template validation, the
+    // editor's live template preview and `posterOverlayPass`: 195->199.
+    assert!(query_field_names.contains(&"previewPosterOverlayTemplate"));
+    assert!(query_field_names.contains(&"posterOverlayPass"));
     assert_eq!(
-        query_field_count, 195,
+        query_field_count, 199,
         "query fields: {query_field_names:?}"
     );
     // First-class proxies (WP4) add one mutation, resetProxyHostKey: SSH host
@@ -816,8 +820,10 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     // `linkListAccountWithKey`: 271->272.
     // Abandoning an account link the member walked away from adds
     // `cancelListAccountLink`: 272->273.
+    // Poster overlays add six: per-library enablement, render settings,
+    // template save and delete, rebuild, and revert all: 275->281.
     assert_eq!(
-        mutation_field_count, 275,
+        mutation_field_count, 281,
         "mutation fields: {mutation_field_names:?}"
     );
     // Cross-library transfer (T082, FR-055/FR-056) surfaces destination-title
@@ -1152,9 +1158,16 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     }
     assert!(mutation_field_names.contains(&"refreshFileScores"));
     assert!(mutation_field_names.contains(&"cancelFileScoreRefresh"));
-    assert_eq!(public_types.len(), 970);
-    assert_eq!(kind_count("OBJECT"), 523);
-    assert_eq!(kind_count("INPUT_OBJECT"), 240);
+    // Poster overlays add ten payloads (overview, settings, library,
+    // template, counts, validation, preview, the two sample-option types, and
+    // the rebuild pass) and four inputs (library, settings, template save,
+    // preview): public types 970->984, OBJECT 523->533, INPUT_OBJECT 240->244.
+    assert!(public_type_names.contains(&"PosterOverlayTemplatePreview"));
+    assert!(public_type_names.contains(&"PreviewPosterOverlayTemplateInput"));
+    assert!(public_type_names.contains(&"PosterOverlayPass"));
+    assert_eq!(public_types.len(), 984);
+    assert_eq!(kind_count("OBJECT"), 533);
+    assert_eq!(kind_count("INPUT_OBJECT"), 244);
     assert_eq!(kind_count("ENUM"), 195);
     assert_eq!(kind_count("SCALAR"), 10);
     assert_eq!(kind_count("UNION"), 2);

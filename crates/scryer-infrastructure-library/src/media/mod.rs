@@ -4,6 +4,7 @@ pub mod libraries;
 pub mod lifecycle_claims;
 pub mod lists;
 pub(crate) mod monitor_selections;
+pub mod overlays;
 pub mod requests;
 pub mod search;
 pub mod servers;
