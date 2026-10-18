@@ -59,12 +59,20 @@ pub const LOGO_ID_PREFIX: &str = "scryer-logo-";
 /// SVG whose internal ids already carry its own `scryer-logo-<name>-` prefix.
 pub const LOGOS: &[(&str, &str)] = &[
     (
+        "anilist",
+        include_str!("../../../assets/overlays/logos/anilist.svg"),
+    ),
+    (
         "imdb",
         include_str!("../../../assets/overlays/logos/imdb.svg"),
     ),
     (
         "letterboxd",
         include_str!("../../../assets/overlays/logos/letterboxd.svg"),
+    ),
+    (
+        "mal",
+        include_str!("../../../assets/overlays/logos/mal.svg"),
     ),
     (
         "mdblist",
@@ -83,12 +91,20 @@ pub const LOGOS: &[(&str, &str)] = &[
         include_str!("../../../assets/overlays/logos/rottentomatoes.svg"),
     ),
     (
+        "simkl",
+        include_str!("../../../assets/overlays/logos/simkl.svg"),
+    ),
+    (
         "tmdb",
         include_str!("../../../assets/overlays/logos/tmdb.svg"),
     ),
     (
         "trakt",
         include_str!("../../../assets/overlays/logos/trakt.svg"),
+    ),
+    (
+        "tvdb",
+        include_str!("../../../assets/overlays/logos/tvdb.svg"),
     ),
 ];
 

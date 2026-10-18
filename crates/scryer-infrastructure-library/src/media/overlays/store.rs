@@ -1,14 +1,15 @@
-//! SQL for poster overlays. Writes go only to the `poster_overlay_*` tables,
+//! SQL for poster overlays. Writes go only to the `poster_overlay_*` and
+//! `plex_collection_*` tables,
 //! plus the value of `titles.poster_local_path` so browsers refetch a poster
 //! whose presented bytes changed. No existing schema is altered.
 
 use async_trait::async_trait;
 use chrono::Utc;
 use scryer_application::overlays::{
-    MAX_OVERLAY_PARALLELISM, OverlayMediaFacts, PLEX_POSTER_CHANGED_IN_PLEX, PosterOverlayInputs,
-    PosterOverlayLibraryConfig, PosterOverlayPlexState, PosterOverlayPreviewPoster,
-    PosterOverlayRepository, PosterOverlaySettings, PosterOverlayState, PosterOverlayStatusCounts,
-    PosterOverlayTemplate,
+    MAX_OVERLAY_PARALLELISM, OverlayMediaFacts, PLEX_POSTER_CHANGED_IN_PLEX, PlexCollectionList,
+    PlexCollectionMember, PlexCollectionTitle, PosterOverlayInputs, PosterOverlayLibraryConfig,
+    PosterOverlayPlexState, PosterOverlayPreviewPoster, PosterOverlayRepository,
+    PosterOverlaySettings, PosterOverlayState, PosterOverlayStatusCounts, PosterOverlayTemplate,
 };
 use scryer_application::{AppResult, TitleImageKind};
 
@@ -714,6 +715,289 @@ impl PosterOverlayRepository for PosterOverlayStore {
                 SqlArg::OptText(restored),
                 SqlArg::Text(title_id.to_string()),
                 SqlArg::Text(overlay_poster_path(title_id, overlay_version)),
+            ],
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn list_plex_collection_lists(&self) -> AppResult<Vec<PlexCollectionList>> {
+        SqlRuntime::fetch_all(
+            self.read(),
+            "SELECT subscription_id, enabled, position, poster_enabled, poster_background,
+                    poster_text, poster_logo
+               FROM plex_collection_lists
+              ORDER BY subscription_id",
+            &[],
+        )
+        .await?
+        .iter()
+        .map(|row| {
+            Ok(PlexCollectionList {
+                subscription_id: row.text("subscription_id")?,
+                enabled: row.bool("enabled")?,
+                position: row.opt_i64("position")?,
+                poster_enabled: row.bool("poster_enabled")?,
+                poster_background: row.opt_text("poster_background")?,
+                poster_text: row.opt_text("poster_text")?,
+                poster_logo: row.bool("poster_logo")?,
+            })
+        })
+        .collect()
+    }
+
+    async fn set_plex_collection_list(
+        &self,
+        subscription_id: &str,
+        enabled: bool,
+    ) -> AppResult<()> {
+        SqlRuntime::execute_write(
+            &self.datastore,
+            "set_plex_collection_list",
+            "INSERT INTO plex_collection_lists (subscription_id, enabled, updated_at)
+             VALUES ({}, {}, {})
+             ON CONFLICT (subscription_id) DO UPDATE SET
+                enabled = excluded.enabled,
+                updated_at = excluded.updated_at",
+            vec![
+                SqlArg::Text(subscription_id.to_string()),
+                SqlArg::Bool(enabled),
+                SqlArg::Timestamp(Utc::now()),
+            ],
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn list_plex_collection_members(&self) -> AppResult<Vec<PlexCollectionMember>> {
+        SqlRuntime::fetch_all(
+            self.read(),
+            "SELECT connection_id, subscription_id, provider_item_id, title_id, collection_name,
+                    pushed_at, last_error
+               FROM plex_collection_members
+              ORDER BY connection_id, subscription_id, provider_item_id",
+            &[],
+        )
+        .await?
+        .iter()
+        .map(|row| {
+            Ok(PlexCollectionMember {
+                connection_id: row.text("connection_id")?,
+                subscription_id: row.text("subscription_id")?,
+                provider_item_id: row.text("provider_item_id")?,
+                title_id: row.text("title_id")?,
+                collection_name: row.text("collection_name")?,
+                pushed_at: row.opt_timestamp("pushed_at")?,
+                last_error: row.opt_text("last_error")?,
+            })
+        })
+        .collect()
+    }
+
+    async fn save_plex_collection_member(&self, member: &PlexCollectionMember) -> AppResult<()> {
+        SqlRuntime::execute_write(
+            &self.datastore,
+            "save_plex_collection_member",
+            "INSERT INTO plex_collection_members
+                (connection_id, subscription_id, provider_item_id, title_id, collection_name,
+                 pushed_at, last_error, updated_at)
+             VALUES ({}, {}, {}, {}, {}, {}, {}, {})
+             ON CONFLICT (connection_id, subscription_id, provider_item_id) DO UPDATE SET
+                title_id = excluded.title_id,
+                collection_name = excluded.collection_name,
+                pushed_at = excluded.pushed_at,
+                last_error = excluded.last_error,
+                updated_at = excluded.updated_at",
+            vec![
+                SqlArg::Text(member.connection_id.clone()),
+                SqlArg::Text(member.subscription_id.clone()),
+                SqlArg::Text(member.provider_item_id.clone()),
+                SqlArg::Text(member.title_id.clone()),
+                SqlArg::Text(member.collection_name.clone()),
+                SqlArg::OptTimestamp(member.pushed_at),
+                SqlArg::OptText(member.last_error.clone()),
+                SqlArg::Timestamp(Utc::now()),
+            ],
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn delete_plex_collection_member(
+        &self,
+        connection_id: &str,
+        subscription_id: &str,
+        provider_item_id: &str,
+    ) -> AppResult<()> {
+        SqlRuntime::execute_write(
+            &self.datastore,
+            "delete_plex_collection_member",
+            "DELETE FROM plex_collection_members
+              WHERE connection_id = {} AND subscription_id = {} AND provider_item_id = {}",
+            vec![
+                SqlArg::Text(connection_id.to_string()),
+                SqlArg::Text(subscription_id.to_string()),
+                SqlArg::Text(provider_item_id.to_string()),
+            ],
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn set_plex_collection_poster(
+        &self,
+        subscription_id: &str,
+        enabled: bool,
+        background: Option<&str>,
+        text: Option<&str>,
+        logo: bool,
+    ) -> AppResult<()> {
+        SqlRuntime::execute_write(
+            &self.datastore,
+            "set_plex_collection_poster",
+            "UPDATE plex_collection_lists
+                SET poster_enabled = {}, poster_background = {}, poster_text = {},
+                    poster_logo = {}, updated_at = {}
+              WHERE subscription_id = {}",
+            vec![
+                SqlArg::Bool(enabled),
+                SqlArg::OptText(background.map(str::to_string)),
+                SqlArg::OptText(text.map(str::to_string)),
+                SqlArg::Bool(logo),
+                SqlArg::Timestamp(Utc::now()),
+                SqlArg::Text(subscription_id.to_string()),
+            ],
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn set_plex_collection_list_position(
+        &self,
+        subscription_id: &str,
+        position: Option<i64>,
+    ) -> AppResult<()> {
+        SqlRuntime::execute_write(
+            &self.datastore,
+            "set_plex_collection_list_position",
+            "UPDATE plex_collection_lists SET position = {}, updated_at = {}
+              WHERE subscription_id = {}",
+            vec![
+                SqlArg::OptI64(position),
+                SqlArg::Timestamp(Utc::now()),
+                SqlArg::Text(subscription_id.to_string()),
+            ],
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn list_plex_collection_slots(&self) -> AppResult<Vec<(String, i64)>> {
+        SqlRuntime::fetch_all(
+            self.read(),
+            "SELECT provider, slot FROM plex_collection_providers ORDER BY slot",
+            &[],
+        )
+        .await?
+        .iter()
+        .map(|row| Ok((row.text("provider")?, row.i64("slot")?)))
+        .collect()
+    }
+
+    async fn replace_plex_collection_slots(&self, slots: &[(String, i64)]) -> AppResult<()> {
+        SqlRuntime::execute_write(
+            &self.datastore,
+            "clear_plex_collection_slots",
+            "DELETE FROM plex_collection_providers",
+            vec![],
+        )
+        .await?;
+        for (provider, slot) in slots {
+            SqlRuntime::execute_write(
+                &self.datastore,
+                "insert_plex_collection_slot",
+                "INSERT INTO plex_collection_providers (provider, slot, updated_at)
+                 VALUES ({}, {}, {})",
+                vec![
+                    SqlArg::Text(provider.clone()),
+                    SqlArg::I64(*slot),
+                    SqlArg::Timestamp(Utc::now()),
+                ],
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn list_plex_collection_titles(&self) -> AppResult<Vec<PlexCollectionTitle>> {
+        SqlRuntime::fetch_all(
+            self.read(),
+            "SELECT connection_id, subscription_id, section_id, collection_key, sort_title,
+                    poster_hash, poster_thumb
+               FROM plex_collection_titles
+              ORDER BY connection_id, subscription_id, section_id",
+            &[],
+        )
+        .await?
+        .iter()
+        .map(|row| {
+            Ok(PlexCollectionTitle {
+                connection_id: row.text("connection_id")?,
+                subscription_id: row.text("subscription_id")?,
+                section_id: row.text("section_id")?,
+                collection_key: row.text("collection_key")?,
+                sort_title: row.text("sort_title")?,
+                poster_hash: row.opt_text("poster_hash")?,
+                poster_thumb: row.opt_text("poster_thumb")?,
+            })
+        })
+        .collect()
+    }
+
+    async fn save_plex_collection_title(&self, title: &PlexCollectionTitle) -> AppResult<()> {
+        SqlRuntime::execute_write(
+            &self.datastore,
+            "save_plex_collection_title",
+            "INSERT INTO plex_collection_titles
+                (connection_id, subscription_id, section_id, collection_key, sort_title,
+                 poster_hash, poster_thumb, updated_at)
+             VALUES ({}, {}, {}, {}, {}, {}, {}, {})
+             ON CONFLICT (connection_id, subscription_id, section_id) DO UPDATE SET
+                collection_key = excluded.collection_key,
+                sort_title = excluded.sort_title,
+                poster_hash = excluded.poster_hash,
+                poster_thumb = excluded.poster_thumb,
+                updated_at = excluded.updated_at",
+            vec![
+                SqlArg::Text(title.connection_id.clone()),
+                SqlArg::Text(title.subscription_id.clone()),
+                SqlArg::Text(title.section_id.clone()),
+                SqlArg::Text(title.collection_key.clone()),
+                SqlArg::Text(title.sort_title.clone()),
+                SqlArg::OptText(title.poster_hash.clone()),
+                SqlArg::OptText(title.poster_thumb.clone()),
+                SqlArg::Timestamp(Utc::now()),
+            ],
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn delete_plex_collection_title(
+        &self,
+        connection_id: &str,
+        subscription_id: &str,
+        section_id: &str,
+    ) -> AppResult<()> {
+        SqlRuntime::execute_write(
+            &self.datastore,
+            "delete_plex_collection_title",
+            "DELETE FROM plex_collection_titles
+              WHERE connection_id = {} AND subscription_id = {} AND section_id = {}",
+            vec![
+                SqlArg::Text(connection_id.to_string()),
+                SqlArg::Text(subscription_id.to_string()),
+                SqlArg::Text(section_id.to_string()),
             ],
         )
         .await?;

@@ -20,9 +20,9 @@ use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use scryer_application::overlays::{
-    DEFAULT_OVERLAY_PARALLELISM, MAX_OVERLAY_PARALLELISM, PosterOverlayEngine,
-    PosterOverlayPreviewRequest, PosterOverlayRenderRequest, PosterOverlayRendered,
-    PosterOverlayVariant,
+    CollectionPosterRequest, DEFAULT_OVERLAY_PARALLELISM, MAX_OVERLAY_PARALLELISM,
+    PosterOverlayEngine, PosterOverlayPreviewRequest, PosterOverlayRenderRequest,
+    PosterOverlayRendered, PosterOverlayVariant,
 };
 use scryer_application::{AppError, AppResult};
 
@@ -265,6 +265,35 @@ impl PosterOverlayEngine for OverlayEngine {
         });
         receive.await.map_err(|error| {
             AppError::Repository(format!("overlay preview was dropped: {error}"))
+        })?
+    }
+
+    async fn render_collection_poster(
+        &self,
+        request: CollectionPosterRequest,
+    ) -> AppResult<Vec<u8>> {
+        let renderer = self.renderer.clone();
+        let (send, receive) = tokio::sync::oneshot::channel();
+        self.pool().spawn(move || {
+            if send.is_closed() {
+                return;
+            }
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                renderer.render_collection_poster(
+                    request.background,
+                    request.logo.as_deref(),
+                    &request.text,
+                )
+            }))
+            .unwrap_or_else(|_| {
+                Err(AppError::Repository(
+                    "collection poster render panicked".into(),
+                ))
+            });
+            let _ = send.send(result);
+        });
+        receive.await.map_err(|error| {
+            AppError::Repository(format!("collection poster render was dropped: {error}"))
         })?
     }
 

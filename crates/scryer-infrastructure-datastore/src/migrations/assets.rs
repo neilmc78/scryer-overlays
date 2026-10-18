@@ -671,7 +671,17 @@ mod tests {
             local,
             "upstream runs 0001..N without gaps"
         );
-        assert_eq!(&versions[local..], &[LOCAL_MIGRATION_START]);
+        // The local block itself runs 9001, 9002, ... without gaps: poster
+        // overlays, Plex collections from lists, their order, then their posters.
+        assert_eq!(
+            &versions[local..],
+            &[
+                LOCAL_MIGRATION_START,
+                LOCAL_MIGRATION_START + 1,
+                LOCAL_MIGRATION_START + 2,
+                LOCAL_MIGRATION_START + 3
+            ]
+        );
     }
 
     #[test]

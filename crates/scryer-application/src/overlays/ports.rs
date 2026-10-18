@@ -130,6 +130,72 @@ pub struct PosterOverlayPlexState {
     pub last_error: Option<String>,
 }
 
+/// Whether a public list is mirrored into Plex as a collection.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlexCollectionList {
+    pub subscription_id: String,
+    pub enabled: bool,
+    /// Place inside its provider's block of sort numbers, from 0; `None`
+    /// until one is given.
+    pub position: Option<i64>,
+    /// Whether Scryer draws the collection's poster.
+    pub poster_enabled: bool,
+    /// `#rrggbb`; `None` uses the provider's colour.
+    pub poster_background: Option<String>,
+    /// The poster's label; `None` uses the list's name.
+    pub poster_text: Option<String>,
+    /// Whether the provider's logo is drawn.
+    pub poster_logo: bool,
+}
+
+/// What a collection poster shows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CollectionPosterRequest {
+    pub background: [u8; 3],
+    /// A bundled logo name, such as `imdb`.
+    pub logo: Option<String>,
+    pub text: String,
+}
+
+/// The sort title Scryer last gave a list's collection in one Plex section.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlexCollectionTitle {
+    pub connection_id: String,
+    pub subscription_id: String,
+    pub section_id: String,
+    /// The collection (`ratingKey`) it was set on. Plex makes a new one when
+    /// it re-creates an emptied collection.
+    pub collection_key: String,
+    pub sort_title: String,
+    /// Identity of the poster design last uploaded, if any.
+    pub poster_hash: Option<String>,
+    /// The collection's `thumb` right after that upload; a different value
+    /// later means the poster was changed in Plex.
+    pub poster_thumb: Option<String>,
+}
+
+/// A collection in one Plex library section.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlexCollectionRef {
+    pub section_id: String,
+    pub rating_key: String,
+}
+
+/// One Plex item Scryer added to a list's collection on one server.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PlexCollectionMember {
+    pub connection_id: String,
+    pub subscription_id: String,
+    /// The Plex item (`ratingKey`) carrying the collection.
+    pub provider_item_id: String,
+    pub title_id: String,
+    /// The collection name the item was given: the list's name at the time.
+    pub collection_name: String,
+    /// When the item was put in the collection; `None` until that succeeds.
+    pub pushed_at: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+}
+
 #[async_trait]
 pub trait PosterOverlayRepository: Send + Sync {
     async fn get_settings(&self) -> AppResult<PosterOverlaySettings>;
@@ -218,6 +284,76 @@ pub trait PosterOverlayRepository: Send + Sync {
         title_id: &str,
         overlay_version: &str,
     ) -> AppResult<()>;
+
+    /// Lists with a Plex collection setting, switched on or off.
+    async fn list_plex_collection_lists(&self) -> AppResult<Vec<PlexCollectionList>> {
+        Ok(Vec::new())
+    }
+    async fn set_plex_collection_list(
+        &self,
+        _subscription_id: &str,
+        _enabled: bool,
+    ) -> AppResult<()> {
+        Err(plex_collections_unsupported())
+    }
+    /// Every item Scryer put in a list's collection, on every server.
+    async fn list_plex_collection_members(&self) -> AppResult<Vec<PlexCollectionMember>> {
+        Ok(Vec::new())
+    }
+    async fn save_plex_collection_member(&self, _member: &PlexCollectionMember) -> AppResult<()> {
+        Err(plex_collections_unsupported())
+    }
+    async fn delete_plex_collection_member(
+        &self,
+        _connection_id: &str,
+        _subscription_id: &str,
+        _provider_item_id: &str,
+    ) -> AppResult<()> {
+        Err(plex_collections_unsupported())
+    }
+    async fn set_plex_collection_poster(
+        &self,
+        _subscription_id: &str,
+        _enabled: bool,
+        _background: Option<&str>,
+        _text: Option<&str>,
+        _logo: bool,
+    ) -> AppResult<()> {
+        Err(plex_collections_unsupported())
+    }
+    async fn set_plex_collection_list_position(
+        &self,
+        _subscription_id: &str,
+        _position: Option<i64>,
+    ) -> AppResult<()> {
+        Err(plex_collections_unsupported())
+    }
+    /// Each provider's block of sort numbers, as `(provider, slot)`.
+    async fn list_plex_collection_slots(&self) -> AppResult<Vec<(String, i64)>> {
+        Ok(Vec::new())
+    }
+    /// Replace every provider's block at once, so two can trade places.
+    async fn replace_plex_collection_slots(&self, _slots: &[(String, i64)]) -> AppResult<()> {
+        Err(plex_collections_unsupported())
+    }
+    async fn list_plex_collection_titles(&self) -> AppResult<Vec<PlexCollectionTitle>> {
+        Ok(Vec::new())
+    }
+    async fn save_plex_collection_title(&self, _title: &PlexCollectionTitle) -> AppResult<()> {
+        Err(plex_collections_unsupported())
+    }
+    async fn delete_plex_collection_title(
+        &self,
+        _connection_id: &str,
+        _subscription_id: &str,
+        _section_id: &str,
+    ) -> AppResult<()> {
+        Err(plex_collections_unsupported())
+    }
+}
+
+fn plex_collections_unsupported() -> crate::AppError {
+    crate::AppError::Validation("Plex collections are not available here".into())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -370,6 +506,43 @@ pub trait PosterOverlayPlexClient: Send + Sync {
         item: &PlexPosterItem,
         locked: bool,
     ) -> AppResult<()>;
+    /// Put the item in each named collection, keeping the ones it is
+    /// already in. Plex creates a collection the first time it is used.
+    async fn add_item_collections(
+        &self,
+        _connection: &scryer_domain::MediaServerConnection,
+        _item: &PlexPosterItem,
+        _names: &[String],
+    ) -> AppResult<()> {
+        Err(plex_collections_unsupported())
+    }
+    /// Take the item out of each named collection, leaving its others.
+    async fn remove_item_collections(
+        &self,
+        _connection: &scryer_domain::MediaServerConnection,
+        _item: &PlexPosterItem,
+        _names: &[String],
+    ) -> AppResult<()> {
+        Err(plex_collections_unsupported())
+    }
+    /// Collections titled exactly `name`, one per library section that has
+    /// one.
+    async fn find_collections(
+        &self,
+        _connection: &scryer_domain::MediaServerConnection,
+        _name: &str,
+    ) -> AppResult<Vec<PlexCollectionRef>> {
+        Err(plex_collections_unsupported())
+    }
+    /// Set and lock the collection's sort title.
+    async fn set_collection_sort_title(
+        &self,
+        _connection: &scryer_domain::MediaServerConnection,
+        _collection: &PlexCollectionRef,
+        _sort_title: &str,
+    ) -> AppResult<()> {
+        Err(plex_collections_unsupported())
+    }
 }
 
 /// Rendering, marker detection and overlay file ownership. Everything this
@@ -401,6 +574,15 @@ pub trait PosterOverlayEngine: Send + Sync {
     /// CPU work on the render pool. Returns a JPEG without the overlay
     /// marker, sized for the editor; it is never stored.
     async fn render_preview(&self, request: PosterOverlayPreviewRequest) -> AppResult<Vec<u8>>;
+    /// CPU work on the render pool: a collection poster as a JPEG.
+    async fn render_collection_poster(
+        &self,
+        _request: CollectionPosterRequest,
+    ) -> AppResult<Vec<u8>> {
+        Err(crate::AppError::Validation(
+            "collection posters are not available here".into(),
+        ))
+    }
     fn validate_template(&self, svg: &str) -> AppResult<()>;
     fn builtin_template(&self) -> &'static str;
     fn set_parallelism(&self, parallelism: usize);

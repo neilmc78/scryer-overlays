@@ -734,3 +734,71 @@ fn fitted_text_stays_inside_its_box_when_rendered() {
     }
     assert!(inside > 200, "text drawn inside the box");
 }
+
+// ── Collection posters ─────────────────────────────────────────────────────
+
+fn collection_poster(logo: Option<&str>, text: &str) -> image::RgbImage {
+    let jpeg = OverlayRenderer::new()
+        .render_collection_poster([0x7a, 0x62, 0x00], logo, text)
+        .unwrap();
+    image::load_from_memory(&jpeg).unwrap().to_rgb8()
+}
+
+#[test]
+fn collection_posters_are_full_size_with_a_glow_in_the_colour() {
+    let poster = collection_poster(None, "");
+    assert_eq!(poster.dimensions(), (1000, 1500));
+    let corner = poster.get_pixel(5, 5).0;
+    let centre = poster.get_pixel(500, 630).0;
+    assert!(corner[0] < centre[0], "edges are darker than the centre");
+    assert!(
+        corner[0] > corner[2] && centre[0] > centre[2],
+        "it keeps the colour's hue"
+    );
+}
+
+#[test]
+fn a_collection_poster_logo_sits_in_the_upper_half() {
+    let plain = collection_poster(None, "");
+    let with_logo = collection_poster(Some("imdb"), "");
+    let differs = |from: u32, to: u32| {
+        (from..to).step_by(10).any(|y| {
+            (0..1000).step_by(10).any(|x| {
+                let a = plain.get_pixel(x, y).0;
+                let b = with_logo.get_pixel(x, y).0;
+                a.iter().zip(b).any(|(a, b)| a.abs_diff(b) > 40)
+            })
+        })
+    };
+    assert!(differs(330, 790), "the logo is drawn");
+    assert!(!differs(1000, 1500), "nothing else moves");
+    // An unknown logo is simply left out.
+    let unknown = collection_poster(Some("not-a-logo"), "");
+    assert_eq!(unknown.get_pixel(500, 560), plain.get_pixel(500, 560));
+}
+
+#[test]
+fn a_long_collection_label_stays_in_its_box() {
+    let poster = collection_poster(None, "A Very Long Collection Name That Has To Wrap {{x}}");
+    let white = |x: u32, y: u32| {
+        poster
+            .get_pixel(x, y)
+            .0
+            .iter()
+            .all(|channel| *channel > 200)
+    };
+    assert!(
+        (1020..1320)
+            .step_by(4)
+            .any(|y| (70..930).step_by(4).any(|x| white(x, y))),
+        "the label is drawn"
+    );
+    for y in (0..1000).step_by(5).chain((1340..1500).step_by(5)) {
+        for x in (0..1000).step_by(5) {
+            assert!(
+                !white(x, y),
+                "nothing white outside the label box at {x},{y}"
+            );
+        }
+    }
+}

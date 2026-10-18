@@ -7,6 +7,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use scryer_application::AppError;
 use scryer_interface_core::{actor_from_ctx, app_from_ctx, to_gql_error};
 use scryer_interface_media::types::{
+    PlexCollectionListPayload, PlexCollectionPosterInput, PlexCollectionPosterPreviewPayload,
     PosterOverlayOverviewPayload, PosterOverlayPassPayload, PosterOverlayTemplatePreviewPayload,
     PosterOverlayTemplateValidationPayload, PreviewPosterOverlayTemplateInput,
 };
@@ -39,6 +40,52 @@ impl PosterOverlayQueries {
             .await
             .map_err(to_gql_error)?;
         Ok(pass.into())
+    }
+
+    /// Public lists and whether each is mirrored into Plex as a collection.
+    /// Requires list management permission.
+    async fn plex_collection_lists(
+        &self,
+        ctx: &Context<'_>,
+    ) -> GqlResult<Vec<PlexCollectionListPayload>> {
+        let app = app_from_ctx(ctx)?;
+        let actor = actor_from_ctx(ctx)?;
+        let lists = app
+            .plex_collection_lists(&actor)
+            .await
+            .map_err(to_gql_error)?;
+        Ok(lists.into_iter().map(Into::into).collect())
+    }
+
+    /// Draw a collection poster design without saving or pushing it.
+    /// Requires list management permission.
+    async fn preview_plex_collection_poster(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(desc = "The design to draw.")] input: PlexCollectionPosterInput,
+    ) -> GqlResult<PlexCollectionPosterPreviewPayload> {
+        let app = app_from_ctx(ctx)?;
+        let actor = actor_from_ctx(ctx)?;
+        match app
+            .preview_plex_collection_poster(
+                &actor,
+                input.subscription_id.as_str(),
+                input.background.as_deref(),
+                input.text.as_deref(),
+                input.show_logo,
+            )
+            .await
+        {
+            Ok(jpeg) => Ok(PlexCollectionPosterPreviewPayload {
+                image: Some(format!("data:image/jpeg;base64,{}", BASE64.encode(&jpeg))),
+                error: None,
+            }),
+            Err(AppError::Validation(message)) => Ok(PlexCollectionPosterPreviewPayload {
+                image: None,
+                error: Some(message),
+            }),
+            Err(error) => Err(to_gql_error(error)),
+        }
     }
 
     /// Check a template against the format without saving it.
