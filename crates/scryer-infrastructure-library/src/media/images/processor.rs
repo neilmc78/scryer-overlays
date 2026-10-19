@@ -91,7 +91,7 @@ impl HttpTitleImageProcessor {
         }
     }
 
-    async fn fetch_source(
+    pub(crate) async fn fetch_source(
         &self,
         source_url: &str,
     ) -> AppResult<(String, Vec<u8>, Option<String>, Option<String>)> {

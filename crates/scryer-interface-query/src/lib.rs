@@ -22,6 +22,7 @@ use scryer_interface_settings::SettingsQueries;
 use std::{collections::HashMap, fs, io, path::Path};
 
 mod lists;
+mod overlays;
 
 use scryer_interface_core as context;
 use scryer_interface_core::{
@@ -887,6 +888,7 @@ pub struct QueryRoot(
     AccountQueries,
     IndexerErrorQueries,
     lists::ListQueries,
+    overlays::PosterOverlayQueries,
 );
 
 fn indexer_error_operation_value(

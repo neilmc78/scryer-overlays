@@ -98,6 +98,7 @@ mod metrics_support;
 mod notifications;
 mod null_repositories;
 mod oauth;
+pub mod overlays;
 pub mod persisted_records;
 pub mod plugin_failure;
 pub use plugin_failure::{PluginFailure, PluginFailureReason, plugin_codes};

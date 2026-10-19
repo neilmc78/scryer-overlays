@@ -8,6 +8,7 @@ mod lists;
 mod location;
 mod maintenance_rules;
 mod notifications;
+mod overlays;
 mod recycle_bin;
 mod request_rules;
 mod rules;
@@ -53,4 +54,5 @@ pub struct MutationRoot(
     interactive_search::InteractiveSearchMutations,
     scryer_interface_settings::IndexerClientMutations,
     lists::ListMutations,
+    overlays::PosterOverlayMutations,
 );

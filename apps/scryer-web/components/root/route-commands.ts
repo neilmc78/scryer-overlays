@@ -10,6 +10,7 @@ import {
   FileText,
   FolderCog,
   Inbox,
+  Layers,
   LayoutDashboard,
   ListChecks,
   ListPlus,
@@ -714,6 +715,15 @@ export function buildRouteCommands({
             ],
             icon: Captions,
             onSelect: buildNavigate(onNavigate, "settings", "subtitles"),
+          } satisfies RouteCommand,
+          {
+            id: "settings-poster-overlays",
+            label: `${integrationsGroupLabel} / ${t("settings.posterOverlays.title")}`,
+            description: t("settings.posterOverlays.title"),
+            groupLabel: integrationsGroupLabel,
+            keywords: ["settings", "overlays", "posters", "badges", "artwork", "kometa"],
+            icon: Layers,
+            onSelect: buildNavigate(onNavigate, "settings", "posterOverlays"),
           } satisfies RouteCommand,
         ]
       : []),
