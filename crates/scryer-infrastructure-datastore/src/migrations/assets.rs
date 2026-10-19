@@ -333,13 +333,16 @@ pub fn compile_source_bundle(db_root: &Path) -> Result<CompiledMigrationBundle, 
     let mut explicit = manifest.migrations.clone();
     explicit.sort_by_key(|migration| migration.version);
 
-    for (expected_version, migration) in (legacy_through_version + 1..).zip(explicit) {
+    let mut expected_version = legacy_through_version + 1;
+    for migration in explicit {
+        expected_version = next_expected_version(expected_version, migration.version);
         if migration.version != expected_version {
             return Err(format!(
                 "explicit migration versions must be contiguous starting at {expected_version:04}; found {:04}",
                 migration.version
             ));
         }
+        expected_version += 1;
 
         migrations.push(compile_explicit_migration(
             db_root,
@@ -585,15 +588,33 @@ fn push_payload(bytes: &[u8], payload_bytes: &mut Vec<u8>) -> PayloadSlice {
     }
 }
 
+/// First version of the reserved block for local additions, such as poster
+/// overlays, kept far above upstream's numbering so upstream's own migrations
+/// never collide with them. Versions are contiguous from 0001, then may jump
+/// once to this block, which is contiguous in turn.
+pub const LOCAL_MIGRATION_START: i64 = 9001;
+
+/// The version expected next: `expected`, or the start of the local block
+/// when `version` opens it.
+fn next_expected_version(expected: i64, version: i64) -> i64 {
+    if version == LOCAL_MIGRATION_START && expected < LOCAL_MIGRATION_START {
+        LOCAL_MIGRATION_START
+    } else {
+        expected
+    }
+}
+
 fn validate_contiguous_versions(migrations: &[CompiledMigration]) -> Result<(), String> {
-    for (index, migration) in migrations.iter().enumerate() {
-        let expected = index as i64 + 1;
+    let mut expected = 1;
+    for migration in migrations {
+        expected = next_expected_version(expected, migration.version);
         if migration.version != expected {
             return Err(format!(
                 "migration versions must be contiguous from 0001; expected {expected:04}, found {:04}",
                 migration.version
             ));
         }
+        expected += 1;
     }
     Ok(())
 }
@@ -609,6 +630,48 @@ mod tests {
     fn source_postgres_0254_baseline_sql() -> String {
         fs::read_to_string(source_db_root().join("postgres/baselines/0254_baseline.sql"))
             .expect("read PostgreSQL 0254 baseline")
+    }
+
+    #[test]
+    fn versions_may_jump_once_to_the_local_block() {
+        let expect = |versions: &[i64]| {
+            let mut expected = 1;
+            for version in versions {
+                expected = next_expected_version(expected, *version);
+                if *version != expected {
+                    return false;
+                }
+                expected += 1;
+            }
+            true
+        };
+        assert!(expect(&[1, 2, 3]));
+        assert!(expect(&[1, 2, 3, 9001, 9002]));
+        assert!(!expect(&[1, 3]), "a gap below the local block");
+        assert!(!expect(&[1, 2, 9002]), "the local block starts at 9001");
+        assert!(!expect(&[1, 2, 9001, 9003]), "a gap inside the local block");
+        assert!(!expect(&[1, 2, 500]), "only the local block may jump");
+    }
+
+    #[test]
+    fn poster_overlays_are_the_local_block_after_upstream() {
+        let bundle = compile_source_bundle(&source_db_root()).expect("compile migration catalog");
+        let versions = bundle
+            .catalog
+            .migrations
+            .iter()
+            .map(|migration| migration.version)
+            .collect::<Vec<_>>();
+        let local = versions
+            .iter()
+            .position(|version| *version == LOCAL_MIGRATION_START)
+            .expect("poster overlays at 9001");
+        assert_eq!(
+            versions[local - 1] as usize,
+            local,
+            "upstream runs 0001..N without gaps"
+        );
+        assert_eq!(&versions[local..], &[LOCAL_MIGRATION_START]);
     }
 
     #[test]

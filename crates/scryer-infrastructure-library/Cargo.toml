@@ -6,7 +6,7 @@ publish = false
 
 [features]
 default = ["image-processing"]
-image-processing = ["dep:fast_image_resize", "dep:image", "dep:kamadak-exif", "dep:zune-core", "dep:rayon"]
+image-processing = ["dep:fast_image_resize", "dep:image", "dep:kamadak-exif", "dep:zune-core", "dep:rayon", "dep:resvg", "dep:img-parts"]
 
 [dependencies]
 scryer-domain = { path = "../scryer-domain" }
@@ -22,9 +22,15 @@ async-trait = { workspace = true }
 blake3 = "1"
 chrono = { workspace = true }
 fast_image_resize = { version = "6", optional = true }
+# Poster overlays: resvg renders SVG templates (its `text` feature only, so
+# glyphs come from the embedded font and never from system fonts); img-parts
+# writes and reads the overlay marker segment without re-encoding.
+img-parts = { version = "0.4", optional = true }
 image = { version = "0.25", default-features = false, features = ["avif", "jpeg", "png", "webp"], optional = true }
 kamadak-exif = { version = "0.6", optional = true }
+quick-xml = { workspace = true }
 rayon = { version = "=1.12.0", optional = true }
+resvg = { version = "0.48", default-features = false, features = ["text"], optional = true }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider", "http2", "gzip", "brotli", "zstd", "deflate", "stream"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

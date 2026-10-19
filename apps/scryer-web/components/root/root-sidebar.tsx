@@ -46,6 +46,7 @@ import {
   Heart,
   Inbox,
   ListChecks,
+  Layers,
   MessagesSquare,
   Palette,
   Network,
@@ -225,6 +226,7 @@ const TOP_NAV_GROUPS: TopNavGroupDefinition[] = [
       { kind: "settings", id: "downloadClients", icon: Download },
       { kind: "settings", id: "proxies", icon: Network },
       { kind: "settings", id: "mediaServers", icon: Server },
+      { kind: "settings", id: "posterOverlays", icon: Layers },
       { kind: "settings", id: "notifications", icon: Bell },
     ],
   },
@@ -452,6 +454,12 @@ const settingsEntries: Array<{
     id: "subtitles",
     label: (t) => t("settings.subtitles"),
     icon: Captions,
+    requiredAnyAppPermission: [APP_PERMISSIONS.manageCatalogSettings],
+  },
+  {
+    id: "posterOverlays",
+    label: (t) => t("settings.posterOverlays.title"),
+    icon: Layers,
     requiredAnyAppPermission: [APP_PERMISSIONS.manageCatalogSettings],
   },
 ];

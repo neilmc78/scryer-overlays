@@ -781,8 +781,12 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     // Value-dependent indexer config fields add `pluginConfigFields`, the read
     // the indexer form repeats as trigger fields change: 194->195.
     assert!(query_field_names.contains(&"pluginConfigFields"));
+    // Poster overlays add the settings overview, template validation, the
+    // editor's live template preview and `posterOverlayPass`: 195->199.
+    assert!(query_field_names.contains(&"previewPosterOverlayTemplate"));
+    assert!(query_field_names.contains(&"posterOverlayPass"));
     assert_eq!(
-        query_field_count, 195,
+        query_field_count, 199,
         "query fields: {query_field_names:?}"
     );
     // First-class proxies (WP4) add one mutation, resetProxyHostKey: SSH host
@@ -829,8 +833,10 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     // Episode-level Fix Match adds `reassignEpisodeFile`, which moves one
     // imported file to other episodes of its title: 273->274.
     assert!(mutation_field_names.contains(&"reassignEpisodeFile"));
+    // Poster overlays add six: per-library enablement, render settings,
+    // template save and delete, rebuild, and revert all: 274->280.
     assert_eq!(
-        mutation_field_count, 274,
+        mutation_field_count, 280,
         "mutation fields: {mutation_field_names:?}"
     );
     // Cross-library transfer (T082, FR-055/FR-056) surfaces destination-title
@@ -1184,13 +1190,20 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     ] {
         assert!(public_type_names.contains(&name), "missing type {name}");
     }
+    // Poster overlays add ten payloads (overview, settings, library,
+    // template, counts, validation, preview, the two sample-option types, and
+    // the rebuild pass) and four inputs (library, settings, template save,
+    // preview): public types 972->986, OBJECT 526->536, INPUT_OBJECT 238->242.
+    assert!(public_type_names.contains(&"PosterOverlayTemplatePreview"));
+    assert!(public_type_names.contains(&"PreviewPosterOverlayTemplateInput"));
+    assert!(public_type_names.contains(&"PosterOverlayPass"));
     assert_eq!(
         public_types.len(),
-        972,
+        986,
         "public types: {public_type_names:?}"
     );
-    assert_eq!(kind_count("OBJECT"), 526);
-    assert_eq!(kind_count("INPUT_OBJECT"), 238);
+    assert_eq!(kind_count("OBJECT"), 536);
+    assert_eq!(kind_count("INPUT_OBJECT"), 242);
     assert_eq!(kind_count("ENUM"), 196);
     assert_eq!(kind_count("SCALAR"), 10);
     assert_eq!(kind_count("UNION"), 2);
