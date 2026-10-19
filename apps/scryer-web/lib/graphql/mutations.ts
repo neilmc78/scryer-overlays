@@ -3399,6 +3399,30 @@ export const deletePosterOverlayTemplateMutation = `mutation DeletePosterOverlay
   deletePosterOverlayTemplate(id: $id)
 }`;
 
+export const setPlexCollectionListMutation = `mutation SetPlexCollectionList($subscriptionId: ID!, $enabled: Boolean!) {
+  setPlexCollectionList(subscriptionId: $subscriptionId, enabled: $enabled)
+}`;
+
+export const movePlexCollectionListMutation = `mutation MovePlexCollectionList($subscriptionId: ID!, $up: Boolean!) {
+  movePlexCollectionList(subscriptionId: $subscriptionId, up: $up)
+}`;
+
+export const movePlexCollectionProviderMutation = `mutation MovePlexCollectionProvider($provider: String!, $up: Boolean!) {
+  movePlexCollectionProvider(provider: $provider, up: $up)
+}`;
+
+export const setPlexCollectionPosterMutation = `mutation SetPlexCollectionPoster($input: PlexCollectionPosterInput!) {
+  setPlexCollectionPoster(input: $input)
+}`;
+
+export const uploadPlexCollectionLogoMutation = `mutation UploadPlexCollectionLogo($subscriptionId: ID!, $imageBase64: String!) {
+  uploadPlexCollectionLogo(subscriptionId: $subscriptionId, imageBase64: $imageBase64)
+}`;
+
+export const syncPlexCollectionsMutation = `mutation SyncPlexCollections {
+  syncPlexCollections
+}`;
+
 export const rebuildPosterOverlaysMutation = `mutation RebuildPosterOverlays {
   rebuildPosterOverlays
 }`;

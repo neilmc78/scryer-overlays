@@ -782,8 +782,12 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     // editor's live template preview and `posterOverlayPass`: 194->198.
     assert!(query_field_names.contains(&"previewPosterOverlayTemplate"));
     assert!(query_field_names.contains(&"posterOverlayPass"));
+    // Plex collections from lists add `plexCollectionLists`: 198->199.
+    assert!(query_field_names.contains(&"plexCollectionLists"));
+    // Their posters add `previewPlexCollectionPoster`: 199->200.
+    assert!(query_field_names.contains(&"previewPlexCollectionPoster"));
     assert_eq!(
-        query_field_count, 198,
+        query_field_count, 200,
         "query fields: {query_field_names:?}"
     );
     // First-class proxies (WP4) add one mutation, resetProxyHostKey: SSH host
@@ -826,9 +830,14 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     // while the request-rule instance gate setter goes: 275->273.
     // Keeping a title adds `createOperatorKeepClaim`: 273->274.
     // Poster overlays add six: per-library enablement, render settings,
-    // template save and delete, rebuild, and revert all: 274->280.
+    // template save and delete, rebuild, and revert all: 274->280. Plex
+    // collections from lists add `setPlexCollectionList` and
+    // `syncPlexCollections`: 280->282. Ordering them adds
+    // `movePlexCollectionList` and `movePlexCollectionProvider`: 282->284.
+    // Their posters add `setPlexCollectionPoster`: 284->285, and custom
+    // logos `uploadPlexCollectionLogo`: 285->286.
     assert_eq!(
-        mutation_field_count, 280,
+        mutation_field_count, 286,
         "mutation fields: {mutation_field_names:?}"
     );
     // Cross-library transfer (T082, FR-055/FR-056) surfaces destination-title
@@ -1175,9 +1184,16 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     assert!(public_type_names.contains(&"PosterOverlayTemplatePreview"));
     assert!(public_type_names.contains(&"PreviewPosterOverlayTemplateInput"));
     assert!(public_type_names.contains(&"PosterOverlayPass"));
-    assert_eq!(public_types.len(), 981);
-    assert_eq!(kind_count("OBJECT"), 533);
-    assert_eq!(kind_count("INPUT_OBJECT"), 241);
+    // Plex collections from lists add their list payload: public types
+    // 981->982, OBJECT 533->534.
+    assert!(public_type_names.contains(&"PlexCollectionList"));
+    // Their posters add the design input and the preview payload: public
+    // types 982->984, OBJECT 534->535, INPUT_OBJECT 241->242.
+    assert!(public_type_names.contains(&"PlexCollectionPosterInput"));
+    assert!(public_type_names.contains(&"PlexCollectionPosterPreview"));
+    assert_eq!(public_types.len(), 984);
+    assert_eq!(kind_count("OBJECT"), 535);
+    assert_eq!(kind_count("INPUT_OBJECT"), 242);
     assert_eq!(kind_count("ENUM"), 195);
     assert_eq!(kind_count("SCALAR"), 10);
     assert_eq!(kind_count("UNION"), 2);

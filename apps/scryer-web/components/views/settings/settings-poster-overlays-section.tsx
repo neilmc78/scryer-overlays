@@ -3,6 +3,7 @@ import { Edit, Plus, RefreshCw, Trash2, Undo2 } from "lucide-react";
 
 import { AddNewButton } from "@/components/common/add-new-button";
 import { SettingsPosterOverlayTemplateEditor } from "@/components/views/settings/settings-poster-overlay-template-editor";
+import { SettingsCollectionPosters } from "@/components/views/settings/settings-collection-posters";
 import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
 import { Input } from "@/components/ui/input";
@@ -426,6 +427,14 @@ export function SettingsPosterOverlaysSection({
           ) : null}
         </div>
       </section>
+
+      <SettingsCollectionPosters
+        panelClass={PANEL_CLASS}
+        headerClass={PANEL_HEADER_CLASS}
+        titleClass={PANEL_TITLE_CLASS}
+        bodyClass={PANEL_BODY_CLASS}
+        mutedClass={MUTED_TEXT_CLASS}
+      />
     </div>
   );
 }
