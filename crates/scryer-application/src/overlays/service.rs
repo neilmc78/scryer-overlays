@@ -30,6 +30,8 @@ pub struct AppPosterOverlayServices {
     pub(crate) repository: Arc<dyn PosterOverlayRepository>,
     pub(crate) engine: Arc<dyn PosterOverlayEngine>,
     pub(crate) wake: Arc<tokio::sync::Notify>,
+    /// Asks the worker for a Plex list collection sync.
+    pub(crate) collections_wake: Arc<tokio::sync::Notify>,
     /// The library-wide pass in progress, if any. Kept in memory so the
     /// settings page can follow a rebuild without querying the database.
     pass: Arc<Mutex<PosterOverlayPassProgress>>,
@@ -50,6 +52,7 @@ impl AppPosterOverlayServices {
             repository,
             engine,
             wake: Arc::new(tokio::sync::Notify::new()),
+            collections_wake: Arc::new(tokio::sync::Notify::new()),
             pass: Arc::new(Mutex::new(PosterOverlayPassProgress::default())),
             plex: None,
             any_library_enabled: Arc::new(AtomicBool::new(true)),

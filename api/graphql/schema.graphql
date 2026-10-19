@@ -21164,6 +21164,80 @@ type MutationRoot {
 	again. Returns how many posters were reverted.
 	"""
 	revertAllPosterOverlays: Int!
+	"""
+	Mirror a public list into Plex as a collection named after it, or
+	stop. Stopping takes the list's items back out of the collection.
+	Requires list management permission.
+	"""
+	setPlexCollectionList(
+		"""
+		The public list.
+		"""
+		subscriptionId: ID!,
+		"""
+		Whether the list is mirrored into Plex.
+		"""
+		enabled: Boolean!
+	): Boolean!
+	"""
+	Move a mirrored list one place up or down inside its provider's block
+	of Plex sort numbers. Requires list management permission.
+	"""
+	movePlexCollectionList(
+		"""
+		The mirrored public list.
+		"""
+		subscriptionId: ID!,
+		"""
+		Up towards the provider's first number, else down.
+		"""
+		up: Boolean!
+	): Boolean!
+	"""
+	Move a provider's whole block of collections one block up or down,
+	trading places with the provider there. Requires list management
+	permission.
+	"""
+	movePlexCollectionProvider(
+		"""
+		The list provider, such as `imdb`.
+		"""
+		provider: String!,
+		"""
+		Up towards `!1000_`, else down.
+		"""
+		up: Boolean!
+	): Boolean!
+	"""
+	Choose a mirrored list's collection poster, then sync it to Plex.
+	Requires list management permission.
+	"""
+	setPlexCollectionPoster(
+		"""
+		The poster design.
+		"""
+		input: PlexCollectionPosterInput!
+	): Boolean!
+	"""
+	Upload a PNG, JPEG or WebP image (at most 2 MB) as a mirrored list's
+	collection poster logo, replacing any earlier one, then sync. Choose
+	it with `logoSource: "custom"`. Requires list management permission.
+	"""
+	uploadPlexCollectionLogo(
+		"""
+		The mirrored public list.
+		"""
+		subscriptionId: ID!,
+		"""
+		The image, base64-encoded.
+		"""
+		imageBase64: String!
+	): Boolean!
+	"""
+	Sync every mirrored list into its Plex collection now. Requires list
+	management permission.
+	"""
+	syncPlexCollections: Boolean!
 }
 
 """
@@ -22078,6 +22152,130 @@ type PendingReleasesPayload {
 	Number of matching pending releases across all pages.
 	"""
 	totalCount: Int!
+}
+
+"""
+A public list and its Plex collection, which carries the list's name.
+"""
+type PlexCollectionList {
+	"""
+	The list subscription.
+	"""
+	subscriptionId: ID!
+	"""
+	The list's name, used as the collection's name in Plex.
+	"""
+	name: String!
+	"""
+	Whether the list is mirrored into Plex.
+	"""
+	enabled: Boolean!
+	"""
+	Titles on the list that are in the library.
+	"""
+	titles: Int!
+	"""
+	Plex items currently in the collection.
+	"""
+	pushedItems: Int!
+	"""
+	Plex items whose last collection change failed.
+	"""
+	failedItems: Int!
+	"""
+	One of those failures, if any.
+	"""
+	lastError: String
+	"""
+	The list's provider, whose block of sort numbers it sits in.
+	"""
+	provider: String!
+	"""
+	The provider's block: 1 sorts as `!1000_`, 9 as `!9000_`.
+	"""
+	slot: Int
+	"""
+	Place inside the provider's block, from 0, while mirrored.
+	"""
+	position: Int
+	"""
+	The sort title Plex sorts the collection by, while mirrored.
+	"""
+	sortTitle: String
+	"""
+	Whether Scryer draws the collection's poster.
+	"""
+	posterEnabled: Boolean!
+	"""
+	The poster's colour as `#rrggbb`: the chosen one, else the provider's.
+	"""
+	posterBackground: String!
+	"""
+	The poster's shortened label; null shows the list's name.
+	"""
+	posterText: String
+	"""
+	Whether the provider's logo is drawn.
+	"""
+	posterLogo: Boolean!
+	"""
+	Whether Scryer has a logo for the provider.
+	"""
+	posterLogoAvailable: Boolean!
+	"""
+	Which logo is drawn: `provider`, `custom` (the uploaded image) or
+	`none`.
+	"""
+	posterLogoSource: String!
+	"""
+	Whether an image has been uploaded for the list.
+	"""
+	posterCustomLogo: Boolean!
+}
+
+"""
+A collection poster design. `enabled` is ignored by the preview.
+"""
+input PlexCollectionPosterInput {
+	"""
+	The mirrored public list.
+	"""
+	subscriptionId: ID!
+	"""
+	Whether Scryer draws the collection's poster.
+	"""
+	enabled: Boolean!
+	"""
+	`#rrggbb`; null or empty uses the provider's colour.
+	"""
+	background: String
+	"""
+	A shorter label; null or empty shows the list's name.
+	"""
+	text: String
+	"""
+	Whether the provider's logo is drawn; ignored when `logoSource` is
+	given.
+	"""
+	showLogo: Boolean!
+	"""
+	`provider`, `custom` (the uploaded image) or `none`.
+	"""
+	logoSource: String
+}
+
+"""
+A collection poster drawn for the editor.
+"""
+type PlexCollectionPosterPreview {
+	"""
+	`data:image/jpeg;base64,...`; null when the design was rejected.
+	"""
+	image: String
+	"""
+	Why the design was rejected; null on success.
+	"""
+	error: String
 }
 
 """
@@ -25776,6 +25974,21 @@ type QueryRoot {
 	access.
 	"""
 	posterOverlayPass: PosterOverlayPass!
+	"""
+	Public lists and whether each is mirrored into Plex as a collection.
+	Requires list management permission.
+	"""
+	plexCollectionLists: [PlexCollectionList!]!
+	"""
+	Draw a collection poster design without saving or pushing it.
+	Requires list management permission.
+	"""
+	previewPlexCollectionPoster(
+		"""
+		The design to draw.
+		"""
+		input: PlexCollectionPosterInput!
+	): PlexCollectionPosterPreview!
 	"""
 	Check a template against the format without saving it.
 	"""

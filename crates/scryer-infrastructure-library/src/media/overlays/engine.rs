@@ -20,13 +20,13 @@ use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use scryer_application::overlays::{
-    DEFAULT_OVERLAY_PARALLELISM, MAX_OVERLAY_PARALLELISM, PosterOverlayEngine,
-    PosterOverlayPreviewRequest, PosterOverlayRenderRequest, PosterOverlayRendered,
-    PosterOverlayVariant,
+    CollectionPosterRequest, DEFAULT_OVERLAY_PARALLELISM, MAX_OVERLAY_PARALLELISM,
+    PosterOverlayEngine, PosterOverlayPreviewRequest, PosterOverlayRenderRequest,
+    PosterOverlayRendered, PosterOverlayVariant,
 };
 use scryer_application::{AppError, AppResult};
 
-use super::render::{self, BUILTIN_TEMPLATE, OverlayRenderer};
+use super::render::{self, BUILTIN_TEMPLATE, OverlayRenderer, normalize_collection_logo};
 use crate::media::images::processor::HttpTitleImageProcessor;
 
 const MAX_TITLE_ID_LEN: usize = 128;
@@ -115,6 +115,11 @@ impl OverlayEngine {
         self.root.join("originals")
     }
 
+    /// Logos uploaded for collection posters, one PNG per list.
+    fn collection_logos_dir(&self) -> PathBuf {
+        self.root.join("collection-logos")
+    }
+
     fn original_path(&self, title_id: &str) -> AppResult<PathBuf> {
         Ok(self.originals_dir().join(checked_title_id(title_id)?))
     }
@@ -144,6 +149,18 @@ fn build_pool(threads: usize) -> AppResult<rayon::ThreadPool> {
 
 /// Title ids become path components, so only a conservative character set is
 /// accepted. Anything else is refused before a path is built.
+/// Uploaded collection logos larger than this are refused.
+pub const MAX_COLLECTION_LOGO_BYTES: usize = 2 * 1024 * 1024;
+
+/// A list subscription id usable as a file name: the same rule as title ids.
+fn checked_collection_id(subscription_id: &str) -> AppResult<&str> {
+    checked_title_id(subscription_id).map_err(|_| {
+        AppError::Validation(format!(
+            "list id is not usable as a logo path: {subscription_id:?}"
+        ))
+    })
+}
+
 fn checked_title_id(title_id: &str) -> AppResult<&str> {
     let valid = !title_id.is_empty()
         && title_id.len() <= MAX_TITLE_ID_LEN
@@ -265,6 +282,65 @@ impl PosterOverlayEngine for OverlayEngine {
         });
         receive.await.map_err(|error| {
             AppError::Repository(format!("overlay preview was dropped: {error}"))
+        })?
+    }
+
+    async fn store_collection_logo(&self, subscription_id: &str, bytes: Vec<u8>) -> AppResult<()> {
+        let name = format!("{}.png", checked_collection_id(subscription_id)?);
+        if bytes.len() > MAX_COLLECTION_LOGO_BYTES {
+            return Err(AppError::Validation(format!(
+                "logos may be at most {} MB",
+                MAX_COLLECTION_LOGO_BYTES / (1024 * 1024)
+            )));
+        }
+        let png = {
+            let (send, receive) = tokio::sync::oneshot::channel();
+            self.pool().spawn(move || {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    normalize_collection_logo(&bytes)
+                }))
+                .unwrap_or_else(|_| Err(AppError::Repository("reading the logo panicked".into())));
+                let _ = send.send(result);
+            });
+            receive.await.map_err(|error| {
+                AppError::Repository(format!("reading the logo was dropped: {error}"))
+            })??
+        };
+        write_atomic(&self.collection_logos_dir(), &name, &png).await
+    }
+
+    async fn read_collection_logo(&self, subscription_id: &str) -> AppResult<Option<Vec<u8>>> {
+        let name = format!("{}.png", checked_collection_id(subscription_id)?);
+        read_optional(&self.collection_logos_dir().join(name)).await
+    }
+
+    async fn render_collection_poster(
+        &self,
+        request: CollectionPosterRequest,
+    ) -> AppResult<Vec<u8>> {
+        let renderer = self.renderer.clone();
+        let (send, receive) = tokio::sync::oneshot::channel();
+        self.pool().spawn(move || {
+            if send.is_closed() {
+                return;
+            }
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                renderer.render_collection_poster(
+                    request.background,
+                    request.logo.as_deref(),
+                    request.custom_logo.as_deref(),
+                    &request.text,
+                )
+            }))
+            .unwrap_or_else(|_| {
+                Err(AppError::Repository(
+                    "collection poster render panicked".into(),
+                ))
+            });
+            let _ = send.send(result);
+        });
+        receive.await.map_err(|error| {
+            AppError::Repository(format!("collection poster render was dropped: {error}"))
         })?
     }
 

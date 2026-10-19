@@ -180,6 +180,110 @@ impl OverlayRenderer {
     }
 }
 
+/// Collection posters are drawn at this size, the 2:3 shape of a poster.
+pub const COLLECTION_POSTER_WIDTH: u32 = 1000;
+pub const COLLECTION_POSTER_HEIGHT: u32 = 1500;
+
+impl OverlayRenderer {
+    /// A collection poster: `background` with a soft glow at its centre,
+    /// the bundled `logo` in the upper half and `text` fitted into the
+    /// lower third. Returns a JPEG.
+    pub fn render_collection_poster(
+        &self,
+        background: [u8; 3],
+        logo: Option<&str>,
+        custom_logo: Option<&[u8]>,
+        text: &str,
+    ) -> AppResult<Vec<u8>> {
+        let mut base = glow_background(background);
+        // An uploaded logo takes the place of the bundled one.
+        let logo = if let Some(bytes) = custom_logo {
+            place_custom_logo(&mut base, bytes)?;
+            None
+        } else {
+            logo
+        };
+        let logo = logo
+            .filter(|name| template::LOGOS.iter().any(|(logo, _)| logo == name))
+            .map(|name| {
+                format!(
+                    r##"<use href="#{}{name}" x="150" y="330" width="700" height="460"/>"##,
+                    template::LOGO_ID_PREFIX
+                )
+            })
+            .unwrap_or_default();
+        // Braces would read as placeholders; the label is plain text.
+        let label = text.replace(['{', '}'], "");
+        let svg = format!(
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {COLLECTION_POSTER_WIDTH} {COLLECTION_POSTER_HEIGHT}" data-scryer-version="1">{logo}<text x="500" y="0" text-anchor="middle" font-weight="700" font-size="150" fill="#ffffff" data-scryer-fit="70 1020 860 300" data-scryer-fit-lines="2">{}</text></svg>"##,
+            quick_xml::escape::escape(label.trim())
+        );
+        self.draw(&mut base, &svg, &BTreeMap::new())?;
+        encode_jpeg(&DynamicImage::ImageRgba8(base).to_rgb8().into())
+    }
+}
+
+/// Where a collection poster's logo goes: `x y width height`.
+const LOGO_BOX: (u32, u32, u32, u32) = (150, 330, 700, 460);
+/// Uploaded logos are kept no larger than this on their long side.
+pub const MAX_COLLECTION_LOGO_DIMENSION: u32 = 1400;
+
+/// Scale an uploaded logo into the logo box, keeping its shape, and blend it
+/// centred onto `base`.
+fn place_custom_logo(base: &mut RgbaImage, bytes: &[u8]) -> AppResult<()> {
+    let (x, y, width, height) = LOGO_BOX;
+    let logo = DynamicImage::ImageRgba8(decode_original(bytes)?)
+        .resize(width, height, FilterType::Lanczos3)
+        .to_rgba8();
+    let left = x + (width - logo.width()) / 2;
+    let top = y + (height - logo.height()) / 2;
+    image::imageops::overlay(base, &logo, i64::from(left), i64::from(top));
+    Ok(())
+}
+
+/// An uploaded logo checked and stored as PNG: PNG, JPEG or WebP only,
+/// decoded within the usual limits and shrunk to at most
+/// `MAX_COLLECTION_LOGO_DIMENSION` on its long side.
+pub fn normalize_collection_logo(bytes: &[u8]) -> AppResult<Vec<u8>> {
+    let format = image::guess_format(bytes)
+        .map_err(|_| AppError::Validation("the logo is not an image Scryer can read".into()))?;
+    if !matches!(
+        format,
+        image::ImageFormat::Png | image::ImageFormat::Jpeg | image::ImageFormat::WebP
+    ) {
+        return Err(AppError::Validation(
+            "logos may be PNG, JPEG or WebP images".into(),
+        ));
+    }
+    let mut image = DynamicImage::ImageRgba8(decode_original(bytes)?);
+    if image.width().max(image.height()) > MAX_COLLECTION_LOGO_DIMENSION {
+        image = image.resize(
+            MAX_COLLECTION_LOGO_DIMENSION,
+            MAX_COLLECTION_LOGO_DIMENSION,
+            FilterType::Lanczos3,
+        );
+    }
+    let mut png = Vec::new();
+    image
+        .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
+        .map_err(|error| AppError::Repository(format!("could not store the logo: {error}")))?;
+    Ok(png)
+}
+
+/// `color` lit from just above the centre and darkening towards the edges.
+fn glow_background(color: [u8; 3]) -> RgbaImage {
+    let (width, height) = (COLLECTION_POSTER_WIDTH, COLLECTION_POSTER_HEIGHT);
+    let (cx, cy) = (width as f32 / 2.0, height as f32 * 0.42);
+    let reach = (cx * cx + cy.max(height as f32 - cy).powi(2)).sqrt();
+    RgbaImage::from_fn(width, height, |x, y| {
+        let distance = ((x as f32 - cx).powi(2) + (y as f32 - cy).powi(2)).sqrt() / reach;
+        // 1.25x brighter at the centre, 0.55x at the far corners.
+        let light = 1.25 - 0.7 * distance.clamp(0.0, 1.0);
+        let channel = |value: u8| (f32::from(value) * light).round().clamp(0.0, 255.0) as u8;
+        image::Rgba([channel(color[0]), channel(color[1]), channel(color[2]), 255])
+    })
+}
+
 /// Neutral slate gradient standing in for a poster.
 /// Measures text with the embedded font, by laying it out the way the
 /// renderer will. Each word is measured once per render.
