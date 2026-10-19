@@ -3163,6 +3163,74 @@ file = "postgres/migrations/9001_poster_overlays.sql"
 engine = "postgres"
 scope = "all"
 
+[[migration]]
+version = 9002
+description = "plex list collections"
+checksum_algo = "blake3"
+
+[[migration.steps]]
+kind = "sql"
+file = "migrations/9002_plex_list_collections.sql"
+engine = "sqlite"
+scope = "all"
+
+[[migration.steps]]
+kind = "sql"
+file = "postgres/migrations/9002_plex_list_collections.sql"
+engine = "postgres"
+scope = "all"
+
+[[migration]]
+version = 9003
+description = "plex collection order"
+checksum_algo = "blake3"
+
+[[migration.steps]]
+kind = "sql"
+file = "migrations/9003_plex_collection_order.sql"
+engine = "sqlite"
+scope = "all"
+
+[[migration.steps]]
+kind = "sql"
+file = "postgres/migrations/9003_plex_collection_order.sql"
+engine = "postgres"
+scope = "all"
+
+[[migration]]
+version = 9004
+description = "plex collection posters"
+checksum_algo = "blake3"
+
+[[migration.steps]]
+kind = "sql"
+file = "migrations/9004_plex_collection_posters.sql"
+engine = "sqlite"
+scope = "all"
+
+[[migration.steps]]
+kind = "sql"
+file = "postgres/migrations/9004_plex_collection_posters.sql"
+engine = "postgres"
+scope = "all"
+
+[[migration]]
+version = 9005
+description = "plex collection custom logos"
+checksum_algo = "blake3"
+
+[[migration.steps]]
+kind = "sql"
+file = "migrations/9005_plex_collection_custom_logos.sql"
+engine = "sqlite"
+scope = "all"
+
+[[migration.steps]]
+kind = "sql"
+file = "postgres/migrations/9005_plex_collection_custom_logos.sql"
+engine = "postgres"
+scope = "all"
+
 [[baseline]]
 through_version = 254
 file = "baselines/0254_baseline.sql"

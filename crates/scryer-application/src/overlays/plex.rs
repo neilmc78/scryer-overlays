@@ -49,8 +49,8 @@ const PLEX_SERVICE_HOST: &str = "plex.tv";
 
 #[derive(Clone)]
 pub(crate) struct PlexPush {
-    connections: Arc<dyn MediaServerConnectionRepository>,
-    client: Arc<dyn PosterOverlayPlexClient>,
+    pub(super) connections: Arc<dyn MediaServerConnectionRepository>,
+    pub(super) client: Arc<dyn PosterOverlayPlexClient>,
     cache: Arc<Mutex<Option<(Instant, Vec<MediaServerConnection>)>>>,
     maintenance: Arc<Mutex<MaintenanceCache>>,
     /// When deferred work should run: the end of the earliest maintenance
@@ -75,7 +75,7 @@ impl PlexPush {
     /// Whether `connection` is inside its maintenance hours now. If it is,
     /// the end of the window is remembered so the worker can run a pass
     /// then. A server whose hours cannot be read is treated as available.
-    async fn in_maintenance(&self, connection: &MediaServerConnection) -> bool {
+    pub(super) async fn in_maintenance(&self, connection: &MediaServerConnection) -> bool {
         let cached = self
             .maintenance
             .lock()
@@ -155,7 +155,7 @@ impl PlexPush {
     }
 
     /// Enabled Plex connections with a selected server and a token.
-    async fn connections(&self) -> AppResult<Vec<MediaServerConnection>> {
+    pub(super) async fn connections(&self) -> AppResult<Vec<MediaServerConnection>> {
         if let Ok(cache) = self.cache.lock()
             && let Some((at, connections)) = cache.as_ref()
             && at.elapsed() < CONNECTION_CACHE_TTL

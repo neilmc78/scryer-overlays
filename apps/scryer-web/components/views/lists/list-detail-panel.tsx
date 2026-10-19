@@ -46,6 +46,7 @@ import {
 import { ListCoverageBar } from "./list-coverage-bar";
 import { ListMembershipTitle } from "./list-membership-title";
 import { ListPreviewSummary } from "./list-preview-summary";
+import { PlexCollectionSetting } from "./plex-collection-setting";
 import { ProviderTile } from "./provider-tile";
 import { SimklAttribution } from "./simkl-attribution";
 import type { ListDetailState } from "./lists-view";
@@ -242,6 +243,10 @@ export function ListDetailPanel({
                 </a>
               ) : null}
             </LabeledFieldset>
+
+            {canManageLists && subscription.scope === "PUBLIC" ? (
+              <PlexCollectionSetting subscriptionId={subscription.id} />
+            ) : null}
 
             <LabeledFieldset label={t("lists.preview.nextSyncHeading")}>
               <Button

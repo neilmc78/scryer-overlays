@@ -1116,6 +1116,27 @@ pub const BACKUP_TABLE_CATALOG: &[BackupTableCatalogEntry] = &[
         table: "plugin_catalog_status",
         classification: BackupTableClassification::Export,
     },
+    // Plex collections from lists: which lists are mirrored is operator
+    // configuration; which items were added is reset, so the first pass after
+    // a restore adds them again.
+    BackupTableCatalogEntry {
+        table: "plex_collection_lists",
+        classification: BackupTableClassification::Export,
+    },
+    BackupTableCatalogEntry {
+        table: "plex_collection_members",
+        classification: BackupTableClassification::ResetOnRestore,
+    },
+    // Each provider's block of collection sort numbers is configuration;
+    // which sort title was pushed to which collection is reset.
+    BackupTableCatalogEntry {
+        table: "plex_collection_providers",
+        classification: BackupTableClassification::Export,
+    },
+    BackupTableCatalogEntry {
+        table: "plex_collection_titles",
+        classification: BackupTableClassification::ResetOnRestore,
+    },
     BackupTableCatalogEntry {
         table: "plugin_installations",
         classification: BackupTableClassification::Export,
@@ -1436,6 +1457,8 @@ pub fn validate_restore_manifest_table_set(
                     | "poster_overlay_state"
                     | "poster_overlay_templates"
                     | "poster_overlay_plex_state" => number < 9001,
+                    "plex_collection_lists" | "plex_collection_members" => number < 9002,
+                    "plex_collection_providers" | "plex_collection_titles" => number < 9003,
                     _ => false,
                 })
             })

@@ -5,9 +5,9 @@
 //! cached for ten minutes. A connection without a selected server falls back
 //! to its `base_url`. The stored token is sent as a header, so it never
 //! appears in a URL or an error.
-//! Four calls: read an item, read its selected poster, upload a poster, and
-//! lock or unlock the poster field. Nothing here deletes anything on the
-//! server.
+//! Read an item, read its selected poster, upload a poster, lock or unlock
+//! the poster field, and add an item to or take it out of named collections.
+//! Nothing here deletes anything on the server.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -16,7 +16,8 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use reqwest::StatusCode;
 use scryer_application::overlays::{
-    PlexMaintenanceWindow, PlexMovieVersion, PlexPosterItem, PosterOverlayPlexClient,
+    PlexCollectionRef, PlexMaintenanceWindow, PlexMovieVersion, PlexPosterItem,
+    PosterOverlayPlexClient,
 };
 use scryer_application::{AppError, AppResult};
 use scryer_domain::MediaServerConnection;
@@ -380,6 +381,7 @@ impl PosterOverlayPlexClient for HttpPlexPosterClient {
         let item_type = match item.item_type.as_str() {
             "movie" => "1",
             "show" => "2",
+            "collection" => "18",
             other => {
                 return Err(AppError::Validation(format!(
                     "Plex items of type \"{other}\" have no lockable poster here"
@@ -410,6 +412,201 @@ impl PosterOverlayPlexClient for HttpPlexPosterClient {
             .map_err(|error| request_failed("poster lock", error))?;
         if !response.status().is_success() {
             return Err(bad_status("poster lock", response.status()));
+        }
+        Ok(())
+    }
+
+    async fn add_item_collections(
+        &self,
+        connection: &MediaServerConnection,
+        item: &PlexPosterItem,
+        names: &[String],
+    ) -> AppResult<()> {
+        if names.is_empty() {
+            return Ok(());
+        }
+        let mut url = self.item_edit_url(connection, item).await?;
+        {
+            let mut query = url.query_pairs_mut();
+            for (index, name) in names.iter().enumerate() {
+                query.append_pair(&format!("collection[{index}].tag.tag"), name);
+            }
+            query.append_pair("collection.locked", "1");
+        }
+        self.send_edit(connection, url, "collection update").await
+    }
+
+    async fn remove_item_collections(
+        &self,
+        connection: &MediaServerConnection,
+        item: &PlexPosterItem,
+        names: &[String],
+    ) -> AppResult<()> {
+        if names.is_empty() {
+            return Ok(());
+        }
+        // Plex splits a removal on commas, so a name holding one would also
+        // take the item out of other collections.
+        if names.iter().any(|name| name.contains(',')) {
+            return Err(AppError::Validation(
+                "a collection name with a comma cannot be removed safely".into(),
+            ));
+        }
+        let mut url = self.item_edit_url(connection, item).await?;
+        url.query_pairs_mut()
+            .append_pair("collection[].tag.tag-", &names.join(","))
+            .append_pair("collection.locked", "1");
+        self.send_edit(connection, url, "collection update").await
+    }
+
+    async fn find_collections(
+        &self,
+        connection: &MediaServerConnection,
+        name: &str,
+    ) -> AppResult<Vec<PlexCollectionRef>> {
+        let sections = self
+            .get_json(
+                connection,
+                self.server_url(connection, "library/sections").await?,
+                "section list",
+            )
+            .await?;
+        let section_ids = sections
+            .get("MediaContainer")
+            .and_then(|container| container.get("Directory"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|section| {
+                matches!(
+                    section.get("type").and_then(Value::as_str),
+                    Some("movie" | "show")
+                )
+            })
+            .filter_map(|section| json_string(section.get("key")))
+            .collect::<Vec<_>>();
+        let mut found = Vec::new();
+        for section_id in section_ids {
+            let mut url = self
+                .server_url(
+                    connection,
+                    &format!("library/sections/{section_id}/collections"),
+                )
+                .await?;
+            url.query_pairs_mut().append_pair("title", name);
+            let body = self.get_json(connection, url, "collection search").await?;
+            let matches = body
+                .get("MediaContainer")
+                .and_then(|container| container.get("Metadata"))
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                // Plex's title filter matches parts of titles too.
+                .filter(|collection| collection.get("title").and_then(Value::as_str) == Some(name))
+                .filter_map(|collection| json_string(collection.get("ratingKey")));
+            for rating_key in matches {
+                found.push(PlexCollectionRef {
+                    section_id: section_id.clone(),
+                    rating_key,
+                });
+            }
+        }
+        Ok(found)
+    }
+
+    async fn set_collection_sort_title(
+        &self,
+        connection: &MediaServerConnection,
+        collection: &PlexCollectionRef,
+        sort_title: &str,
+    ) -> AppResult<()> {
+        let mut url = self
+            .server_url(
+                connection,
+                &format!("library/sections/{}/all", collection.section_id),
+            )
+            .await?;
+        url.query_pairs_mut()
+            .append_pair("type", "18")
+            .append_pair("id", &collection.rating_key)
+            .append_pair("titleSort.value", sort_title)
+            .append_pair("titleSort.locked", "1");
+        self.send_edit(connection, url, "collection sort title")
+            .await
+    }
+}
+
+impl HttpPlexPosterClient {
+    /// The section edit URL for one movie or show, with its type and id.
+    async fn item_edit_url(
+        &self,
+        connection: &MediaServerConnection,
+        item: &PlexPosterItem,
+    ) -> AppResult<Url> {
+        let item_type = match item.item_type.as_str() {
+            "movie" => "1",
+            "show" => "2",
+            other => {
+                return Err(AppError::Validation(format!(
+                    "Plex items of type \"{other}\" cannot be edited here"
+                )));
+            }
+        };
+        if item.section_id.is_empty() {
+            return Err(AppError::Validation(
+                "the Plex item has no library section".into(),
+            ));
+        }
+        let mut url = self
+            .server_url(
+                connection,
+                &format!("library/sections/{}/all", item.section_id),
+            )
+            .await?;
+        url.query_pairs_mut()
+            .append_pair("type", item_type)
+            .append_pair("id", &item.rating_key);
+        Ok(url)
+    }
+
+    async fn get_json(
+        &self,
+        connection: &MediaServerConnection,
+        url: Url,
+        action: &str,
+    ) -> AppResult<Value> {
+        let response = self
+            .client
+            .get(url)
+            .header("Accept", "application/json")
+            .header("X-Plex-Token", token(connection)?)
+            .send()
+            .await
+            .map_err(|error| request_failed(action, error))?;
+        if !response.status().is_success() {
+            return Err(bad_status(action, response.status()));
+        }
+        response
+            .json::<Value>()
+            .await
+            .map_err(|_| AppError::Repository(format!("Plex {action} returned unreadable JSON")))
+    }
+
+    async fn send_edit(
+        &self,
+        connection: &MediaServerConnection,
+        url: Url,
+        action: &str,
+    ) -> AppResult<()> {
+        let response = self
+            .client
+            .put(url)
+            .header("X-Plex-Token", token(connection)?)
+            .send()
+            .await
+            .map_err(|error| request_failed(action, error))?;
+        if !response.status().is_success() {
+            return Err(bad_status(action, response.status()));
         }
         Ok(())
     }
@@ -675,6 +872,149 @@ mod tests {
             ]
         );
         assert!(versions[0].files[0].ends_with("{edition-Special Edition} (1986).mp4"));
+    }
+
+    #[tokio::test]
+    async fn adds_and_removes_named_collections_on_an_item() {
+        let server = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .and(path("/library/sections/3/all"))
+            .and(header("x-plex-token", "plex-token"))
+            .and(query_param("type", "1"))
+            .and(query_param("id", "42"))
+            .and(query_param("collection[0].tag.tag", "IMDB Top 250 Movies"))
+            .and(query_param("collection[1].tag.tag", "Oscar Winners"))
+            .and(query_param("collection.locked", "1"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/library/sections/3/all"))
+            .and(query_param("id", "42"))
+            .and(query_param("collection[].tag.tag-", "Old Name"))
+            .and(query_param("collection.locked", "1"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = HttpPlexPosterClient::new();
+        let connection = connection(&server.uri());
+        client
+            .add_item_collections(
+                &connection,
+                &movie(),
+                &["IMDB Top 250 Movies".into(), "Oscar Winners".into()],
+            )
+            .await
+            .unwrap();
+        client
+            .remove_item_collections(&connection, &movie(), &["Old Name".into()])
+            .await
+            .unwrap();
+        let error = client
+            .remove_item_collections(&connection, &movie(), &["A, B".into()])
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("comma"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn finds_collections_by_exact_title_and_sets_their_sort_title() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/library/sections"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "MediaContainer": {"Directory": [
+                    {"key": "1", "type": "movie"},
+                    {"key": "2", "type": "show"},
+                    {"key": "3", "type": "artist"}
+                ]}
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/library/sections/1/collections"))
+            .and(query_param("title", "IMDB Top 250 Movies"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "MediaContainer": {"Metadata": [
+                    {"ratingKey": "900", "title": "IMDB Top 250 Movies"},
+                    {"ratingKey": "901", "title": "IMDB Top 250 Movies (Kometa)"}
+                ]}
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/library/sections/2/collections"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "MediaContainer": {"size": 0}
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/library/sections/1/all"))
+            .and(query_param("type", "18"))
+            .and(query_param("id", "900"))
+            .and(query_param("titleSort.value", "!1010_IMDB Top 250 Movies"))
+            .and(query_param("titleSort.locked", "1"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = HttpPlexPosterClient::new();
+        let connection = connection(&server.uri());
+        let found = client
+            .find_collections(&connection, "IMDB Top 250 Movies")
+            .await
+            .unwrap();
+        assert_eq!(
+            found,
+            vec![PlexCollectionRef {
+                section_id: "1".into(),
+                rating_key: "900".into(),
+            }]
+        );
+        client
+            .set_collection_sort_title(&connection, &found[0], "!1010_IMDB Top 250 Movies")
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn uploads_and_locks_a_collection_poster() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/library/metadata/900/posters"))
+            .and(body_bytes(vec![9, 9]))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/library/sections/1/all"))
+            .and(query_param("type", "18"))
+            .and(query_param("id", "900"))
+            .and(query_param("thumb.locked", "1"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let collection = PlexPosterItem {
+            rating_key: "900".into(),
+            item_type: "collection".into(),
+            section_id: "1".into(),
+            thumb: None,
+        };
+        let client = HttpPlexPosterClient::new();
+        let connection = connection(&server.uri());
+        client
+            .upload_poster(&connection, &collection, vec![9, 9])
+            .await
+            .unwrap();
+        client
+            .set_poster_locked(&connection, &collection, true)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

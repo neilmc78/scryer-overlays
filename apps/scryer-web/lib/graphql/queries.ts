@@ -5814,6 +5814,19 @@ export const posterOverlayPassQuery = `query PosterOverlayPass {
   posterOverlayPass {${POSTER_OVERLAY_PASS_FIELDS}}
 }`;
 
+export const plexCollectionListsQuery = `query PlexCollectionLists {
+  plexCollectionLists {
+    subscriptionId name enabled titles pushedItems failedItems lastError
+    provider slot position sortTitle
+    posterEnabled posterBackground posterText posterLogo posterLogoAvailable
+    posterLogoSource posterCustomLogo
+  }
+}`;
+
+export const previewPlexCollectionPosterQuery = `query PreviewPlexCollectionPoster($input: PlexCollectionPosterInput!) {
+  previewPlexCollectionPoster(input: $input) { image error }
+}`;
+
 export const posterOverlaysQuery = `query PosterOverlays {
   posterOverlays {
     settings { parallelism reconcileIntervalSeconds plexPushEnabled }
