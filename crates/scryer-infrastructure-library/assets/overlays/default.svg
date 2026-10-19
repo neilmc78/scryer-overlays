@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1500" data-scryer-version="1">
+  <!-- Scryer built-in poster overlay. Coordinates are in viewBox units and
+       scale with the poster. See docs/poster-overlays.md. -->
+  <g data-scryer-if="resolution">
+    <rect x="40" y="40" width="270" height="110" rx="22" fill="#0b0d12" fill-opacity="0.82"/>
+    <text x="175" y="117" font-family="Inter" font-weight="700" font-size="62" fill="#ffffff" text-anchor="middle">{{resolution_label}}</text>
+  </g>
+  <g data-scryer-if="hdr=dv">
+    <rect x="540" y="40" width="420" height="110" rx="22" fill="#0b0d12" fill-opacity="0.82"/>
+    <text x="750" y="112" font-family="Inter" font-weight="700" font-size="46" fill="#f5c542" text-anchor="middle">{{hdr_label}}</text>
+  </g>
+  <g data-scryer-if="hdr=hdr10plus|hdr10|hlg">
+    <rect x="690" y="40" width="270" height="110" rx="22" fill="#0b0d12" fill-opacity="0.82"/>
+    <text x="825" y="115" font-family="Inter" font-weight="700" font-size="58" fill="#f5c542" text-anchor="middle">{{hdr_label}}</text>
+  </g>
+  <g data-scryer-if="edition">
+    <rect x="0" y="1210" width="1000" height="90" fill="#0b0d12" fill-opacity="0.72"/>
+    <text x="500" y="1272" font-family="Inter" font-weight="700" font-size="50" fill="#ffffff" text-anchor="middle" letter-spacing="4">{{edition_label}}</text>
+  </g>
+  <g data-scryer-if="audio_codec" data-scryer-unless="audio_codec=other">
+    <rect x="200" y="1340" width="600" height="110" rx="22" fill="#0b0d12" fill-opacity="0.82"/>
+    <text x="500" y="1415" font-family="Inter" font-weight="700" font-size="58" fill="#ffffff" text-anchor="middle">{{audio_label}} {{audio_channels}}</text>
+  </g>
+</svg>
