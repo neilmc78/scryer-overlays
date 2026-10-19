@@ -291,6 +291,7 @@ pub struct AppServices {
     pub(crate) customization: AppCustomizationServices,
     pub(crate) notifications: AppNotificationServices,
     pub(crate) lists: AppListServices,
+    pub(crate) poster_overlays: Option<crate::overlays::AppPosterOverlayServices>,
 }
 
 impl AppServices {
@@ -495,6 +496,7 @@ impl AppServices {
             },
             notifications: AppNotificationServices::Disabled,
             lists: AppListServices::disabled(),
+            poster_overlays: None,
         }
     }
 }

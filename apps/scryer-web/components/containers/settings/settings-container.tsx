@@ -12,6 +12,7 @@ import {
   FolderCog,
   History,
   Inbox,
+  Layers,
   ListChecks,
   Puzzle,
   Rss,
@@ -137,6 +138,9 @@ const SettingsPostProcessingContainer = lazy(async () => ({
 }));
 const SettingsSubtitlesContainer = lazy(async () => ({
   default: (await import("@/components/containers/settings/settings-subtitles-container")).SettingsSubtitlesContainer,
+}));
+const SettingsPosterOverlaysContainer = lazy(async () => ({
+  default: (await import("@/components/containers/settings/settings-poster-overlays-container")).SettingsPosterOverlaysContainer,
 }));
 const SettingsBackupsContainer = lazy(async () => ({
   default: (await import("@/components/containers/settings/settings-backups-container")).SettingsBackupsContainer,
@@ -606,6 +610,8 @@ export const SettingsContainer = memo(function SettingsContainer({
                             ? t("settings.postProcessing")
                             : settingsSection === "subtitles"
                               ? t("settings.subtitles")
+                            : settingsSection === "posterOverlays"
+                              ? t("settings.posterOverlays.title")
                               : settingsSection === "delayProfiles"
                                 ? t("settings.delayProfiles")
                                 : settingsSection === "titleTags"
@@ -690,6 +696,8 @@ export const SettingsContainer = memo(function SettingsContainer({
         return FolderCog;
       case "subtitles":
         return Captions;
+      case "posterOverlays":
+        return Layers;
       case "acquisition":
         return Rss;
       case "indexers":
@@ -1050,6 +1058,10 @@ export const SettingsContainer = memo(function SettingsContainer({
           ) : settingsSection === "subtitles" ? (
             <SettingsSubtitlesContainer
               providerCatalogVersion={providerCatalogVersions.SUBTITLE}
+            />
+          ) : settingsSection === "posterOverlays" ? (
+            <SettingsPosterOverlaysContainer
+              canManageCatalogSettings={canManageCatalogSettings}
             />
           ) : settingsSection === "delayProfiles" ? (
             <SettingsDelayProfilesContainer />

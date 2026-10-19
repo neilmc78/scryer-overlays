@@ -89,6 +89,7 @@ mod metrics_support;
 mod notifications;
 mod null_repositories;
 mod oauth;
+pub mod overlays;
 pub mod persisted_records;
 mod plugins;
 mod polling_worker;

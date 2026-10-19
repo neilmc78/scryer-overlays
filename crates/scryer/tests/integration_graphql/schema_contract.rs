@@ -778,8 +778,12 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     // brings query fields to 195. Scheduled scripts as jobs add no root field;
     // they ride `jobs`, `jobRuns`, and `triggerJob` with a `customJobId`.
     // Request rules drop the instance gate and its read: 195->194.
+    // Poster overlays add the settings overview, template validation, the
+    // editor's live template preview and `posterOverlayPass`: 194->198.
+    assert!(query_field_names.contains(&"previewPosterOverlayTemplate"));
+    assert!(query_field_names.contains(&"posterOverlayPass"));
     assert_eq!(
-        query_field_count, 194,
+        query_field_count, 198,
         "query fields: {query_field_names:?}"
     );
     // First-class proxies (WP4) add one mutation, resetProxyHostKey: SSH host
@@ -821,8 +825,10 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     // arming mutations, and enabling a request rule replaces its mode setter
     // while the request-rule instance gate setter goes: 275->273.
     // Keeping a title adds `createOperatorKeepClaim`: 273->274.
+    // Poster overlays add six: per-library enablement, render settings,
+    // template save and delete, rebuild, and revert all: 274->280.
     assert_eq!(
-        mutation_field_count, 274,
+        mutation_field_count, 280,
         "mutation fields: {mutation_field_names:?}"
     );
     // Cross-library transfer (T082, FR-055/FR-056) surfaces destination-title
@@ -1162,9 +1168,16 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     // confirmation input replaces the mode and arming inputs; request rules drop
     // the instance-gate object, its input, and the mode input: public types
     // 971->967, OBJECT 524->523, INPUT_OBJECT 240->237.
-    assert_eq!(public_types.len(), 967);
-    assert_eq!(kind_count("OBJECT"), 523);
-    assert_eq!(kind_count("INPUT_OBJECT"), 237);
+    // Poster overlays add ten payloads (overview, settings, library,
+    // template, counts, validation, preview, the two sample-option types, and
+    // the rebuild pass) and four inputs (library, settings, template save,
+    // preview): public types 967->981, OBJECT 523->533, INPUT_OBJECT 237->241.
+    assert!(public_type_names.contains(&"PosterOverlayTemplatePreview"));
+    assert!(public_type_names.contains(&"PreviewPosterOverlayTemplateInput"));
+    assert!(public_type_names.contains(&"PosterOverlayPass"));
+    assert_eq!(public_types.len(), 981);
+    assert_eq!(kind_count("OBJECT"), 533);
+    assert_eq!(kind_count("INPUT_OBJECT"), 241);
     assert_eq!(kind_count("ENUM"), 195);
     assert_eq!(kind_count("SCALAR"), 10);
     assert_eq!(kind_count("UNION"), 2);
