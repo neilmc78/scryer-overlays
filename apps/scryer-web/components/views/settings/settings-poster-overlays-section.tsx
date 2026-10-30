@@ -3,6 +3,7 @@ import { Edit, Plus, RefreshCw, Trash2, Undo2 } from "lucide-react";
 
 import { AddNewButton } from "@/components/common/add-new-button";
 import { SettingsPosterOverlayTemplateEditor } from "@/components/views/settings/settings-poster-overlay-template-editor";
+import { SettingsCollectionPosters } from "@/components/views/settings/settings-collection-posters";
 import { Button } from "@/components/ui/button";
 import { IconButton } from "@/components/ui/icon-button";
 import { Input } from "@/components/ui/input";
@@ -47,7 +48,11 @@ const PANEL_TITLE_CLASS = "text-[15px] font-semibold text-[var(--scry-ink2)]";
 const PANEL_BODY_CLASS = "p-4 sm:p-5";
 const MUTED_TEXT_CLASS = "text-[var(--scry-muted3)]";
 
+/** The page's subpages: library templates, list collections, and sync settings. */
+export type PosterOverlaysPane = "templates" | "collections" | "sync";
+
 type SettingsPosterOverlaysSectionProps = {
+  pane: PosterOverlaysPane;
   overview: PosterOverlayOverview | null;
   loading: boolean;
   loadError: boolean;
@@ -79,6 +84,7 @@ type SettingsPosterOverlaysSectionProps = {
 };
 
 export function SettingsPosterOverlaysSection({
+  pane,
   overview,
   loading,
   loadError,
@@ -108,6 +114,22 @@ export function SettingsPosterOverlaysSection({
 }: SettingsPosterOverlaysSectionProps) {
   const t = useTranslate();
 
+  // Collection posters load their own data, so they don't wait on the overview.
+  if (pane === "collections") {
+    return (
+      <div id="settings-poster-overlays-section" className="space-y-5 text-sm">
+        <p className={MUTED_TEXT_CLASS}>{t("settings.posterOverlays.collectionsDescription")}</p>
+        <SettingsCollectionPosters
+          panelClass={PANEL_CLASS}
+          headerClass={PANEL_HEADER_CLASS}
+          titleClass={PANEL_TITLE_CLASS}
+          bodyClass={PANEL_BODY_CLASS}
+          mutedClass={MUTED_TEXT_CLASS}
+        />
+      </div>
+    );
+  }
+
   if (loading) {
     return <p className={MUTED_TEXT_CLASS}>{t("label.loading")}</p>;
   }
@@ -126,6 +148,8 @@ export function SettingsPosterOverlaysSection({
     <div id="settings-poster-overlays-section" className="space-y-5 text-sm">
       <p className={MUTED_TEXT_CLASS}>{t("settings.posterOverlays.description")}</p>
 
+      {pane === "sync" ? (
+        <>
       <section className={PANEL_CLASS}>
         <div className={PANEL_HEADER_CLASS}>
           <h3 className={PANEL_TITLE_CLASS}>{t("settings.posterOverlays.statusTitle")}</h3>
@@ -189,6 +213,100 @@ export function SettingsPosterOverlaysSection({
         </div>
       </section>
 
+      <section className={PANEL_CLASS}>
+        <div className={PANEL_HEADER_CLASS}>
+          <h3 className={PANEL_TITLE_CLASS}>{t("settings.posterOverlays.renderingTitle")}</h3>
+        </div>
+        <form
+          id="settings-poster-overlays-settings-form"
+          className={`${PANEL_BODY_CLASS} grid gap-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end`}
+          onSubmit={onSaveSettings}
+        >
+          <div className="space-y-1.5">
+            <Label htmlFor="settings-poster-overlays-parallelism">
+              {t("settings.posterOverlays.parallelism")}
+            </Label>
+            <Input
+              id="settings-poster-overlays-parallelism"
+              type="number"
+              min={1}
+              max={16}
+              value={settingsDraft.parallelism}
+              disabled={disabled}
+              onChange={(event) =>
+                setSettingsDraft((draft) => ({
+                  ...draft,
+                  parallelism: event.target.value,
+                }))
+              }
+            />
+            <p className={`text-xs ${MUTED_TEXT_CLASS}`}>
+              {t("settings.posterOverlays.parallelismHelp")}
+            </p>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="settings-poster-overlays-reconcile">
+              {t("settings.posterOverlays.reconcileHours")}
+            </Label>
+            <Input
+              id="settings-poster-overlays-reconcile"
+              type="number"
+              min={0.25}
+              step={0.25}
+              value={settingsDraft.reconcileHours}
+              disabled={disabled}
+              onChange={(event) =>
+                setSettingsDraft((draft) => ({
+                  ...draft,
+                  reconcileHours: event.target.value,
+                }))
+              }
+            />
+            <p className={`text-xs ${MUTED_TEXT_CLASS}`}>
+              {t("settings.posterOverlays.reconcileHelp")}
+            </p>
+          </div>
+          <Button id="settings-poster-overlays-settings-save" type="submit" disabled={disabled}>
+            {t("label.save")}
+          </Button>
+        </form>
+      </section>
+
+      <section id="settings-poster-overlays-plex" className={PANEL_CLASS}>
+        <div className={PANEL_HEADER_CLASS}>
+          <h3 className={PANEL_TITLE_CLASS}>{t("settings.posterOverlays.plexTitle")}</h3>
+          <Switch
+            id="settings-poster-overlays-plex-push"
+            aria-label={t("settings.posterOverlays.plexPush")}
+            checked={overview.settings.plexPushEnabled}
+            disabled={disabled}
+            onCheckedChange={onSetPlexPush}
+          />
+        </div>
+        <div className={`${PANEL_BODY_CLASS} space-y-2`}>
+          <p className={MUTED_TEXT_CLASS}>{t("settings.posterOverlays.plexPushHelp")}</p>
+          {overview.settings.plexPushEnabled ||
+          counts.plexPushed + counts.plexFailed + counts.plexChanged > 0 ? (
+            <p id="settings-poster-overlays-plex-counts">
+              {t("settings.posterOverlays.plexCounts", { pushed: counts.plexPushed })}
+              {counts.plexChanged > 0 ? (
+                <span className={`ml-2 ${MUTED_TEXT_CLASS}`}>
+                  {t("settings.posterOverlays.plexChangedCount", { count: counts.plexChanged })}
+                </span>
+              ) : null}
+              {counts.plexFailed > 0 ? (
+                <span className="ml-2 text-destructive">
+                  {t("settings.posterOverlays.plexFailedCount", { count: counts.plexFailed })}
+                </span>
+              ) : null}
+            </p>
+          ) : null}
+        </div>
+      </section>
+
+        </>
+      ) : (
+        <>
       <section className={PANEL_CLASS}>
         <div className={PANEL_HEADER_CLASS}>
           <h3 className={PANEL_TITLE_CLASS}>{t("settings.posterOverlays.librariesTitle")}</h3>
@@ -336,96 +454,8 @@ export function SettingsPosterOverlaysSection({
         ) : null}
       </section>
 
-      <section className={PANEL_CLASS}>
-        <div className={PANEL_HEADER_CLASS}>
-          <h3 className={PANEL_TITLE_CLASS}>{t("settings.posterOverlays.renderingTitle")}</h3>
-        </div>
-        <form
-          id="settings-poster-overlays-settings-form"
-          className={`${PANEL_BODY_CLASS} grid gap-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end`}
-          onSubmit={onSaveSettings}
-        >
-          <div className="space-y-1.5">
-            <Label htmlFor="settings-poster-overlays-parallelism">
-              {t("settings.posterOverlays.parallelism")}
-            </Label>
-            <Input
-              id="settings-poster-overlays-parallelism"
-              type="number"
-              min={1}
-              max={16}
-              value={settingsDraft.parallelism}
-              disabled={disabled}
-              onChange={(event) =>
-                setSettingsDraft((draft) => ({
-                  ...draft,
-                  parallelism: event.target.value,
-                }))
-              }
-            />
-            <p className={`text-xs ${MUTED_TEXT_CLASS}`}>
-              {t("settings.posterOverlays.parallelismHelp")}
-            </p>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="settings-poster-overlays-reconcile">
-              {t("settings.posterOverlays.reconcileHours")}
-            </Label>
-            <Input
-              id="settings-poster-overlays-reconcile"
-              type="number"
-              min={0.25}
-              step={0.25}
-              value={settingsDraft.reconcileHours}
-              disabled={disabled}
-              onChange={(event) =>
-                setSettingsDraft((draft) => ({
-                  ...draft,
-                  reconcileHours: event.target.value,
-                }))
-              }
-            />
-            <p className={`text-xs ${MUTED_TEXT_CLASS}`}>
-              {t("settings.posterOverlays.reconcileHelp")}
-            </p>
-          </div>
-          <Button id="settings-poster-overlays-settings-save" type="submit" disabled={disabled}>
-            {t("label.save")}
-          </Button>
-        </form>
-      </section>
-
-      <section id="settings-poster-overlays-plex" className={PANEL_CLASS}>
-        <div className={PANEL_HEADER_CLASS}>
-          <h3 className={PANEL_TITLE_CLASS}>{t("settings.posterOverlays.plexTitle")}</h3>
-          <Switch
-            id="settings-poster-overlays-plex-push"
-            aria-label={t("settings.posterOverlays.plexPush")}
-            checked={overview.settings.plexPushEnabled}
-            disabled={disabled}
-            onCheckedChange={onSetPlexPush}
-          />
-        </div>
-        <div className={`${PANEL_BODY_CLASS} space-y-2`}>
-          <p className={MUTED_TEXT_CLASS}>{t("settings.posterOverlays.plexPushHelp")}</p>
-          {overview.settings.plexPushEnabled ||
-          counts.plexPushed + counts.plexFailed + counts.plexChanged > 0 ? (
-            <p id="settings-poster-overlays-plex-counts">
-              {t("settings.posterOverlays.plexCounts", { pushed: counts.plexPushed })}
-              {counts.plexChanged > 0 ? (
-                <span className={`ml-2 ${MUTED_TEXT_CLASS}`}>
-                  {t("settings.posterOverlays.plexChangedCount", { count: counts.plexChanged })}
-                </span>
-              ) : null}
-              {counts.plexFailed > 0 ? (
-                <span className="ml-2 text-destructive">
-                  {t("settings.posterOverlays.plexFailedCount", { count: counts.plexFailed })}
-                </span>
-              ) : null}
-            </p>
-          ) : null}
-        </div>
-      </section>
+        </>
+      )}
     </div>
   );
 }

@@ -12,11 +12,15 @@ mod template;
 mod tests;
 
 #[cfg(feature = "image-processing")]
-pub use engine::{HttpOverlaySourceFetch, OverlayEngine, OverlaySourceFetch, overlay_source_url};
+pub use engine::{
+    HttpOverlaySourceFetch, MAX_COLLECTION_LOGO_BYTES, OverlayEngine, OverlaySourceFetch,
+    overlay_source_url,
+};
 #[cfg(feature = "image-processing")]
 pub use render::{
-    BUILTIN_TEMPLATE, EMBEDDED_FONT_FAMILY, MARKER_PREFIX, OverlayRenderer, PREVIEW_HEIGHT,
-    PREVIEW_WIDTH, add_marker, has_marker, marker_input_hash,
+    BUILTIN_TEMPLATE, COLLECTION_POSTER_HEIGHT, COLLECTION_POSTER_WIDTH, EMBEDDED_FONT_FAMILY,
+    MARKER_PREFIX, MAX_COLLECTION_LOGO_DIMENSION, OverlayRenderer, PREVIEW_HEIGHT, PREVIEW_WIDTH,
+    add_marker, has_marker, marker_input_hash,
 };
 pub use store::PosterOverlayStore;
 #[cfg(feature = "image-processing")]

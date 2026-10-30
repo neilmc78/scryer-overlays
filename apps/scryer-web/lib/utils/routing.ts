@@ -40,6 +40,8 @@ export const SETTINGS_SECTION_PATH: Record<SettingsSection, string> = {
   "post-processing": "post-processing",
   subtitles: "subtitles",
   posterOverlays: "overlays",
+  posterOverlayCollections: "overlay-collections",
+  posterOverlaySync: "overlay-sync",
 };
 
 const AUTOMATION_SETTINGS_SECTION_PATH: Partial<
@@ -497,6 +499,8 @@ const LOCAL_SETTINGS_BY_SEGMENT: Record<string, SettingsSection> = {
   plugins: "plugins",
   overlays: "posterOverlays",
   "poster-overlays": "posterOverlays",
+  "overlay-collections": "posterOverlayCollections",
+  "overlay-sync": "posterOverlaySync",
   scripts: "scripts",
 };
 const SYSTEM_SETTINGS_BY_SEGMENT: Record<string, SettingsSection> = {

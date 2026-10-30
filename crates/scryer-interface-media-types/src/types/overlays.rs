@@ -4,11 +4,11 @@
 use async_graphql::{ID, InputObject, SimpleObject};
 use chrono::{DateTime, Utc};
 use scryer_application::overlays::{
-    CHANNEL_LAYOUTS, OverlayAudio, OverlayHdr, OverlayResolution, OverlaySampleValues,
-    OverlaySeriesStatus, OverlaySource, OverlayVideoCodec, PosterOverlayLibraryConfig,
-    PosterOverlayOverview, PosterOverlayPassProgress, PosterOverlayPreviewChoice,
-    PosterOverlaySettings, PosterOverlayStatusCounts, PosterOverlayTemplate, TEMPLATE_FIELDS,
-    TEMPLATE_SPEC_VERSION,
+    CHANNEL_LAYOUTS, LogoChoice, OverlayAudio, OverlayHdr, OverlayResolution, OverlaySampleValues,
+    OverlaySeriesStatus, OverlaySource, OverlayVideoCodec, PlexCollectionListStatus,
+    PosterOverlayLibraryConfig, PosterOverlayOverview, PosterOverlayPassProgress,
+    PosterOverlayPreviewChoice, PosterOverlaySettings, PosterOverlayStatusCounts,
+    PosterOverlayTemplate, TEMPLATE_FIELDS, TEMPLATE_SPEC_VERSION,
 };
 
 /// Render settings shared by every library.
@@ -395,4 +395,120 @@ pub struct PosterOverlayTemplatePreviewPayload {
     pub poster_title_name: Option<String>,
     /// Why the template or sample was rejected; null on success.
     pub error: Option<String>,
+}
+
+/// A public list and its Plex collection, which carries the list's name.
+#[derive(SimpleObject, Clone)]
+#[graphql(name = "PlexCollectionList")]
+pub struct PlexCollectionListPayload {
+    /// The list subscription.
+    pub subscription_id: ID,
+    /// The list's name, used as the collection's name in Plex.
+    pub name: String,
+    /// Whether the list is mirrored into Plex.
+    pub enabled: bool,
+    /// Titles on the list that are in the library.
+    pub titles: i64,
+    /// Plex items currently in the collection.
+    pub pushed_items: i64,
+    /// Plex items whose last collection change failed.
+    pub failed_items: i64,
+    /// One of those failures, if any.
+    pub last_error: Option<String>,
+    /// The list's provider, whose block of sort numbers it sits in.
+    pub provider: String,
+    /// The provider's block: 1 sorts as `!1000_`, 9 as `!9000_`.
+    pub slot: Option<i32>,
+    /// Place inside the provider's block, from 0, while mirrored.
+    pub position: Option<i32>,
+    /// The sort title Plex sorts the collection by, while mirrored.
+    pub sort_title: Option<String>,
+    /// Whether Scryer draws the collection's poster.
+    pub poster_enabled: bool,
+    /// The poster's colour as `#rrggbb`: the chosen one, else the provider's.
+    pub poster_background: String,
+    /// The poster's shortened label; null shows the list's name.
+    pub poster_text: Option<String>,
+    /// Whether the provider's logo is drawn.
+    pub poster_logo: bool,
+    /// Whether Scryer has a logo for the provider.
+    pub poster_logo_available: bool,
+    /// Which logo is drawn: `provider`, `custom` (the uploaded image) or
+    /// `none`.
+    pub poster_logo_source: String,
+    /// Whether an image has been uploaded for the list.
+    pub poster_custom_logo: bool,
+}
+
+/// A collection poster design. `enabled` is ignored by the preview.
+#[derive(InputObject, Clone)]
+#[graphql(name = "PlexCollectionPosterInput")]
+pub struct PlexCollectionPosterInput {
+    /// The mirrored public list.
+    pub subscription_id: ID,
+    /// Whether Scryer draws the collection's poster.
+    pub enabled: bool,
+    /// `#rrggbb`; null or empty uses the provider's colour.
+    pub background: Option<String>,
+    /// A shorter label; null or empty shows the list's name.
+    pub text: Option<String>,
+    /// Whether the provider's logo is drawn; ignored when `logoSource` is
+    /// given.
+    pub show_logo: bool,
+    /// `provider`, `custom` (the uploaded image) or `none`.
+    pub logo_source: Option<String>,
+}
+
+impl PlexCollectionPosterInput {
+    /// The logo to draw, or why `logoSource` was refused.
+    pub fn logo_choice(&self) -> Result<LogoChoice, String> {
+        match self.logo_source.as_deref() {
+            None => Ok(if self.show_logo {
+                LogoChoice::Provider
+            } else {
+                LogoChoice::None
+            }),
+            Some(value) => LogoChoice::parse(value).ok_or_else(|| {
+                format!("\"{value}\" is not a logo source; use provider, custom or none")
+            }),
+        }
+    }
+}
+
+/// A collection poster drawn for the editor.
+#[derive(SimpleObject, Clone)]
+#[graphql(name = "PlexCollectionPosterPreview")]
+pub struct PlexCollectionPosterPreviewPayload {
+    /// `data:image/jpeg;base64,...`; null when the design was rejected.
+    pub image: Option<String>,
+    /// Why the design was rejected; null on success.
+    pub error: Option<String>,
+}
+
+impl From<PlexCollectionListStatus> for PlexCollectionListPayload {
+    fn from(value: PlexCollectionListStatus) -> Self {
+        let count = |value: usize| i64::try_from(value).unwrap_or(i64::MAX);
+        Self {
+            subscription_id: ID(value.subscription_id),
+            name: value.name,
+            enabled: value.enabled,
+            titles: count(value.titles),
+            pushed_items: count(value.pushed_items),
+            failed_items: count(value.failed_items),
+            last_error: value.last_error,
+            provider: value.provider,
+            slot: value.slot.and_then(|slot| i32::try_from(slot).ok()),
+            position: value
+                .position
+                .and_then(|position| i32::try_from(position).ok()),
+            sort_title: value.sort_title,
+            poster_enabled: value.poster_enabled,
+            poster_background: value.poster_background,
+            poster_text: value.poster_text,
+            poster_logo: value.poster_logo,
+            poster_logo_available: value.poster_logo_available,
+            poster_logo_source: value.poster_logo_source.as_str().to_string(),
+            poster_custom_logo: value.poster_custom_logo,
+        }
+    }
 }

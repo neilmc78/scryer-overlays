@@ -648,11 +648,13 @@ mod tests {
             ("poster_overlay_libraries", 9001),
             ("poster_overlay_settings", 9001),
             ("poster_overlay_templates", 9001),
+            ("plex_collection_lists", 9002),
+            ("plex_collection_providers", 9003),
         ];
         let mut export_tables = vec!["titles".to_string()];
         export_tables.extend(introduced.iter().map(|(table, _)| table.to_string()));
         for source_version in [
-            224, 225, 233, 234, 235, 236, 258, 259, 260, 264, 265, 267, 268, 9001,
+            224, 225, 233, 234, 235, 236, 258, 259, 260, 264, 265, 267, 268, 9001, 9002, 9003,
         ] {
             let mut row_counts = BTreeMap::from_iter([("titles".to_string(), 1)]);
             row_counts.extend(

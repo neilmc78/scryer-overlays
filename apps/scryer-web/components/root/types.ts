@@ -44,7 +44,9 @@ export type SettingsSection =
   | "notifications"
   | "post-processing"
   | "subtitles"
-  | "posterOverlays";
+  | "posterOverlays"
+  | "posterOverlayCollections"
+  | "posterOverlaySync";
 
 /// Panes of the Rules page. Scoring, maintenance and request rules are three
 /// kinds of the same subject, so they share one nav entry and one gutter rather
