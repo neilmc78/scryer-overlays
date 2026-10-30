@@ -88,11 +88,13 @@ pub async fn start_poster_overlay_worker(app: AppUseCase, token: CancellationTok
                 if let Err(error) = overlays.reconcile().await {
                     tracing::warn!(%error, "poster overlay reconcile failed");
                 }
+                sync_collections(&app).await;
                 if let Ok(settings) = repository.get_settings().await {
                     reconcile_every = Duration::from_secs(settings.reconcile_interval_seconds);
                 }
                 next_reconcile = tokio::time::Instant::now() + reconcile_every;
             }
+            _ = overlays.collections_wake.notified() => sync_collections(&app).await,
             _ = overlays.wake.notified() => {
                 if let Err(error) = overlays.reconcile().await {
                     tracing::warn!(%error, "poster overlay reconcile failed");
@@ -113,6 +115,7 @@ pub async fn start_poster_overlay_worker(app: AppUseCase, token: CancellationTok
                 if let Err(error) = overlays.reconcile().await {
                     tracing::warn!(%error, "poster overlay reconcile failed");
                 }
+                sync_collections(&app).await;
             }
             _ = async {
                 match retry_at {
@@ -121,6 +124,13 @@ pub async fn start_poster_overlay_worker(app: AppUseCase, token: CancellationTok
                 }
             } => {}
         }
+    }
+}
+
+/// Mirror switched-on public lists into their Plex collections.
+async fn sync_collections(app: &AppUseCase) {
+    if let Err(error) = app.sync_plex_list_collections().await {
+        tracing::warn!(%error, "Plex list collection sync failed");
     }
 }
 

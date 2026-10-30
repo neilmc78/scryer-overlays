@@ -1,7 +1,10 @@
 import * as React from "react";
 
 import { ConfirmDialog } from "@/components/common/confirm-dialog";
-import { SettingsPosterOverlaysSection } from "@/components/views/settings/settings-poster-overlays-section";
+import {
+  type PosterOverlaysPane,
+  SettingsPosterOverlaysSection,
+} from "@/components/views/settings/settings-poster-overlays-section";
 import { useGlobalStatus } from "@/lib/context/global-status-context";
 import { useTranslate } from "@/lib/context/translate-context";
 import { usePosterOverlayPreview, usePosterOverlays } from "@/lib/hooks/use-poster-overlays";
@@ -28,10 +31,13 @@ const EMPTY_SAMPLE: PosterOverlaySample = {
 type SettingsPosterOverlaysContainerProps = {
   /** Overlay configuration is catalog configuration. */
   canManageCatalogSettings: boolean;
+  /** Which of the page's subpages to show. */
+  pane: PosterOverlaysPane;
 };
 
 export function SettingsPosterOverlaysContainer({
   canManageCatalogSettings,
+  pane,
 }: SettingsPosterOverlaysContainerProps) {
   const t = useTranslate();
   const showStatus = useGlobalStatus();
@@ -180,6 +186,7 @@ export function SettingsPosterOverlaysContainer({
   return (
     <>
       <SettingsPosterOverlaysSection
+        pane={pane}
         overview={overview}
         loading={overlays.loading}
         loadError={overlays.loadError}

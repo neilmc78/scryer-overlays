@@ -87,6 +87,8 @@ export function canAccessSettingsSection(
     case "post-processing":
     case "subtitles":
     case "posterOverlays":
+    case "posterOverlayCollections":
+    case "posterOverlaySync":
       return canManageCatalogSettings;
     default:
       return false;

@@ -139,6 +139,9 @@ function isSettingsNavEntryActive(
       settingsSection === "requestRules"
     );
   }
+  if (entryId === "posterOverlays") {
+    return POSTER_OVERLAY_SUB_PAGES.some((entry) => entry.id === settingsSection);
+  }
   return entryId === settingsSection;
 }
 
@@ -462,6 +465,18 @@ const settingsEntries: Array<{
     icon: Layers,
     requiredAnyAppPermission: [APP_PERMISSIONS.manageCatalogSettings],
   },
+  {
+    id: "posterOverlayCollections",
+    label: (t) => t("settings.posterOverlays.navCollections"),
+    icon: Layers,
+    requiredAnyAppPermission: [APP_PERMISSIONS.manageCatalogSettings],
+  },
+  {
+    id: "posterOverlaySync",
+    label: (t) => t("settings.posterOverlays.navSync"),
+    icon: Layers,
+    requiredAnyAppPermission: [APP_PERMISSIONS.manageCatalogSettings],
+  },
 ];
 
 const SETTINGS_NAV_GROUPS: Array<{
@@ -503,6 +518,13 @@ const SYSTEM_SUB_PAGES: Array<{ id: SystemSection; labelKey: string }> = [
 const LOGS_SUB_PAGES: Array<{ id: LogsSection; labelKey: string }> = [
   { id: "logs", labelKey: "nav.serviceLogs" },
   { id: "audit", labelKey: "nav.auditLogs" },
+];
+
+/// The Poster overlays entry's subpages, each its own settings section.
+const POSTER_OVERLAY_SUB_PAGES: Array<{ id: SettingsSection; labelKey: string }> = [
+  { id: "posterOverlays", labelKey: "settings.posterOverlays.navTemplates" },
+  { id: "posterOverlayCollections", labelKey: "settings.posterOverlays.navCollections" },
+  { id: "posterOverlaySync", labelKey: "settings.posterOverlays.navSync" },
 ];
 
 const ACTIVITY_SUB_PAGES: Array<{ id: ActivitySection; labelKey: string }> = [
@@ -1202,6 +1224,10 @@ function RootSidebarContent({
                     );
                   }
                   if (item.kind === "settings") {
+                    const isShortcutActive =
+                      view === "settings" &&
+                      isSettingsNavEntryActive(item.id, settingsSection);
+                    const hasOverlaySubPages = item.id === "posterOverlays";
                     return (
                       <React.Fragment key={`settings-${item.id}`}>
                         <SidebarMenuItem>
@@ -1210,12 +1236,16 @@ function RootSidebarContent({
                               "root-sidebar-settings-shortcut",
                               item.id,
                             )}
-                            isActive={
-                              view === "settings" &&
-                              isSettingsNavEntryActive(item.id, settingsSection)
-                            }
+                            isActive={isShortcutActive}
                             className={TOP_NAV_BUTTON_CLASS}
+                            aria-expanded={
+                              hasOverlaySubPages ? isShortcutActive : undefined
+                            }
                             onClick={(event) => {
+                              if (hasOverlaySubPages && isShortcutActive) {
+                                event.preventDefault();
+                                return;
+                              }
                               handleNavigate(event, "settings", item.id);
                             }}
                           >
@@ -1223,6 +1253,29 @@ function RootSidebarContent({
                             {item.label}
                           </SidebarMenuButton>
                         </SidebarMenuItem>
+                        {hasOverlaySubPages && isShortcutActive ? (
+                          <SidebarGroupContent>
+                            <SidebarMenuSub className={SUB_NAV_MENU_CLASS}>
+                              {POSTER_OVERLAY_SUB_PAGES.map((entry) => (
+                                <SidebarMenuSubItem key={entry.id}>
+                                  <SidebarMenuSubButton
+                                    id={selectorId(
+                                      "root-sidebar-poster-overlays",
+                                      entry.id,
+                                    )}
+                                    isActive={settingsSection === entry.id}
+                                    className={SUB_NAV_BUTTON_CLASS}
+                                    onClick={(event) => {
+                                      handleNavigate(event, "settings", entry.id);
+                                    }}
+                                  >
+                                    {t(entry.labelKey)}
+                                  </SidebarMenuSubButton>
+                                </SidebarMenuSubItem>
+                              ))}
+                            </SidebarMenuSub>
+                          </SidebarGroupContent>
+                        ) : null}
                       </React.Fragment>
                     );
                   }

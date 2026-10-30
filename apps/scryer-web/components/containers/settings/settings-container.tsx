@@ -527,7 +527,9 @@ export const SettingsContainer = memo(function SettingsContainer({
                             ? t("settings.postProcessing")
                             : settingsSection === "subtitles"
                               ? t("settings.subtitles")
-                            : settingsSection === "posterOverlays"
+                            : settingsSection === "posterOverlays" ||
+                                settingsSection === "posterOverlayCollections" ||
+                                settingsSection === "posterOverlaySync"
                               ? t("settings.posterOverlays.title")
                               : settingsSection === "delayProfiles"
                                 ? t("settings.delayProfiles")
@@ -611,6 +613,8 @@ export const SettingsContainer = memo(function SettingsContainer({
       case "subtitles":
         return Captions;
       case "posterOverlays":
+      case "posterOverlayCollections":
+      case "posterOverlaySync":
         return Layers;
       case "acquisition":
         return Rss;
@@ -892,9 +896,18 @@ export const SettingsContainer = memo(function SettingsContainer({
             <SettingsSubtitlesContainer
               providerCatalogVersion={providerCatalogVersions.SUBTITLE}
             />
-          ) : settingsSection === "posterOverlays" ? (
+          ) : settingsSection === "posterOverlays" ||
+            settingsSection === "posterOverlayCollections" ||
+            settingsSection === "posterOverlaySync" ? (
             <SettingsPosterOverlaysContainer
               canManageCatalogSettings={canManageCatalogSettings}
+              pane={
+                settingsSection === "posterOverlayCollections"
+                  ? "collections"
+                  : settingsSection === "posterOverlaySync"
+                    ? "sync"
+                    : "templates"
+              }
             />
           ) : settingsSection === "delayProfiles" ? (
             <SettingsDelayProfilesContainer />

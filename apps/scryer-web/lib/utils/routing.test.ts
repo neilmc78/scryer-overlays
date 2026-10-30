@@ -382,4 +382,6 @@ test("the poster overlays settings page has a canonical path", () => {
   assert.equal(route.view, "settings");
   assert.equal(route.settingsSection, "posterOverlays");
   redirects("/settings/poster-overlays", "/settings/overlays");
+  assert.equal(canonical("/settings/overlay-collections").settingsSection, "posterOverlayCollections");
+  assert.equal(canonical("/settings/overlay-sync").settingsSection, "posterOverlaySync");
 });

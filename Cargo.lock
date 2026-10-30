@@ -6117,6 +6117,7 @@ name = "scryer-interface"
 version = "0.21.21"
 dependencies = [
  "async-graphql",
+ "base64 0.22.1",
  "chrono",
  "metrics",
  "metrics-util",

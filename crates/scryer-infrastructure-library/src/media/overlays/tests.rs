@@ -10,6 +10,7 @@ use scryer_application::overlays::{
     PosterOverlayVariant,
 };
 
+use super::render::normalize_collection_logo;
 use super::*;
 
 fn empty_values() -> BTreeMap<&'static str, String> {
@@ -733,4 +734,188 @@ fn fitted_text_stays_inside_its_box_when_rendered() {
         inside += 1;
     }
     assert!(inside > 200, "text drawn inside the box");
+}
+
+// ── Collection posters ─────────────────────────────────────────────────────
+
+fn collection_poster(logo: Option<&str>, text: &str) -> image::RgbImage {
+    render_collection(logo, None, text)
+}
+
+fn render_collection(logo: Option<&str>, custom: Option<&[u8]>, text: &str) -> image::RgbImage {
+    let jpeg = OverlayRenderer::new()
+        .render_collection_poster([0x7a, 0x62, 0x00], logo, custom, text)
+        .unwrap();
+    image::load_from_memory(&jpeg).unwrap().to_rgb8()
+}
+
+/// A wide red logo on a transparent background, as a PNG.
+fn red_logo(width: u32, height: u32) -> Vec<u8> {
+    let image = image::RgbaImage::from_fn(width, height, |x, _| {
+        if x < width / 10 || x >= width - width / 10 {
+            image::Rgba([0, 0, 0, 0])
+        } else {
+            image::Rgba([255, 0, 0, 255])
+        }
+    });
+    let mut out = Cursor::new(Vec::new());
+    image.write_to(&mut out, ImageFormat::Png).unwrap();
+    out.into_inner()
+}
+
+#[test]
+fn collection_posters_are_full_size_with_a_glow_in_the_colour() {
+    let poster = collection_poster(None, "");
+    assert_eq!(poster.dimensions(), (1000, 1500));
+    let corner = poster.get_pixel(5, 5).0;
+    let centre = poster.get_pixel(500, 630).0;
+    assert!(corner[0] < centre[0], "edges are darker than the centre");
+    assert!(
+        corner[0] > corner[2] && centre[0] > centre[2],
+        "it keeps the colour's hue"
+    );
+}
+
+#[test]
+fn a_collection_poster_logo_sits_in_the_upper_half() {
+    let plain = collection_poster(None, "");
+    let with_logo = collection_poster(Some("imdb"), "");
+    let differs = |from: u32, to: u32| {
+        (from..to).step_by(10).any(|y| {
+            (0..1000).step_by(10).any(|x| {
+                let a = plain.get_pixel(x, y).0;
+                let b = with_logo.get_pixel(x, y).0;
+                a.iter().zip(b).any(|(a, b)| a.abs_diff(b) > 40)
+            })
+        })
+    };
+    assert!(differs(330, 790), "the logo is drawn");
+    assert!(!differs(1000, 1500), "nothing else moves");
+    // An unknown logo is simply left out.
+    let unknown = collection_poster(Some("not-a-logo"), "");
+    assert_eq!(unknown.get_pixel(500, 560), plain.get_pixel(500, 560));
+}
+
+#[test]
+fn a_long_collection_label_stays_in_its_box() {
+    let poster = collection_poster(None, "A Very Long Collection Name That Has To Wrap {{x}}");
+    let white = |x: u32, y: u32| {
+        poster
+            .get_pixel(x, y)
+            .0
+            .iter()
+            .all(|channel| *channel > 200)
+    };
+    assert!(
+        (1020..1320)
+            .step_by(4)
+            .any(|y| (70..930).step_by(4).any(|x| white(x, y))),
+        "the label is drawn"
+    );
+    for y in (0..1000).step_by(5).chain((1340..1500).step_by(5)) {
+        for x in (0..1000).step_by(5) {
+            assert!(
+                !white(x, y),
+                "nothing white outside the label box at {x},{y}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_custom_collection_logo_fills_the_logo_box_keeping_its_shape() {
+    // 400x100 scales to 700x175 in the 700x460 box at (150, 330), centred
+    // at y 472..648; its transparent sides show the background.
+    let logo = red_logo(400, 100);
+    let poster = render_collection(Some("imdb"), Some(&logo), "");
+    let red = |pixel: &Rgb<u8>| pixel.0[0] > 200 && pixel.0[1] < 60 && pixel.0[2] < 60;
+    let mut inside = 0;
+    for (x, y, pixel) in poster.enumerate_pixels() {
+        if !red(pixel) {
+            continue;
+        }
+        assert!(
+            (210..=790).contains(&x) && (466..=654).contains(&y),
+            "logo drawn outside its place at ({x}, {y})"
+        );
+        inside += 1;
+    }
+    assert!(inside > 50_000, "the logo is drawn: {inside} red pixels");
+    // The custom logo replaces the provider's.
+    let plain = collection_poster(None, "");
+    assert_eq!(poster.get_pixel(500, 360), plain.get_pixel(500, 360));
+}
+
+#[test]
+fn collection_logos_are_normalised_to_bounded_pngs() {
+    let big = poster(ImageFormat::Png, 3000, 1000);
+    let png = normalize_collection_logo(&big).unwrap();
+    let image = image::load_from_memory_with_format(&png, ImageFormat::Png).unwrap();
+    assert_eq!(image.width(), MAX_COLLECTION_LOGO_DIMENSION);
+    assert!(normalize_collection_logo(&poster(ImageFormat::Jpeg, 40, 20)).is_ok());
+    assert!(normalize_collection_logo(&poster(ImageFormat::WebP, 40, 20)).is_ok());
+    let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>"#;
+    assert!(normalize_collection_logo(svg).is_err(), "SVG is refused");
+    assert!(normalize_collection_logo(b"not an image").is_err());
+}
+
+#[tokio::test]
+async fn collection_logos_are_stored_per_list_and_replaced_in_place() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = engine(dir.path());
+    assert_eq!(engine.read_collection_logo("list-1").await.unwrap(), None);
+    engine
+        .store_collection_logo("list-1", red_logo(40, 20))
+        .await
+        .unwrap();
+    let first = engine
+        .read_collection_logo("list-1")
+        .await
+        .unwrap()
+        .unwrap();
+    engine
+        .store_collection_logo("list-1", red_logo(80, 20))
+        .await
+        .unwrap();
+    let second = engine
+        .read_collection_logo("list-1")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(first, second, "a new upload replaces the old one");
+    assert_eq!(engine.read_collection_logo("list-2").await.unwrap(), None);
+    let files = std::fs::read_dir(dir.path().join("overlays/collection-logos"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(files, vec!["list-1.png".to_string()]);
+
+    let oversize = vec![0_u8; MAX_COLLECTION_LOGO_BYTES + 1];
+    assert!(
+        engine
+            .store_collection_logo("list-1", oversize)
+            .await
+            .is_err()
+    );
+    assert!(
+        engine
+            .store_collection_logo("list-1", b"not an image".to_vec())
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        engine
+            .read_collection_logo("list-1")
+            .await
+            .unwrap()
+            .unwrap(),
+        second,
+        "a refused upload keeps the stored logo"
+    );
+    assert!(
+        engine
+            .store_collection_logo("../escape", red_logo(40, 20))
+            .await
+            .is_err()
+    );
 }
