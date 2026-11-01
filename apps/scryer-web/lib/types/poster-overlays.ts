@@ -2,6 +2,9 @@ export type PosterOverlaySettings = {
   parallelism: number;
   reconcileIntervalSeconds: number;
   plexPushEnabled: boolean;
+  siloPushEnabled: boolean;
+  /** Silo's native API address; null until set. */
+  siloApiUrl: string | null;
 };
 
 export type PosterOverlayLibrary = {
@@ -30,6 +33,9 @@ export type PosterOverlayCounts = {
   plexPushed: number;
   plexFailed: number;
   plexChanged: number;
+  siloPushed: number;
+  siloFailed: number;
+  siloChanged: number;
 };
 
 /** A library-wide pass, such as a requested rebuild. */

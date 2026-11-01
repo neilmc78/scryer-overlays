@@ -24,6 +24,11 @@ pub struct PosterOverlaySettingsPayload {
     /// Whether rendered posters are uploaded to the Plex items their titles
     /// are matched to.
     pub plex_push_enabled: bool,
+    /// Whether rendered posters are uploaded to Silo as each title's artwork.
+    pub silo_push_enabled: bool,
+    /// Silo's native API address. The API key comes from the Jellyfin
+    /// connection whose host matches it.
+    pub silo_api_url: Option<String>,
 }
 
 impl From<PosterOverlaySettings> for PosterOverlaySettingsPayload {
@@ -33,6 +38,8 @@ impl From<PosterOverlaySettings> for PosterOverlaySettingsPayload {
             reconcile_interval_seconds: i64::try_from(value.reconcile_interval_seconds)
                 .unwrap_or(i64::MAX),
             plex_push_enabled: value.plex_push_enabled,
+            silo_push_enabled: value.silo_push_enabled,
+            silo_api_url: value.silo_api_url,
         }
     }
 }
@@ -115,6 +122,12 @@ pub struct PosterOverlayCountsPayload {
     pub plex_failed: i64,
     /// Titles whose poster was changed in Plex after a push and left alone.
     pub plex_changed: i64,
+    /// Titles whose current overlay is their poster in Silo.
+    pub silo_pushed: i64,
+    /// Titles whose last push to Silo failed.
+    pub silo_failed: i64,
+    /// Titles whose poster was changed in Silo after a push and left alone.
+    pub silo_changed: i64,
 }
 
 impl From<PosterOverlayStatusCounts> for PosterOverlayCountsPayload {
@@ -127,6 +140,9 @@ impl From<PosterOverlayStatusCounts> for PosterOverlayCountsPayload {
             plex_pushed: value.plex_pushed,
             plex_failed: value.plex_failed,
             plex_changed: value.plex_changed,
+            silo_pushed: value.silo_pushed,
+            silo_failed: value.silo_failed,
+            silo_changed: value.silo_changed,
         }
     }
 }
@@ -311,6 +327,11 @@ pub struct UpdatePosterOverlaySettingsInput {
     /// Upload rendered posters to matched Plex items; null keeps the
     /// current setting.
     pub plex_push_enabled: Option<bool>,
+    /// Upload rendered posters to Silo; null keeps the current setting.
+    pub silo_push_enabled: Option<bool>,
+    /// Silo's native API address, such as `http://silo:8090`; null keeps the
+    /// current address and an empty string clears it.
+    pub silo_api_url: Option<String>,
 }
 
 /// A custom template to create or replace.

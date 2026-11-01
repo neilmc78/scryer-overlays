@@ -2777,11 +2777,15 @@ fn build_poster_overlays(
                 Arc::new(engine),
             )
             .with_plex(
-                media_server_connections,
+                media_server_connections.clone(),
                 Arc::new(
                     scryer_infrastructure_identity::media_server_posters::HttpPlexPosterClient::new(
                     ),
                 ),
+            )
+            .with_silo(
+                media_server_connections,
+                Arc::new(scryer_infrastructure_identity::silo_posters::HttpSiloPosterClient::new()),
             ),
         ),
         Err(error) => {

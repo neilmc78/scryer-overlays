@@ -10,6 +10,7 @@ use scryer_application::overlays::{
     PlexCollectionMember, PlexCollectionTitle, PosterOverlayInputs, PosterOverlayLibraryConfig,
     PosterOverlayPlexState, PosterOverlayPreviewPoster, PosterOverlayRepository,
     PosterOverlaySettings, PosterOverlayState, PosterOverlayStatusCounts, PosterOverlayTemplate,
+    SILO_POSTER_CHANGED_IN_SILO,
 };
 use scryer_application::{AppResult, TitleImageKind};
 
@@ -59,12 +60,41 @@ fn non_negative(value: i64) -> u64 {
     u64::try_from(value).unwrap_or(0)
 }
 
+impl PosterOverlayStore {
+    /// Push totals for Plex (`plex`) or for the other servers, which is Silo:
+    /// it connects as Jellyfin. Records for both share one table.
+    async fn push_counts(&self, plex: bool, changed: &str) -> AppResult<Option<SqlRow>> {
+        let sql = format!(
+            "SELECT COALESCE(SUM(CASE WHEN p.last_error IS NULL
+                                       AND p.pushed_output_hash IS NOT NULL
+                                      THEN 1 ELSE 0 END), 0) AS pushed,
+                    COALESCE(SUM(CASE WHEN p.last_error = {{}} THEN 1 ELSE 0 END), 0) AS changed,
+                    COALESCE(SUM(CASE WHEN p.last_error IS NOT NULL AND p.last_error <> {{}}
+                                      THEN 1 ELSE 0 END), 0) AS failed
+               FROM poster_overlay_plex_state p
+               JOIN media_server_connections c ON c.id = p.connection_id
+              WHERE c.provider {} 'plex'",
+            if plex { "=" } else { "<>" }
+        );
+        SqlRuntime::fetch_optional(
+            self.read(),
+            &sql,
+            &[
+                SqlArg::Text(changed.to_string()),
+                SqlArg::Text(changed.to_string()),
+            ],
+        )
+        .await
+    }
+}
+
 #[async_trait]
 impl PosterOverlayRepository for PosterOverlayStore {
     async fn get_settings(&self) -> AppResult<PosterOverlaySettings> {
         let row = SqlRuntime::fetch_optional(
             self.read(),
-            "SELECT parallelism, reconcile_interval_seconds, plex_push_enabled
+            "SELECT parallelism, reconcile_interval_seconds, plex_push_enabled,
+                    silo_push_enabled, silo_api_url
                FROM poster_overlay_settings WHERE id = {}",
             &[SqlArg::Text(SETTINGS_ID.into())],
         )
@@ -83,6 +113,8 @@ impl PosterOverlayRepository for PosterOverlayStore {
                 seconds => seconds,
             },
             plex_push_enabled: row.bool("plex_push_enabled")?,
+            silo_push_enabled: row.bool("silo_push_enabled")?,
+            silo_api_url: row.opt_text("silo_api_url")?,
         })
     }
 
@@ -91,18 +123,23 @@ impl PosterOverlayRepository for PosterOverlayStore {
             &self.datastore,
             "save_poster_overlay_settings",
             "INSERT INTO poster_overlay_settings
-                (id, parallelism, reconcile_interval_seconds, plex_push_enabled, updated_at)
-             VALUES ({}, {}, {}, {}, {})
+                (id, parallelism, reconcile_interval_seconds, plex_push_enabled,
+                 silo_push_enabled, silo_api_url, updated_at)
+             VALUES ({}, {}, {}, {}, {}, {}, {})
              ON CONFLICT (id) DO UPDATE SET
                 parallelism = excluded.parallelism,
                 reconcile_interval_seconds = excluded.reconcile_interval_seconds,
                 plex_push_enabled = excluded.plex_push_enabled,
+                silo_push_enabled = excluded.silo_push_enabled,
+                silo_api_url = excluded.silo_api_url,
                 updated_at = excluded.updated_at",
             vec![
                 SqlArg::Text(SETTINGS_ID.into()),
                 SqlArg::I64(settings.parallelism as i64),
                 SqlArg::I64(i64::try_from(settings.reconcile_interval_seconds).unwrap_or(i64::MAX)),
                 SqlArg::Bool(settings.plex_push_enabled),
+                SqlArg::Bool(settings.silo_push_enabled),
+                SqlArg::OptText(settings.silo_api_url.clone()),
                 SqlArg::Timestamp(Utc::now()),
             ],
         )
@@ -227,6 +264,10 @@ impl PosterOverlayRepository for PosterOverlayStore {
             "SELECT t.id, t.name, t.library_id, t.facet, t.content_status, t.poster_url,
                     (SELECT MIN(x.external_id) FROM title_external_ids x
                       WHERE x.title_id = t.id AND x.source = 'tmdb') AS tmdb_id,
+                    (SELECT MIN(x.external_id) FROM title_external_ids x
+                      WHERE x.title_id = t.id AND x.source = 'tvdb') AS tvdb_id,
+                    (SELECT MIN(x.external_id) FROM title_external_ids x
+                      WHERE x.title_id = t.id AND x.source = 'imdb') AS imdb_id,
                     pol.enabled, pol.template_id, ti.source_url, ti.source_etag
                FROM titles t
                LEFT JOIN poster_overlay_libraries pol ON pol.library_id = t.library_id
@@ -293,6 +334,8 @@ impl PosterOverlayRepository for PosterOverlayStore {
             ratings,
             title_name: title.opt_text("name")?,
             tmdb_id: title.opt_text("tmdb_id")?,
+            tvdb_id: title.opt_text("tvdb_id")?,
+            imdb_id: title.opt_text("imdb_id")?,
             files,
         }))
     }
@@ -618,27 +661,16 @@ impl PosterOverlayRepository for PosterOverlayStore {
         let Some(row) = row else {
             return Ok(PosterOverlayStatusCounts::default());
         };
-        let plex = SqlRuntime::fetch_optional(
-            self.read(),
-            "SELECT COALESCE(SUM(CASE WHEN p.last_error IS NULL
-                                       AND p.pushed_output_hash IS NOT NULL
-                                      THEN 1 ELSE 0 END), 0) AS pushed,
-                    COALESCE(SUM(CASE WHEN p.last_error = {} THEN 1 ELSE 0 END), 0) AS changed,
-                    COALESCE(SUM(CASE WHEN p.last_error IS NOT NULL AND p.last_error <> {}
-                                      THEN 1 ELSE 0 END), 0) AS failed
-               FROM poster_overlay_plex_state p",
-            &[
-                SqlArg::Text(PLEX_POSTER_CHANGED_IN_PLEX.to_string()),
-                SqlArg::Text(PLEX_POSTER_CHANGED_IN_PLEX.to_string()),
-            ],
-        )
-        .await?;
-        let plex_count = |name: &str| -> AppResult<i64> {
-            Ok(match &plex {
+        let plex = self.push_counts(true, PLEX_POSTER_CHANGED_IN_PLEX).await?;
+        let silo = self.push_counts(false, SILO_POSTER_CHANGED_IN_SILO).await?;
+        let count = |row: &Option<SqlRow>, name: &str| -> AppResult<i64> {
+            Ok(match row {
                 Some(row) => row.i64(name)?,
                 None => 0,
             })
         };
+        let plex_count = |name: &str| count(&plex, name);
+        let silo_count = |name: &str| count(&silo, name);
         Ok(PosterOverlayStatusCounts {
             enabled_titles: row.i64("enabled_titles")?,
             rendered: row.i64("rendered")?,
@@ -647,6 +679,9 @@ impl PosterOverlayRepository for PosterOverlayStore {
             plex_pushed: plex_count("pushed")?,
             plex_failed: plex_count("failed")?,
             plex_changed: plex_count("changed")?,
+            silo_pushed: silo_count("pushed")?,
+            silo_failed: silo_count("failed")?,
+            silo_changed: silo_count("changed")?,
         })
     }
 

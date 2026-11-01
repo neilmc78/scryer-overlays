@@ -23465,6 +23465,18 @@ type PosterOverlayCounts {
 	Titles whose poster was changed in Plex after a push and left alone.
 	"""
 	plexChanged: Int!
+	"""
+	Titles whose current overlay is their poster in Silo.
+	"""
+	siloPushed: Int!
+	"""
+	Titles whose last push to Silo failed.
+	"""
+	siloFailed: Int!
+	"""
+	Titles whose poster was changed in Silo after a push and left alone.
+	"""
+	siloChanged: Int!
 }
 
 """
@@ -23633,6 +23645,15 @@ type PosterOverlaySettings {
 	are matched to.
 	"""
 	plexPushEnabled: Boolean!
+	"""
+	Whether rendered posters are uploaded to Silo as each title's artwork.
+	"""
+	siloPushEnabled: Boolean!
+	"""
+	Silo's native API address. The API key comes from the Jellyfin
+	connection whose host matches it.
+	"""
+	siloApiUrl: String
 }
 
 """
@@ -34339,6 +34360,15 @@ input UpdatePosterOverlaySettingsInput {
 	current setting.
 	"""
 	plexPushEnabled: Boolean
+	"""
+	Upload rendered posters to Silo; null keeps the current setting.
+	"""
+	siloPushEnabled: Boolean
+	"""
+	Silo's native API address, such as `http://silo:8090`; null keeps the
+	current address and an empty string clears it.
+	"""
+	siloApiUrl: String
 }
 
 """

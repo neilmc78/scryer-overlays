@@ -160,6 +160,41 @@ export function usePosterOverlays() {
     [overview, run, showStatus, t],
   );
 
+  /** Save Silo's API address and whether posters are pushed there. */
+  const setSiloPush = React.useCallback(
+    async (enabled: boolean, apiUrl: string) => {
+      if (!overview) {
+        return false;
+      }
+      const saved = await run(
+        updatePosterOverlaySettingsMutation,
+        {
+          input: {
+            parallelism: overview.settings.parallelism,
+            reconcileIntervalSeconds: overview.settings.reconcileIntervalSeconds,
+            siloPushEnabled: enabled,
+            siloApiUrl: apiUrl.trim(),
+          },
+        },
+        "settings.posterOverlays.saveError",
+      );
+      if (saved) {
+        const wasEnabled = overview.settings.siloPushEnabled;
+        showStatus(
+          t(
+            enabled === wasEnabled
+              ? "settings.posterOverlays.settingsSaved"
+              : enabled
+                ? "settings.posterOverlays.siloPushOn"
+                : "settings.posterOverlays.siloPushOff",
+          ),
+        );
+      }
+      return saved !== null;
+    },
+    [overview, run, showStatus, t],
+  );
+
   const saveTemplate = React.useCallback(
     async (draft: PosterOverlayTemplateDraft) => {
       const saved = await run(
@@ -234,6 +269,7 @@ export function usePosterOverlays() {
     setLibrary,
     saveSettings,
     setPlexPush,
+    setSiloPush,
     saveTemplate,
     deleteTemplate,
     rebuild,

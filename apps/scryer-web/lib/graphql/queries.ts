@@ -5946,10 +5946,10 @@ export const previewPlexCollectionPosterQuery = `query PreviewPlexCollectionPost
 
 export const posterOverlaysQuery = `query PosterOverlays {
   posterOverlays {
-    settings { parallelism reconcileIntervalSeconds plexPushEnabled }
+    settings { parallelism reconcileIntervalSeconds plexPushEnabled siloPushEnabled siloApiUrl }
     libraries { libraryId libraryName facet enabled templateId }
     templates {${POSTER_OVERLAY_TEMPLATE_FIELDS}}
-    counts { enabledTitles rendered failed noArtwork plexPushed plexFailed plexChanged }
+    counts { enabledTitles rendered failed noArtwork plexPushed plexFailed plexChanged siloPushed siloFailed siloChanged }
     pass {${POSTER_OVERLAY_PASS_FIELDS}}
     builtinTemplate
     templateSpecVersion

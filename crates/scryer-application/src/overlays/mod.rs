@@ -9,6 +9,7 @@ mod plex;
 mod ports;
 mod runtime;
 mod service;
+mod silo;
 #[cfg(test)]
 mod tests;
 
@@ -36,8 +37,9 @@ pub use ports::{
     PlexPosterItem, PosterOverlayEngine, PosterOverlayInputs, PosterOverlayLibraryConfig,
     PosterOverlayPlexClient, PosterOverlayPlexState, PosterOverlayPreviewPoster,
     PosterOverlayPreviewRequest, PosterOverlayRenderRequest, PosterOverlayRendered,
-    PosterOverlayRepository, PosterOverlaySettings, PosterOverlayState, PosterOverlayStatusCounts,
-    PosterOverlayTemplate, PosterOverlayVariant,
+    PosterOverlayRepository, PosterOverlaySettings, PosterOverlaySiloClient, PosterOverlayState,
+    PosterOverlayStatusCounts, PosterOverlayTemplate, PosterOverlayVariant, SiloPosterItem,
+    SiloServer,
 };
 pub use runtime::{drain_overlay_events, start_poster_overlay_worker};
 pub use service::{
@@ -45,3 +47,4 @@ pub use service::{
     PosterOverlayPassProgress, PosterOverlayPassSummary, PosterOverlayPreview,
     PosterOverlayPreviewChoice, overlay_title_for_proxy_source,
 };
+pub use silo::{SILO_POSTER_CHANGED_IN_SILO, SiloSyncCounts, silo_content_ids};
