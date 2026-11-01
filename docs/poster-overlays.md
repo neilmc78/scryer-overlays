@@ -409,6 +409,48 @@ Kometa or Agregarr overlays for the same libraries before enabling the Plex
 push. Two overlay owners would stack badges on top of each other or overwrite
 each other's work.
 
+## Silo
+
+Rendered posters can also be pushed to [Silo](https://github.com/Silo-Server/silo-server)
+as each title's artwork. It is a separate switch on the overlay settings page.
+
+### Connecting
+
+- Silo is added under media servers as a Jellyfin connection, with a Silo
+  admin API key. That connection holds the key; nothing else stores it.
+- The overlay settings take Silo's native API address, such as
+  `http://silo:8090`. It is usually a different port from the Jellyfin one,
+  because Silo's Jellyfin-compatible API cannot receive images.
+- The push uses the enabled Jellyfin connection whose host matches that
+  address. Turning the push on fails if there is none.
+
+### Which titles
+
+Silo keys titles by content IDs built from provider IDs. Scryer builds the
+IDs a title can have from its own TMDB, TVDB and IMDb IDs, in Silo's order
+(TMDB, IMDb, TVDB for a movie; TVDB, TMDB, IMDb for a series or anime), and
+uses the first one Silo has. A title Silo does not have is skipped.
+
+### Pushing
+
+The full-size output is uploaded through `POST
+/api/v2/admin/items/{id}/images/upload`, which stores it as the title's
+poster and keeps it through Silo's metadata refreshes. A title is uploaded
+again only when its output hash changes. Push records share the Plex push
+table, keyed by the Jellyfin connection.
+
+### Posters changed in Silo
+
+Silo reports the thumbhash of the poster it shows. If it differs from the one
+recorded at upload, the poster was changed in Silo; Scryer leaves it alone and
+the settings page counts it.
+
+### Turning it off
+
+Turning the push off, or turning a library's overlays off, uploads the
+original poster back to titles still showing Scryer's upload, then drops the
+push records. Nothing is deleted in Silo.
+
 ## Attribution
 
 - The embedded font is Inter by The Inter Project Authors, licensed under the

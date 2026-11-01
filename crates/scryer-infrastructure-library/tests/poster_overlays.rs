@@ -16,7 +16,7 @@ use scryer_application::MediaServerConnectionRepository;
 use scryer_application::overlays::{
     AppPosterOverlayServices, PlexMaintenanceWindow, PlexMovieVersion, PlexPosterItem,
     PosterOverlayOutcome, PosterOverlayPlexClient, PosterOverlayRepository, PosterOverlaySettings,
-    overlay_title_for_proxy_source,
+    PosterOverlaySiloClient, SiloPosterItem, SiloServer, overlay_title_for_proxy_source,
 };
 use scryer_application::{
     AppResult, ImageProxyKind, ImageProxyRegistration, ImageProxyRepository, TitleExternalRating,
@@ -1380,4 +1380,319 @@ async fn a_version_without_an_edition_gets_its_own_poster(
         marker_input_hash(&plain),
         "each version's poster is built from its own file"
     );
+}
+
+// ── Silo ─────────────────────────────────────────────────────────────────
+
+const SILO_CONNECTION: &str = "silo-1";
+const SILO_CONTENT_ID: &str = "movie-tmdb-603";
+
+/// One Silo title held in memory. Its thumbhash follows the poster, as
+/// Silo's does; with `no_thumbhash`, uploads report none.
+#[derive(Default)]
+struct FakeSilo {
+    poster: Mutex<Vec<u8>>,
+    uploads: AtomicUsize,
+    no_thumbhash: std::sync::atomic::AtomicBool,
+}
+
+impl FakeSilo {
+    fn thumbhash(poster: &[u8]) -> Option<String> {
+        (!poster.is_empty()).then(|| format!("{:x}", poster.len() * 31 + usize::from(poster[0])))
+    }
+
+    fn select(&self, poster: Vec<u8>) {
+        *self.poster.lock().unwrap() = poster;
+    }
+
+    fn shown(&self) -> Vec<u8> {
+        self.poster.lock().unwrap().clone()
+    }
+
+    fn uploads(&self) -> usize {
+        self.uploads.load(Ordering::SeqCst)
+    }
+}
+
+#[async_trait]
+impl PosterOverlaySiloClient for FakeSilo {
+    async fn item(
+        &self,
+        server: &SiloServer,
+        content_id: &str,
+    ) -> AppResult<Option<SiloPosterItem>> {
+        assert_eq!(server.api_key, "silo-key");
+        assert_eq!(server.connection_id, SILO_CONNECTION);
+        Ok((content_id == SILO_CONTENT_ID).then(|| SiloPosterItem {
+            poster_thumbhash: if self.no_thumbhash.load(Ordering::SeqCst) {
+                None
+            } else {
+                Self::thumbhash(&self.poster.lock().unwrap())
+            },
+        }))
+    }
+
+    async fn upload_poster(
+        &self,
+        _server: &SiloServer,
+        content_id: &str,
+        poster: Vec<u8>,
+    ) -> AppResult<Option<String>> {
+        assert_eq!(content_id, SILO_CONTENT_ID);
+        self.uploads.fetch_add(1, Ordering::SeqCst);
+        let hash = Self::thumbhash(&poster);
+        *self.poster.lock().unwrap() = poster;
+        Ok(if self.no_thumbhash.load(Ordering::SeqCst) {
+            None
+        } else {
+            hash
+        })
+    }
+}
+
+fn silo_connection() -> MediaServerConnection {
+    MediaServerConnection {
+        id: SILO_CONNECTION.into(),
+        provider: MediaServerProvider::Jellyfin,
+        display_name: "Silo".into(),
+        base_url: "http://silo.local:8096".into(),
+        machine_id: None,
+        api_key: Some("silo-key".into()),
+        ..plex_connection()
+    }
+}
+
+/// A Plex connection with nothing mapped and the Jellyfin connection Silo
+/// is reached through, so both push paths see the shared records.
+struct SiloAndPlexConnections;
+
+#[async_trait]
+impl MediaServerConnectionRepository for SiloAndPlexConnections {
+    async fn list(
+        &self,
+        provider: Option<MediaServerProvider>,
+    ) -> AppResult<Vec<MediaServerConnection>> {
+        Ok([plex_connection(), silo_connection()]
+            .into_iter()
+            .filter(|connection| {
+                provider
+                    .as_ref()
+                    .is_none_or(|provider| &connection.provider == provider)
+            })
+            .collect())
+    }
+    async fn get_by_id(&self, id: &str) -> AppResult<Option<MediaServerConnection>> {
+        Ok([plex_connection(), silo_connection()]
+            .into_iter()
+            .find(|connection| connection.id == id))
+    }
+    async fn create(&self, connection: MediaServerConnection) -> AppResult<MediaServerConnection> {
+        Ok(connection)
+    }
+    async fn update(&self, connection: MediaServerConnection) -> AppResult<MediaServerConnection> {
+        Ok(connection)
+    }
+    async fn list_playback_items_for_entity(
+        &self,
+        _entity_kind: MediaServerPlaybackEntityKind,
+        _entity_id: &str,
+    ) -> AppResult<Vec<MediaServerPlaybackItem>> {
+        Ok(Vec::new())
+    }
+    async fn replace_playback_items_for_connection(
+        &self,
+        _connection_id: &str,
+        _items: Vec<MediaServerPlaybackItem>,
+    ) -> AppResult<()> {
+        Ok(())
+    }
+    async fn delete(&self, _id: &str) -> AppResult<()> {
+        Ok(())
+    }
+    async fn has_external_accounts(&self, _id: &str) -> AppResult<bool> {
+        Ok(false)
+    }
+    async fn has_notification_channels(&self, _id: &str) -> AppResult<bool> {
+        Ok(false)
+    }
+}
+
+async fn set_silo_push(store: &PosterOverlayStore, enabled: bool) {
+    let settings = store.get_settings().await.unwrap();
+    store
+        .save_settings(&PosterOverlaySettings {
+            silo_push_enabled: enabled,
+            silo_api_url: Some("http://silo.local:8090".into()),
+            ..settings
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn pushes_to_silo_only_on_change_and_respects_posters_changed_there_sqlite() {
+    let dir = tempfile::tempdir().unwrap();
+    let services = SqliteServices::new(dir.path().join("scryer.db").to_string_lossy())
+        .await
+        .expect("sqlite services");
+    pushes_to_silo_only_on_change_and_respects_posters_changed_there(
+        services.datastore(),
+        dir.path(),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn pushes_to_silo_only_on_change_and_respects_posters_changed_there_postgres() {
+    let Some(admin_url) = std::env::var("SCRYER_TEST_POSTGRES_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+    else {
+        eprintln!("skipping PostgreSQL Silo push test; SCRYER_TEST_POSTGRES_URL is not set");
+        return;
+    };
+    let database = format!("scryer_overlay_{}", uuid::Uuid::new_v4().simple());
+    let admin = sqlx::PgPool::connect(&admin_url)
+        .await
+        .expect("postgres admin");
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {database}")))
+        .execute(&admin)
+        .await
+        .expect("create test database");
+    let mut url = url::Url::parse(&admin_url).expect("postgres url");
+    url.set_path(&format!("/{database}"));
+    let dir = tempfile::tempdir().unwrap();
+    {
+        let services = PostgresServices::new_with_mode(url.as_str(), MigrationMode::Apply)
+            .await
+            .expect("postgres services");
+        pushes_to_silo_only_on_change_and_respects_posters_changed_there(
+            services.datastore(),
+            dir.path(),
+        )
+        .await;
+    }
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP DATABASE {database} WITH (FORCE)"
+    )))
+    .execute(&admin)
+    .await
+    .expect("drop test database");
+}
+
+async fn pushes_to_silo_only_on_change_and_respects_posters_changed_there(
+    datastore: StoreDatastore,
+    data_dir: &std::path::Path,
+) {
+    seed(&datastore).await;
+    let now = Utc::now();
+    for (id, provider, base_url) in [
+        (PLEX_CONNECTION, "plex", "http://plex.local:32400"),
+        (SILO_CONNECTION, "jellyfin", "http://silo.local:8096"),
+    ] {
+        exec(
+            &datastore,
+            "INSERT INTO media_server_connections (id, provider, display_name, base_url, created_at, updated_at)
+             VALUES ({}, {}, {}, {}, {}, {})",
+            vec![
+                SqlArg::Text(id.into()),
+                SqlArg::Text(provider.into()),
+                SqlArg::Text(id.into()),
+                SqlArg::Text(base_url.into()),
+                SqlArg::Timestamp(now),
+                SqlArg::Timestamp(now),
+            ],
+        )
+        .await;
+    }
+    exec(
+        &datastore,
+        "INSERT INTO title_external_ids (id, title_id, source, external_id, created_at)
+         VALUES ('ext-1', {}, 'tmdb', '603', {})",
+        vec![SqlArg::Text(TITLE.into()), SqlArg::Timestamp(now)],
+    )
+    .await;
+
+    let fetch = Arc::new(ScriptedFetch::default());
+    fetch.serve(poster(10));
+    let silo = Arc::new(FakeSilo::default());
+    let theirs = poster(77);
+    silo.select(theirs.clone());
+    let store = Arc::new(PosterOverlayStore::new(datastore.clone()));
+    let overlays = AppPosterOverlayServices::new(
+        store.clone(),
+        Arc::new(OverlayEngine::new(data_dir, fetch.clone()).unwrap()),
+    )
+    .with_plex(
+        Arc::new(SiloAndPlexConnections),
+        Arc::new(FakePlex::default()),
+    )
+    .with_silo(Arc::new(SiloAndPlexConnections), silo.clone());
+    store.set_library_config(LIBRARY, true, None).await.unwrap();
+    let silo_record = || store.get_plex_state(SILO_CONNECTION, TITLE, SILO_CONTENT_ID);
+
+    // Push off: rendering never touches Silo.
+    rendered_hash(overlays.process_title(TITLE).await);
+    assert_eq!(silo.uploads(), 0);
+
+    // Push on: the overlay is uploaded under the title's TMDB content ID,
+    // and only Silo's counts move.
+    set_silo_push(&store, true).await;
+    let summary = overlays.reconcile().await.unwrap();
+    assert_eq!(summary.silo.pushed, 1);
+    assert!(has_marker(&silo.shown()));
+    assert_eq!(silo.uploads(), 1);
+    let counts = store.status_counts().await.unwrap();
+    assert_eq!((counts.silo_pushed, counts.silo_failed), (1, 0));
+    assert_eq!(counts.plex_pushed, 0);
+
+    // Nothing changed: no upload. Plex push is off, so Plex's restore runs
+    // over the shared table every pass and must leave Silo's record alone.
+    overlays.reconcile().await.unwrap();
+    assert_eq!(silo.uploads(), 1);
+    assert!(silo_record().await.unwrap().is_some());
+
+    // A new overlay is uploaded once.
+    exec(
+        &datastore,
+        "UPDATE media_files SET video_width = 3840, video_height = 2160 WHERE id = 'file-1'",
+        vec![],
+    )
+    .await;
+    overlays.reconcile().await.unwrap();
+    assert_eq!(silo.uploads(), 2);
+
+    // Someone picks another poster in Silo: it is left alone and counted.
+    silo.select(theirs.clone());
+    let summary = overlays.reconcile().await.unwrap();
+    assert_eq!(summary.silo.changed_in_silo, 1);
+    assert_eq!((silo.shown(), silo.uploads()), (theirs.clone(), 2));
+    assert_eq!(store.status_counts().await.unwrap().silo_changed, 1);
+
+    // Push off: a poster changed in Silo is not replaced by the restore, and
+    // the record goes.
+    set_silo_push(&store, false).await;
+    overlays.reconcile().await.unwrap();
+    assert_eq!((silo.shown(), silo.uploads()), (theirs.clone(), 2));
+    assert!(silo_record().await.unwrap().is_none());
+
+    // Pushed again, then turned off: the original goes back.
+    set_silo_push(&store, true).await;
+    overlays.reconcile().await.unwrap();
+    assert_eq!(silo.uploads(), 3);
+    set_silo_push(&store, false).await;
+    let summary = overlays.reconcile().await.unwrap();
+    assert_eq!(summary.silo.restored, 1);
+    assert!(!has_marker(&silo.shown()));
+    assert!(silo_record().await.unwrap().is_none());
+
+    // A Silo that reports no thumbhash is kept current without uploading on
+    // every pass, and is never mistaken for a poster changed there.
+    silo.no_thumbhash.store(true, Ordering::SeqCst);
+    set_silo_push(&store, true).await;
+    overlays.reconcile().await.unwrap();
+    let uploads = silo.uploads();
+    let summary = overlays.reconcile().await.unwrap();
+    assert_eq!(silo.uploads(), uploads);
+    assert_eq!(summary.silo.changed_in_silo, 0);
 }

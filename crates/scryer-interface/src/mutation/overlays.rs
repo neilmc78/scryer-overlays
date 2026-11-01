@@ -49,7 +49,14 @@ impl PosterOverlayMutations {
         let parallelism = usize::try_from(input.parallelism).unwrap_or(0);
         let interval = u64::try_from(input.reconcile_interval_seconds).unwrap_or(0);
         let settings = app
-            .update_poster_overlay_settings(&actor, parallelism, interval, input.plex_push_enabled)
+            .update_poster_overlay_settings(
+                &actor,
+                parallelism,
+                interval,
+                input.plex_push_enabled,
+                input.silo_push_enabled,
+                input.silo_api_url,
+            )
             .await
             .map_err(to_gql_error)?;
         Ok(settings.into())

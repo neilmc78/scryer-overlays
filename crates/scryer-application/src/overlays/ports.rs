@@ -17,6 +17,11 @@ pub struct PosterOverlaySettings {
     /// Upload rendered posters to every enabled Plex server the titles are
     /// matched on, and lock them there.
     pub plex_push_enabled: bool,
+    /// Upload rendered posters to Silo as each title's artwork.
+    pub silo_push_enabled: bool,
+    /// Silo's native API address, such as `http://silo:8090`. The API key
+    /// comes from the Jellyfin connection whose host matches it.
+    pub silo_api_url: Option<String>,
 }
 
 impl Default for PosterOverlaySettings {
@@ -25,6 +30,8 @@ impl Default for PosterOverlaySettings {
             parallelism: DEFAULT_OVERLAY_PARALLELISM,
             reconcile_interval_seconds: DEFAULT_OVERLAY_RECONCILE_INTERVAL_SECONDS,
             plex_push_enabled: false,
+            silo_push_enabled: false,
+            silo_api_url: None,
         }
     }
 }
@@ -83,6 +90,8 @@ pub struct PosterOverlayInputs {
     pub title_name: Option<String>,
     /// The title's TMDB id, which confirms a Plex item is this title.
     pub tmdb_id: Option<String>,
+    pub tvdb_id: Option<String>,
+    pub imdb_id: Option<String>,
     pub files: Vec<OverlayMediaFacts>,
 }
 
@@ -110,6 +119,12 @@ pub struct PosterOverlayStatusCounts {
     pub plex_failed: i64,
     /// Titles whose poster was changed in Plex after a push and left alone.
     pub plex_changed: i64,
+    /// Titles whose current overlay is their poster in Silo.
+    pub silo_pushed: i64,
+    /// Titles whose last push to Silo failed.
+    pub silo_failed: i64,
+    /// Titles whose poster was changed in Silo after a push and left alone.
+    pub silo_changed: i64,
 }
 
 /// What was pushed to one Plex server for one title.
@@ -463,6 +478,43 @@ pub struct PlexMovieVersion {
 pub struct PlexMaintenanceWindow {
     pub start_hour: u32,
     pub end_hour: u32,
+}
+
+/// Where Silo is and the admin API key to use there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SiloServer {
+    /// The Jellyfin connection the key comes from; push records hang off it.
+    pub connection_id: String,
+    pub api_url: String,
+    pub api_key: String,
+}
+
+/// A title as Silo has it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SiloPosterItem {
+    /// The thumbhash of the poster Silo shows. It changes with the image,
+    /// so a value other than the one recorded at upload means the poster
+    /// was changed in Silo.
+    pub poster_thumbhash: Option<String>,
+}
+
+/// Reads and uploads Silo artwork through its native admin API.
+#[async_trait]
+pub trait PosterOverlaySiloClient: Send + Sync {
+    /// The title with this Silo content ID, or `None` when Silo has none.
+    async fn item(
+        &self,
+        server: &SiloServer,
+        content_id: &str,
+    ) -> AppResult<Option<SiloPosterItem>>;
+    /// Store `poster` as the title's poster and lock it, returning the
+    /// stored image's thumbhash, or `None` when Silo reports none.
+    async fn upload_poster(
+        &self,
+        server: &SiloServer,
+        content_id: &str,
+        poster: Vec<u8>,
+    ) -> AppResult<Option<String>>;
 }
 
 /// Reads and replaces posters on a Plex server through a stored connection.

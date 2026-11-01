@@ -65,6 +65,7 @@ type SettingsPosterOverlaysSectionProps = {
   >;
   onSaveSettings: (event: React.FormEvent<HTMLFormElement>) => void;
   onSetPlexPush: (enabled: boolean) => void;
+  onSetSiloPush: (enabled: boolean, apiUrl: string) => Promise<boolean>;
   onRebuild: () => void;
   onRequestRevertAll: () => void;
   templateDraft: PosterOverlayTemplateDraft | null;
@@ -95,6 +96,7 @@ export function SettingsPosterOverlaysSection({
   setSettingsDraft,
   onSaveSettings,
   onSetPlexPush,
+  onSetSiloPush,
   onRebuild,
   onRequestRevertAll,
   templateDraft,
@@ -304,6 +306,13 @@ export function SettingsPosterOverlaysSection({
         </div>
       </section>
 
+      <SiloPushPanel
+        settings={overview.settings}
+        counts={counts}
+        disabled={disabled}
+        onSave={onSetSiloPush}
+      />
+
         </>
       ) : (
         <>
@@ -457,5 +466,83 @@ export function SettingsPosterOverlaysSection({
         </>
       )}
     </div>
+  );
+}
+
+/** Silo push: the API address, the switch, and how many posters are current. */
+function SiloPushPanel({
+  settings,
+  counts,
+  disabled,
+  onSave,
+}: {
+  settings: PosterOverlayOverview["settings"];
+  counts: PosterOverlayOverview["counts"];
+  disabled: boolean;
+  onSave: (enabled: boolean, apiUrl: string) => Promise<boolean>;
+}) {
+  const t = useTranslate();
+  const [apiUrl, setApiUrl] = React.useState(settings.siloApiUrl ?? "");
+  React.useEffect(() => setApiUrl(settings.siloApiUrl ?? ""), [settings.siloApiUrl]);
+  const urlChanged = apiUrl.trim() !== (settings.siloApiUrl ?? "");
+  return (
+    <section id="settings-poster-overlays-silo" className={PANEL_CLASS}>
+      <div className={PANEL_HEADER_CLASS}>
+        <h3 className={PANEL_TITLE_CLASS}>{t("settings.posterOverlays.siloTitle")}</h3>
+        <Switch
+          id="settings-poster-overlays-silo-push"
+          aria-label={t("settings.posterOverlays.siloPush")}
+          checked={settings.siloPushEnabled}
+          disabled={disabled || apiUrl.trim() === ""}
+          onCheckedChange={(enabled) => void onSave(enabled, apiUrl)}
+        />
+      </div>
+      <div className={`${PANEL_BODY_CLASS} space-y-3`}>
+        <p className={MUTED_TEXT_CLASS}>{t("settings.posterOverlays.siloPushHelp")}</p>
+        <form
+          className="space-y-1"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void onSave(settings.siloPushEnabled, apiUrl);
+          }}
+        >
+          <Label htmlFor="settings-poster-overlays-silo-url">
+            {t("settings.posterOverlays.siloApiUrl")}
+          </Label>
+          <div className="flex gap-2">
+            <Input
+              id="settings-poster-overlays-silo-url"
+              type="url"
+              placeholder="http://silo:8090"
+              value={apiUrl}
+              disabled={disabled}
+              onChange={(event) => setApiUrl(event.target.value)}
+            />
+            <Button type="submit" disabled={disabled || !urlChanged}>
+              {t("label.save")}
+            </Button>
+          </div>
+          <p className={`text-xs ${MUTED_TEXT_CLASS}`}>
+            {t("settings.posterOverlays.siloApiUrlHelp")}
+          </p>
+        </form>
+        {settings.siloPushEnabled ||
+        counts.siloPushed + counts.siloFailed + counts.siloChanged > 0 ? (
+          <p id="settings-poster-overlays-silo-counts">
+            {t("settings.posterOverlays.siloCounts", { pushed: counts.siloPushed })}
+            {counts.siloChanged > 0 ? (
+              <span className={`ml-2 ${MUTED_TEXT_CLASS}`}>
+                {t("settings.posterOverlays.siloChangedCount", { count: counts.siloChanged })}
+              </span>
+            ) : null}
+            {counts.siloFailed > 0 ? (
+              <span className="ml-2 text-destructive">
+                {t("settings.posterOverlays.plexFailedCount", { count: counts.siloFailed })}
+              </span>
+            ) : null}
+          </p>
+        ) : null}
+      </div>
+    </section>
   );
 }

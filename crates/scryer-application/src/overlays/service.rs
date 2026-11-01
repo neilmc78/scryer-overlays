@@ -13,6 +13,7 @@ use super::ports::{
     PosterOverlayRenderRequest, PosterOverlayRepository, PosterOverlaySettings, PosterOverlayState,
     PosterOverlayStatusCounts, PosterOverlayTemplate, PosterOverlayVariant,
 };
+use super::silo::{SiloPush, SiloSyncCounts};
 use crate::{
     AppError, AppResult, AppUseCase, ImageProxyKind, ImageProxySourceRecord,
     MediaServerConnectionRepository,
@@ -37,6 +38,8 @@ pub struct AppPosterOverlayServices {
     pass: Arc<Mutex<PosterOverlayPassProgress>>,
     /// Pushes rendered posters to Plex; absent where no client is wired.
     pub(crate) plex: Option<PlexPush>,
+    /// Pushes rendered posters to Silo; absent where no client is wired.
+    pub(crate) silo: Option<SiloPush>,
     /// Whether any library has overlays enabled. Lets the image route skip
     /// the overlay lookup entirely on installs that do not use overlays.
     /// Starts `true` so nothing is missed before the first refresh.
@@ -55,6 +58,7 @@ impl AppPosterOverlayServices {
             collections_wake: Arc::new(tokio::sync::Notify::new()),
             pass: Arc::new(Mutex::new(PosterOverlayPassProgress::default())),
             plex: None,
+            silo: None,
             any_library_enabled: Arc::new(AtomicBool::new(true)),
         }
     }
@@ -67,6 +71,18 @@ impl AppPosterOverlayServices {
         client: Arc<dyn super::ports::PosterOverlayPlexClient>,
     ) -> Self {
         self.plex = Some(PlexPush::new(connections, client));
+        self
+    }
+
+    /// Push rendered posters to Silo through `client`, using the API key of
+    /// the Jellyfin connection in `connections` that points at Silo, when the
+    /// overlay settings turn Silo push on.
+    pub fn with_silo(
+        mut self,
+        connections: Arc<dyn MediaServerConnectionRepository>,
+        client: Arc<dyn super::ports::PosterOverlaySiloClient>,
+    ) -> Self {
+        self.silo = Some(SiloPush::new(connections, client));
         self
     }
 
@@ -154,22 +170,33 @@ impl AppPosterOverlayServices {
     /// Plex server the title is matched on.
     pub async fn process_title(&self, title_id: &str) -> PosterOverlayOutcome {
         let push = self.plex_push_enabled().await;
-        self.process_title_and_push(title_id, push).await.0
+        let silo = self.silo_push_server().await;
+        self.process_title_and_push(title_id, push, silo.as_ref())
+            .await
+            .0
     }
 
     async fn process_title_and_push(
         &self,
         title_id: &str,
         push: bool,
-    ) -> (PosterOverlayOutcome, PlexSyncCounts) {
+        silo: Option<&super::ports::SiloServer>,
+    ) -> (PosterOverlayOutcome, PlexSyncCounts, SiloSyncCounts) {
         let outcome = self.render_title(title_id).await;
-        let plex = match outcome {
-            PosterOverlayOutcome::Rendered { .. } | PosterOverlayOutcome::Unchanged if push => {
-                self.sync_plex(title_id).await
-            }
-            _ => PlexSyncCounts::default(),
+        let current = matches!(
+            outcome,
+            PosterOverlayOutcome::Rendered { .. } | PosterOverlayOutcome::Unchanged
+        );
+        let plex = if current && push {
+            self.sync_plex(title_id).await
+        } else {
+            PlexSyncCounts::default()
         };
-        (outcome, plex)
+        let silo = match silo {
+            Some(server) if current => self.sync_silo(title_id, server).await,
+            _ => SiloSyncCounts::default(),
+        };
+        (outcome, plex, silo)
     }
 
     async fn render_title(&self, title_id: &str) -> PosterOverlayOutcome {
@@ -212,13 +239,16 @@ impl AppPosterOverlayServices {
         let settings = self.repository.get_settings().await.unwrap_or_default();
         let parallelism = settings.parallelism.clamp(1, MAX_OVERLAY_PARALLELISM);
         let push = self.plex.is_some() && settings.plex_push_enabled;
+        let silo = self.silo_push_server().await;
+        let silo = silo.as_ref();
         let mut summary = PosterOverlayPassSummary::default();
         let mut outcomes = futures_util::stream::iter(title_ids)
-            .map(|title_id| async move { self.process_title_and_push(&title_id, push).await })
+            .map(|title_id| async move { self.process_title_and_push(&title_id, push, silo).await })
             .buffer_unordered(parallelism);
-        while let Some((outcome, plex)) = outcomes.next().await {
+        while let Some((outcome, plex, silo)) = outcomes.next().await {
             summary.record(&outcome);
             summary.plex.merge(plex);
+            summary.silo.merge(silo);
             if track {
                 self.update_pass(|pass| {
                     pass.processed += 1;
@@ -291,6 +321,9 @@ impl AppPosterOverlayServices {
         summary
             .plex
             .merge(self.restore_inactive_plex_posters(push).await);
+        summary
+            .silo
+            .merge(self.restore_inactive_silo_posters().await);
 
         if !title_ids.is_empty() {
             tracing::info!(
@@ -309,6 +342,17 @@ impl AppPosterOverlayServices {
                 deferred_for_maintenance = plex.deferred,
                 failed = plex.failed,
                 "poster overlay Plex sync finished"
+            );
+        }
+        let silo = summary.silo;
+        if !silo.is_empty() {
+            tracing::info!(
+                pushed = silo.pushed,
+                restored = silo.restored,
+                changed_in_silo = silo.changed_in_silo,
+                not_in_silo = silo.not_in_silo,
+                failed = silo.failed,
+                "poster overlay Silo sync finished"
             );
         }
         if summary.no_artwork > 0 {
@@ -475,6 +519,8 @@ pub struct PosterOverlayPassSummary {
     pub failed: usize,
     /// What the pass did on Plex servers.
     pub plex: PlexSyncCounts,
+    /// What the pass did in Silo.
+    pub silo: SiloSyncCounts,
 }
 
 impl PosterOverlayPassSummary {
@@ -485,6 +531,7 @@ impl PosterOverlayPassSummary {
         self.no_artwork += other.no_artwork;
         self.failed += other.failed;
         self.plex.merge(other.plex);
+        self.silo.merge(other.silo);
     }
 
     fn record(&mut self, outcome: &PosterOverlayOutcome) {
@@ -576,6 +623,8 @@ impl AppUseCase {
         parallelism: usize,
         reconcile_interval_seconds: u64,
         plex_push_enabled: Option<bool>,
+        silo_push_enabled: Option<bool>,
+        silo_api_url: Option<String>,
     ) -> AppResult<PosterOverlaySettings> {
         self.require_app_permission(actor, AppPermission::ManageCatalogSettings)
             .await?;
@@ -585,6 +634,12 @@ impl AppUseCase {
             parallelism,
             reconcile_interval_seconds,
             plex_push_enabled: plex_push_enabled.unwrap_or(previous.plex_push_enabled),
+            silo_push_enabled: silo_push_enabled.unwrap_or(previous.silo_push_enabled),
+            // An empty address clears it; absent keeps the stored one.
+            silo_api_url: match silo_api_url {
+                Some(url) => Some(url.trim().to_string()).filter(|url| !url.is_empty()),
+                None => previous.silo_api_url.clone(),
+            },
         };
         if settings.parallelism == 0 || settings.parallelism > MAX_OVERLAY_PARALLELISM {
             return Err(AppError::Validation(format!(
@@ -596,11 +651,31 @@ impl AppUseCase {
                 "overlay reconcile interval must be at least {MIN_OVERLAY_RECONCILE_INTERVAL_SECONDS} seconds"
             )));
         }
+        if let Some(url) = settings.silo_api_url.as_deref()
+            && !matches!(url::Url::parse(url), Ok(parsed) if matches!(parsed.scheme(), "http" | "https"))
+        {
+            return Err(AppError::Validation(
+                "Silo's API address must be an http or https URL".into(),
+            ));
+        }
+        if settings.silo_push_enabled
+            && let Some(silo) = overlays.silo.as_ref()
+        {
+            // Fails when no Jellyfin connection holds Silo's key.
+            if silo.server(&settings).await?.is_none() {
+                return Err(AppError::Validation(
+                    "set Silo's API address before turning Silo push on".into(),
+                ));
+            }
+        }
         overlays.repository.save_settings(&settings).await?;
         overlays.engine.set_parallelism(settings.parallelism);
         // Turning push on uploads every poster; turning it off puts the
         // originals back. Either way a pass does the work.
-        if previous.plex_push_enabled != settings.plex_push_enabled {
+        if previous.plex_push_enabled != settings.plex_push_enabled
+            || previous.silo_push_enabled != settings.silo_push_enabled
+            || previous.silo_api_url != settings.silo_api_url
+        {
             overlays.request_pass();
         }
         Ok(settings)

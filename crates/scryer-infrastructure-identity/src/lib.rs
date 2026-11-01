@@ -8,6 +8,7 @@ pub mod media_server_posters;
 /// Provider adapters for media-server watch signals (RFC 137 §7.3, WP-M).
 pub mod media_server_signals;
 pub mod oauth;
+pub mod silo_posters;
 pub mod users;
 
 pub use scryer_infrastructure_crypto::EncryptionKey;
