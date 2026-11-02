@@ -7064,6 +7064,8 @@ const en: LocaleDictionary = {
   "settings.posterOverlays.textFitOff": "Fixed size",
   "settings.posterOverlays.textFitShrink": "Shrink to fit",
   "settings.posterOverlays.textFitWrap": "Wrap, up to {{lines}} lines",
+  "settings.posterOverlays.formatLogos": "Show format logos",
+  "settings.posterOverlays.formatLogosHelp": "Draws Dolby Vision, HDR10+, HDR, Dolby Atmos, TrueHD, Digital Plus, DTS-HD and IMAX as their logos, sized to the text. Other values stay as text.",
   "settings.posterOverlays.badgeKindCodec": "Video codec",
   "settings.posterOverlays.badgeKindSource": "Source",
   "settings.posterOverlays.previewOn": "Preview on a poster from",

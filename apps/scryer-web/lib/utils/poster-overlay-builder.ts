@@ -91,6 +91,11 @@ export type OverlayElement = {
    * 2 or more also lets it wrap onto that many lines.
    */
   fitLines: number;
+  /**
+   * `data-scryer-logos`: draw format logos (Dolby Atmos, DTS-HD, HDR10+,
+   * IMAX, ...) in place of the labels they stand for, sized to the text.
+   */
+  logos: boolean;
   /** Set for a ratings badge; its box is then one tile. */
   ratings: OverlayRatings | null;
 };
@@ -122,6 +127,9 @@ export const BADGE_PRESETS: Record<Exclude<OverlayBadgeKind, "custom" | "ratings
     text: "{{series_status_label}}",
   },
 };
+
+/** Badge kinds whose labels have format logos the server can draw. */
+export const LOGO_BADGE_KINDS: OverlayBadgeKind[] = ["hdr", "audio", "edition"];
 
 export const BADGE_KINDS: OverlayBadgeKind[] = [
   "resolution",
@@ -199,6 +207,7 @@ export function newElement(kind: OverlayBadgeKind, key: string): OverlayElement 
     align: "middle",
     letterSpacing: 0,
     fitLines: kind === "ratings" ? 0 : kind === "edition" ? 2 : 1,
+    logos: LOGO_BADGE_KINDS.includes(kind),
     ratings:
       kind === "ratings"
         ? {
@@ -458,6 +467,7 @@ function serializeElement(element: OverlayElement): string {
     `fill="${element.textColor}"`,
     `text-anchor="${element.align}"`,
     element.letterSpacing !== 0 ? `letter-spacing="${formatNumber(element.letterSpacing)}"` : "",
+    element.logos ? `data-scryer-logos="true"` : "",
     element.fitLines > 0 ? `data-scryer-fit="${fitBox(element)}"` : "",
     element.fitLines > 1 ? `data-scryer-fit-lines="${element.fitLines}"` : "",
   ]
@@ -530,6 +540,7 @@ const TEXT_ATTRIBUTES = [
   "fill",
   "text-anchor",
   "letter-spacing",
+  "data-scryer-logos",
   "data-scryer-fit",
   "data-scryer-fit-lines",
 ] as const;
@@ -571,6 +582,10 @@ function parseBadgeParts(
   if (anchor !== "start" && anchor !== "middle" && anchor !== "end") {
     return null;
   }
+  const logos = text.get("data-scryer-logos")?.trim() ?? "false";
+  if (logos !== "true" && logos !== "false") {
+    return null;
+  }
   const x = parseNumber(rect.get("x"), 0);
   const y = parseNumber(rect.get("y"), 0);
   const width = parseNumber(rect.get("width"), Number.NaN);
@@ -602,6 +617,7 @@ function parseBadgeParts(
     align: anchor,
     letterSpacing: letterSpacing as number,
     fitLines: 0,
+    logos: logos === "true",
     ratings: null,
   };
   const fit = text.get("data-scryer-fit");

@@ -33,6 +33,17 @@ const FIT_LINE_HEIGHT: f64 = 1.15;
 /// capitals on it.
 const FIT_CAP_CENTER: f64 = 0.36;
 const MIN_FIT_FONT_SIZE: f64 = 6.0;
+/// On `<text>`: `true` draws a format's logo (Dolby Atmos, DTS-HD, HDR10+,
+/// IMAX, ...) in place of the label it stands for, where one is bundled.
+/// Labels without a logo stay text.
+const LOGOS_ATTR: &str = "data-scryer-logos";
+/// A format logo's height as a share of the font size: a little over Inter's
+/// cap height, so the logo's lettering sits level with the text beside it.
+const FORMAT_LOGO_HEIGHT: f64 = 0.8;
+/// Room kept clear on each side of a format logo, as a share of the font
+/// size: widely spaced wordmarks such as Atmos's would otherwise run into
+/// the next word.
+const FORMAT_LOGO_MARGIN: f64 = 0.15;
 
 /// Measures text for fitting. Widths are at font size 100 and exclude
 /// letter spacing.
@@ -106,6 +117,42 @@ pub const LOGOS: &[(&str, &str)] = &[
         "tvdb",
         include_str!("../../../assets/overlays/logos/tvdb.svg"),
     ),
+    // Format logos: single-colour paths with no fill of their own, so they
+    // take the `fill` of the `<use>` drawing them (black when it has none):
+    // with `data-scryer-logos`, the colour of the text they replace. See
+    // `logos/formats/NOTICE.txt`.
+    (
+        "dolby-atmos",
+        include_str!("../../../assets/overlays/logos/formats/dolby-atmos.svg"),
+    ),
+    (
+        "dolby-digital-plus",
+        include_str!("../../../assets/overlays/logos/formats/dolby-digital-plus.svg"),
+    ),
+    (
+        "dolby-truehd",
+        include_str!("../../../assets/overlays/logos/formats/dolby-truehd.svg"),
+    ),
+    (
+        "dolby-vision",
+        include_str!("../../../assets/overlays/logos/formats/dolby-vision.svg"),
+    ),
+    (
+        "dts-hd",
+        include_str!("../../../assets/overlays/logos/formats/dts-hd.svg"),
+    ),
+    (
+        "hdr",
+        include_str!("../../../assets/overlays/logos/formats/hdr.svg"),
+    ),
+    (
+        "hdr10plus",
+        include_str!("../../../assets/overlays/logos/formats/hdr10plus.svg"),
+    ),
+    (
+        "imax",
+        include_str!("../../../assets/overlays/logos/formats/imax.svg"),
+    ),
 ];
 
 /// Element names a template may not contain. Templates are vector badges;
@@ -163,7 +210,12 @@ pub fn preprocess_measured(
                 }
                 check_element(&start, &mut saw_root)?;
                 let fit = text_fit(&start)?;
+                let format_logos = logo_text(&start)?;
                 match emit_element(&start, values, &mut open, &mut logos)? {
+                    Some(element) if format_logos => {
+                        let pieces = text_pieces(&mut reader, values)?;
+                        write_logo_text(&mut writer, element, fit, &pieces, measure, &mut logos)?;
+                    }
                     Some(element) => match fit {
                         Some(fit) => {
                             let content = fitted_text_content(&mut reader, values)?;
@@ -183,6 +235,7 @@ pub fn preprocess_measured(
                 }
                 check_element(&start, &mut saw_root)?;
                 text_fit(&start)?;
+                logo_text(&start)?;
                 if let Some(element) = emit_element(&start, values, &mut open, &mut logos)? {
                     write(&mut writer, Event::Empty(element))?;
                 }
@@ -243,6 +296,7 @@ pub fn validate(svg: &str) -> AppResult<()> {
             Event::Start(start) | Event::Empty(start) => {
                 stack_layout(&start)?;
                 text_fit(&start)?;
+                logo_text(&start)?;
                 referenced_logo(&start)?;
                 check_reserved_id(&start)?;
                 for attribute in start.attributes() {
@@ -256,6 +310,7 @@ pub fn validate(svg: &str) -> AppResult<()> {
                         || key == STEP_ATTR
                         || key == FIT_ATTR
                         || key == FIT_LINES_ATTR
+                        || key == LOGOS_ATTR
                     {
                         // Checked together below.
                     } else {
@@ -474,19 +529,59 @@ fn fit_words(
     fit: TextFit,
     measure: &dyn TextMeasure,
 ) -> (f64, Vec<String>) {
-    let words = content.split_whitespace().collect::<Vec<_>>();
+    let words = content
+        .split_whitespace()
+        .map(Word::Text)
+        .collect::<Vec<_>>();
+    let (size, lines) = fit_layout(&words, max_size, spacing, fit, measure);
+    let lines = lines
+        .into_iter()
+        .map(|line| {
+            line.into_iter()
+                .map(|index| match words[index] {
+                    Word::Text(word) => word,
+                    Word::Logo { .. } => "",
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect();
+    (size, lines)
+}
+
+/// One unit of a laid-out line: a word of text or a format logo, which
+/// wraps and shrinks like a word.
+#[derive(Clone, Copy, Debug)]
+enum Word<'a> {
+    Text(&'a str),
+    Logo { name: &'static str, aspect: f64 },
+}
+
+/// A word's width at font size 100, and the letters letter spacing adds to.
+fn word_metrics(word: &Word<'_>, measure: &dyn TextMeasure) -> (f64, f64) {
+    match word {
+        Word::Text(text) => (measure.width_at_100(text), text.chars().count() as f64),
+        Word::Logo { aspect, .. } => (
+            (FORMAT_LOGO_HEIGHT * aspect + 2.0 * FORMAT_LOGO_MARGIN) * 100.0,
+            0.0,
+        ),
+    }
+}
+
+/// The font size and lines, as word indices, for `words` in `fit`.
+fn fit_layout(
+    words: &[Word<'_>],
+    max_size: f64,
+    spacing: f64,
+    fit: TextFit,
+    measure: &dyn TextMeasure,
+) -> (f64, Vec<Vec<usize>>) {
     if words.is_empty() {
         return (max_size, Vec::new());
     }
-    let widths = words
-        .iter()
-        .map(|word| measure.width_at_100(word))
-        .collect::<Vec<_>>();
+    let (widths, chars): (Vec<f64>, Vec<f64>) =
+        words.iter().map(|word| word_metrics(word, measure)).unzip();
     let space = (measure.width_at_100("x x") - 2.0 * measure.width_at_100("x")).max(0.0);
-    let chars = words
-        .iter()
-        .map(|word| word.chars().count() as f64)
-        .collect::<Vec<_>>();
     let word_width =
         |index: usize, size: f64| widths[index] * size / 100.0 + chars[index] * spacing;
     let space_width = |size: f64| space * size / 100.0 + spacing;
@@ -536,22 +631,328 @@ fn fit_words(
         }
         low
     };
-    let (lines, _) = wrap(size);
-    let mut lines = lines
-        .into_iter()
-        .map(|line| {
-            line.into_iter()
-                .map(|index| words[index])
-                .collect::<Vec<_>>()
-                .join(" ")
-        })
-        .collect::<Vec<_>>();
+    let (mut lines, _) = wrap(size);
     // Text that cannot fit even at the smallest size keeps its first lines.
     if lines.len() > fit.lines {
-        let rest = lines.split_off(fit.lines - 1).join(" ");
+        let rest = lines.split_off(fit.lines - 1).concat();
         lines.push(rest);
     }
     (size, lines)
+}
+
+/// Text inside a `<text>` with format logos: literal text, or a logo drawn
+/// in place of a label.
+enum Piece {
+    /// Escaped XML text, placeholders resolved.
+    Text(String),
+    Logo(&'static str),
+}
+
+/// Whether a `<text>` asks for format logos, checked even where it never
+/// renders.
+fn logo_text(start: &BytesStart<'_>) -> AppResult<bool> {
+    let Some(attribute) = start
+        .try_get_attribute(LOGOS_ATTR)
+        .map_err(|error| invalid(format!("bad attribute: {error}")))?
+    else {
+        return Ok(false);
+    };
+    if start.local_name().as_ref() != "text" {
+        return Err(invalid(format!("{LOGOS_ATTR} is only allowed on <text>")));
+    }
+    match attribute.value.trim() {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        other => Err(invalid(format!(
+            "{LOGOS_ATTR} must be true or false, not \"{other}\""
+        ))),
+    }
+}
+
+/// The logo a label placeholder is drawn as, given the title's values.
+fn label_logo(field: &str, values: &BTreeMap<&'static str, String>) -> Option<&'static str> {
+    let value = |name: &str| values.get(name).map(String::as_str).unwrap_or_default();
+    match field {
+        "audio_label" => match value("audio_codec") {
+            "truehd_atmos" | "ddp_atmos" => Some("dolby-atmos"),
+            "truehd" => Some("dolby-truehd"),
+            "ddp" => Some("dolby-digital-plus"),
+            "dtsx" | "dtshd_ma" | "dtshd_hra" => Some("dts-hd"),
+            _ => None,
+        },
+        "hdr_label" => match value("hdr") {
+            "dv" => Some("dolby-vision"),
+            "hdr10plus" => Some("hdr10plus"),
+            "hdr10" => Some("hdr"),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The content of a `<text>` with format logos: label placeholders with a
+/// logo become logos, and an edition named IMAX shows IMAX's. It may hold
+/// only text: no child elements.
+fn text_pieces(
+    reader: &mut Reader<&[u8]>,
+    values: &BTreeMap<&'static str, String>,
+) -> AppResult<Vec<Piece>> {
+    let mut pieces = Vec::new();
+    let push_text = |pieces: &mut Vec<Piece>, text: &str| match pieces.last_mut() {
+        Some(Piece::Text(last)) => last.push_str(text),
+        _ => pieces.push(Piece::Text(text.to_string())),
+    };
+    loop {
+        match reader
+            .read_event()
+            .map_err(|error| invalid(format!("malformed XML: {error}")))?
+        {
+            Event::Text(text) => {
+                let mut rest: &str = &text;
+                while let Some(open) = rest.find("{{") {
+                    push_text(&mut pieces, &rest[..open]);
+                    let after = &rest[open + 2..];
+                    let close = after
+                        .find("}}")
+                        .ok_or_else(|| invalid("unterminated {{ placeholder"))?;
+                    let field = after[..close].trim();
+                    let value = field_value(field, values)?;
+                    if let Some(logo) = label_logo(field, values) {
+                        pieces.push(Piece::Logo(logo));
+                    } else if field == "edition_label" {
+                        for (index, word) in value.split(' ').enumerate() {
+                            if index > 0 {
+                                push_text(&mut pieces, " ");
+                            }
+                            if word.eq_ignore_ascii_case("imax") {
+                                pieces.push(Piece::Logo("imax"));
+                            } else {
+                                push_text(&mut pieces, &quick_xml::escape::escape(word));
+                            }
+                        }
+                    } else {
+                        push_text(&mut pieces, &quick_xml::escape::escape(value));
+                    }
+                    rest = &after[close + 2..];
+                }
+                push_text(&mut pieces, rest);
+            }
+            Event::GeneralRef(reference) => {
+                push_text(&mut pieces, &format!("&{};", reference.as_ref() as &str));
+            }
+            Event::Comment(_) => {}
+            Event::End(_) => break,
+            Event::Eof => return Err(invalid("unterminated <text>")),
+            _ => {
+                return Err(invalid(format!(
+                    "a <text> with {LOGOS_ATTR} may contain only text and placeholders"
+                )));
+            }
+        }
+    }
+    Ok(pieces)
+}
+
+/// A bundled logo's width over its height, from its `viewBox`.
+fn logo_aspect(name: &str) -> AppResult<f64> {
+    let (_, svg) = LOGOS
+        .iter()
+        .find(|(logo, _)| *logo == name)
+        .ok_or_else(|| invalid(format!("unknown logo \"{name}\"")))?;
+    logo_parts(svg)
+        .and_then(|(view_box, _)| {
+            let numbers = view_box
+                .split([' ', ','])
+                .filter(|part| !part.is_empty())
+                .map(|part| part.parse::<f64>().ok())
+                .collect::<Option<Vec<_>>>()?;
+            (numbers.len() == 4 && numbers[2] > 0.0 && numbers[3] > 0.0)
+                .then(|| numbers[2] / numbers[3])
+        })
+        .ok_or_else(|| invalid(format!("bundled logo \"{name}\" is malformed")))
+}
+
+/// Writes a `<text>` with format logos. Without a logo to draw it is written
+/// as it would be without the attribute. With one, each line becomes text
+/// runs and logos laid out along the baseline, aligned as the text was.
+fn write_logo_text(
+    writer: &mut Writer<Vec<u8>>,
+    element: BytesStart<'static>,
+    fit: Option<TextFit>,
+    pieces: &[Piece],
+    measure: &dyn TextMeasure,
+    logos: &mut Vec<&'static str>,
+) -> AppResult<()> {
+    let unescape = |text: &str| -> AppResult<String> {
+        quick_xml::escape::unescape(text)
+            .map(|text| text.into_owned())
+            .map_err(|error| invalid(format!("bad text: {error}")))
+    };
+    if !pieces.iter().any(|piece| matches!(piece, Piece::Logo(_))) {
+        let escaped = pieces
+            .iter()
+            .map(|piece| match piece {
+                Piece::Text(text) => text.as_str(),
+                Piece::Logo(_) => "",
+            })
+            .collect::<String>();
+        return match fit {
+            Some(fit) => write_fitted_text(writer, element, fit, &unescape(&escaped)?, measure),
+            None => {
+                write(writer, Event::Start(element))?;
+                write(writer, Event::Text(BytesText::from_escaped(escaped)))?;
+                write(writer, Event::End(quick_xml::events::BytesEnd::new("text")))
+            }
+        };
+    }
+
+    // Words in order: text split on whitespace, each logo a word of its own.
+    let mut texts = Vec::new();
+    for piece in pieces {
+        if let Piece::Text(text) = piece {
+            texts.push(unescape(text)?);
+        }
+    }
+    let mut words = Vec::new();
+    let mut next_text = texts.iter();
+    for piece in pieces {
+        match piece {
+            Piece::Text(_) => {
+                let text = next_text.next().map(String::as_str).unwrap_or_default();
+                words.extend(text.split_whitespace().map(Word::Text));
+            }
+            Piece::Logo(name) => words.push(Word::Logo {
+                name,
+                aspect: logo_aspect(name)?,
+            }),
+        }
+    }
+
+    let font_size = attribute_number(&element, "font-size")?.unwrap_or(16.0);
+    let spacing = attribute_number(&element, "letter-spacing")?.unwrap_or(0.0);
+    let (size, lines, baselines, x) = match fit {
+        Some(fit) => {
+            let (size, lines) = fit_layout(&words, font_size, spacing, fit, measure);
+            let line_height = size * FIT_LINE_HEIGHT;
+            let first = fit.y + fit.height / 2.0
+                - (lines.len().saturating_sub(1) as f64) * line_height / 2.0
+                + size * FIT_CAP_CENTER;
+            let baselines = (0..lines.len())
+                .map(|index| first + index as f64 * line_height)
+                .collect::<Vec<_>>();
+            let x = attribute_number(&element, "x")?.unwrap_or(fit.x);
+            (size, lines, baselines, x)
+        }
+        None => {
+            let y = attribute_number(&element, "y")?.unwrap_or(0.0);
+            let x = attribute_number(&element, "x")?.unwrap_or(0.0);
+            (font_size, vec![(0..words.len()).collect()], vec![y], x)
+        }
+    };
+
+    let attribute_text = |name: &str| -> AppResult<Option<String>> {
+        Ok(element
+            .try_get_attribute(name)
+            .map_err(|error| invalid(format!("bad attribute: {error}")))?
+            .map(|attribute| attribute.value.into_owned()))
+    };
+    let anchor = attribute_text("text-anchor")?.unwrap_or_default();
+    let fill = attribute_text("fill")?;
+    let mut group = BytesStart::new("g");
+    if let Some(transform) = attribute_text("transform")? {
+        group.push_attribute(("transform", transform.as_str()));
+    }
+    write(writer, Event::Start(group))?;
+
+    let (widths, chars): (Vec<f64>, Vec<f64>) =
+        words.iter().map(|word| word_metrics(word, measure)).unzip();
+    let width = |index: usize| widths[index] * size / 100.0 + chars[index] * spacing;
+    let space = (measure.width_at_100("x x") - 2.0 * measure.width_at_100("x")).max(0.0) * size
+        / 100.0
+        + spacing;
+    for (line, baseline) in lines.iter().zip(baselines) {
+        let total = line.iter().map(|index| width(*index)).sum::<f64>()
+            + space * line.len().saturating_sub(1) as f64;
+        let mut cursor = match anchor.trim() {
+            "middle" => x - total / 2.0,
+            "end" => x - total,
+            _ => x,
+        };
+        let mut run: Vec<&str> = Vec::new();
+        let mut run_start = cursor;
+        for (position, index) in line.iter().enumerate() {
+            if position > 0 {
+                cursor += space;
+            }
+            match words[*index] {
+                Word::Text(text) => {
+                    if run.is_empty() {
+                        run_start = cursor;
+                    }
+                    run.push(text);
+                }
+                Word::Logo { name, aspect } => {
+                    write_text_run(writer, &element, &mut run, run_start, baseline, size)?;
+                    let height = size * FORMAT_LOGO_HEIGHT;
+                    let mut logo = BytesStart::new("use");
+                    logo.push_attribute(("href", format!("#{LOGO_ID_PREFIX}{name}").as_str()));
+                    logo.push_attribute((
+                        "x",
+                        format_number(cursor + size * FORMAT_LOGO_MARGIN).as_str(),
+                    ));
+                    logo.push_attribute((
+                        "y",
+                        format_number(baseline - size * FIT_CAP_CENTER - height / 2.0).as_str(),
+                    ));
+                    logo.push_attribute(("width", format_number(height * aspect).as_str()));
+                    logo.push_attribute(("height", format_number(height).as_str()));
+                    if let Some(fill) = fill.as_deref() {
+                        logo.push_attribute(("fill", fill));
+                    }
+                    write(writer, Event::Empty(logo))?;
+                    if !logos.contains(&name) {
+                        logos.push(name);
+                    }
+                }
+            }
+            cursor += width(*index);
+        }
+        write_text_run(writer, &element, &mut run, run_start, baseline, size)?;
+    }
+    write(writer, Event::End(quick_xml::events::BytesEnd::new("g")))
+}
+
+/// Writes the text words gathered since the last logo as one left-aligned
+/// `<text>` at `x`, with the original element's styling.
+fn write_text_run(
+    writer: &mut Writer<Vec<u8>>,
+    element: &BytesStart<'static>,
+    run: &mut Vec<&str>,
+    x: f64,
+    baseline: f64,
+    size: f64,
+) -> AppResult<()> {
+    if run.is_empty() {
+        return Ok(());
+    }
+    let mut text = BytesStart::new("text");
+    for attribute in element.attributes() {
+        let attribute = attribute.map_err(|error| invalid(format!("bad attribute: {error}")))?;
+        if !matches!(
+            attribute.key.0,
+            "x" | "y" | "font-size" | "text-anchor" | "transform"
+        ) {
+            text.push_attribute(attribute);
+        }
+    }
+    text.push_attribute(("x", format_number(x).as_str()));
+    text.push_attribute(("y", format_number(baseline).as_str()));
+    text.push_attribute(("font-size", format_number(size).as_str()));
+    text.push_attribute(("text-anchor", "start"));
+    write(writer, Event::Start(text))?;
+    write(writer, Event::Text(BytesText::new(&run.join(" "))))?;
+    run.clear();
+    write(writer, Event::End(quick_xml::events::BytesEnd::new("text")))
 }
 
 /// A `data-scryer-stack` group: each child it keeps is moved one `step`
@@ -745,7 +1146,7 @@ fn rewrite_element<'a>(
                     return Ok(None);
                 }
             }
-            VERSION_ATTR | STACK_ATTR | STEP_ATTR | FIT_ATTR | FIT_LINES_ATTR => {}
+            VERSION_ATTR | STACK_ATTR | STEP_ATTR | FIT_ATTR | FIT_LINES_ATTR | LOGOS_ATTR => {}
             "transform" if !translated => {
                 let own = substitute(&attribute.value, values)?;
                 rewritten.push_attribute((

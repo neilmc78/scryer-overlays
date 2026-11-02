@@ -52,6 +52,11 @@ test("the built-in template opens in the visual editor", () => {
   assert.equal(edition.radius, 0, "a box without rx has square corners");
   assert.equal(edition.letterSpacing, 4);
   assert.equal(elements[4]!.hideWhen, "audio_codec=other");
+  assert.deepEqual(
+    elements.map((element) => element.logos),
+    [false, true, true, true, true],
+    "format badges draw their logos",
+  );
 });
 
 test("serialising and parsing again preserves every badge", () => {
@@ -249,4 +254,22 @@ test("fitted text is written as a box and opens again", () => {
   // A box the editor would not write is left to the SVG editor.
   const moved = svg.replace(/data-scryer-fit="[^"]*"/, 'data-scryer-fit="0 0 10 10"');
   assert.equal(parseOverlay(moved, keys()), null);
+});
+
+test("the format logo switch is written on the text and opens again", () => {
+  const make = keys();
+  const audio = newElement("audio", make());
+  const resolution = newElement("resolution", make());
+  assert.equal(audio.logos, true, "new format badges start with logos");
+  assert.equal(resolution.logos, false, "resolutions have no logos");
+  const svg = serializeOverlay([audio, { ...resolution, logos: false }]);
+  assert.equal(svg.match(/data-scryer-logos="true"/g)?.length, 1);
+  assert.deepEqual(withoutKeys(parseOverlay(svg, keys())), withoutKeys([audio, resolution]));
+  const off = serializeOverlay([{ ...audio, logos: false }]);
+  assert.ok(!off.includes("data-scryer-logos"));
+  assert.equal(
+    parseOverlay(svg.replace('data-scryer-logos="true"', 'data-scryer-logos="yes"'), keys()),
+    null,
+    "a value the editor did not write stays with the SVG editor",
+  );
 });

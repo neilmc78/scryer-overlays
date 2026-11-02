@@ -640,7 +640,7 @@ fn logo_and_stack_misuse_is_rejected() {
 fn every_bundled_logo_renders() {
     for (name, _) in LOGOS {
         let svg = format!(
-            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 150" data-scryer-version="1"><rect width="100" height="150" fill="#000"/><use href="#scryer-logo-{name}" x="0" y="0" width="100" height="150"/></svg>"##
+            r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 150" data-scryer-version="1"><rect width="100" height="150" fill="#000"/><use href="#scryer-logo-{name}" x="0" y="0" width="100" height="150" fill="#ffffff"/></svg>"##
         );
         let original = poster(ImageFormat::Png, 100, 150);
         let rendered = OverlayRenderer::new()
@@ -918,4 +918,170 @@ async fn collection_logos_are_stored_per_list_and_replaced_in_place() {
             .await
             .is_err()
     );
+}
+
+// ── Format logos ───────────────────────────────────────────────────────────
+
+/// The numbers of attribute `name` on the first `<use>` of `logo`.
+fn logo_box(out: &str, logo: &str) -> (f64, f64, f64, f64) {
+    let start = out
+        .find(&format!("<use href=\"#scryer-logo-{logo}\""))
+        .unwrap_or_else(|| panic!("no {logo} logo in {out}"));
+    let element = &out[start..start + out[start..].find("/>").unwrap()];
+    let number = |name: &str| -> f64 {
+        let at = element.find(&format!(" {name}=\"")).unwrap() + name.len() + 3;
+        element[at..at + element[at..].find('"').unwrap()]
+            .parse()
+            .unwrap()
+    };
+    (number("x"), number("y"), number("width"), number("height"))
+}
+
+#[test]
+fn format_logos_replace_their_labels_at_the_text_size() {
+    let svg = template(
+        r##"<text x="500" y="100" font-size="50" fill="#f5c542" text-anchor="middle" data-scryer-logos="true">{{audio_label}} {{audio_channels}}</text>"##,
+    );
+    let out = preprocess(
+        &svg,
+        &values(&[
+            ("audio_codec", "truehd_atmos"),
+            ("audio_label", "TRUEHD ATMOS"),
+            ("audio_channels", "7.1"),
+        ]),
+    )
+    .unwrap();
+    assert!(
+        !out.contains("TRUEHD ATMOS"),
+        "the label is replaced: {out}"
+    );
+    assert!(out.contains(">7.1</text>"), "the rest stays text: {out}");
+    assert!(out.contains("<symbol id=\"scryer-logo-dolby-atmos\""));
+    assert!(!out.contains("data-scryer-logos"));
+    let (_, y, width, height) = logo_box(&out, "dolby-atmos");
+    // Sized from the font, in the logo's own proportions (2440x320), and
+    // centred on the text's capitals; it takes the text's colour.
+    assert!((height - 40.0).abs() < 0.01, "{height}");
+    assert!((width / height - 2440.0 / 320.0).abs() < 0.01);
+    assert!((y + height / 2.0 - (100.0 - 50.0 * 0.36)).abs() < 0.01);
+    assert!(out.contains("fill=\"#f5c542\"/>"), "{out}");
+}
+
+#[test]
+fn text_without_a_format_logo_is_unchanged_by_the_switch() {
+    let plain = r#"<text x="500" y="100" font-size="50" text-anchor="middle" data-scryer-fit="300 50 400 100">{{audio_label}} {{audio_channels}}</text>"#;
+    let with_logos = plain.replace("<text ", "<text data-scryer-logos=\"true\" ");
+    let values = values(&[
+        ("audio_codec", "aac"),
+        ("audio_label", "AAC"),
+        ("audio_channels", "2.0"),
+    ]);
+    assert_eq!(
+        preprocess(&template(plain), &values).unwrap(),
+        preprocess(&template(&with_logos), &values).unwrap()
+    );
+}
+
+#[test]
+fn fitted_format_logos_shrink_with_the_text() {
+    // Too wide for the box at 60: the logo and text shrink together, and the
+    // line stays centred on x.
+    let svg = template(
+        r#"<text x="500" y="0" font-size="60" text-anchor="middle" data-scryer-logos="true" data-scryer-fit="400 0 200 100">{{audio_label}} {{audio_channels}}</text>"#,
+    );
+    let out = preprocess(
+        &svg,
+        &values(&[
+            ("audio_codec", "ddp_atmos"),
+            ("audio_label", "DD+ ATMOS"),
+            ("audio_channels", "5.1"),
+        ]),
+    )
+    .unwrap();
+    let (x, _, width, height) = logo_box(&out, "dolby-atmos");
+    assert!(height < 60.0 * 0.8, "shrunk: {height}");
+    assert!(
+        x >= 400.0 && x + width <= 600.0,
+        "inside the box: {x} {width}"
+    );
+    let at = out.find("font-size=\"").unwrap() + "font-size=\"".len();
+    let size: f64 = out[at..at + out[at..].find('"').unwrap()].parse().unwrap();
+    assert!(
+        (height - size * 0.8).abs() < 0.05,
+        "the text shrinks to the same size: {size} {height}"
+    );
+}
+
+#[test]
+fn imax_editions_and_hdr_formats_show_their_logos() {
+    let svg = template(
+        r#"<text x="0" y="100" font-size="40" data-scryer-logos="true">{{edition_label}}</text><text x="0" y="300" font-size="40" data-scryer-logos="true">{{hdr_label}}</text>"#,
+    );
+    let out = preprocess(
+        &svg,
+        &values(&[
+            ("edition_label", "IMAX ENHANCED"),
+            ("hdr", "dv"),
+            ("hdr_label", "DOLBY VISION"),
+        ]),
+    )
+    .unwrap();
+    logo_box(&out, "imax");
+    logo_box(&out, "dolby-vision");
+    assert!(out.contains(">ENHANCED</text>"), "{out}");
+    // HLG has no logo and stays text.
+    let hlg = preprocess(
+        &template(r#"<text data-scryer-logos="true">{{hdr_label}}</text>"#),
+        &values(&[("hdr", "hlg"), ("hdr_label", "HLG")]),
+    )
+    .unwrap();
+    assert!(
+        hlg.contains(">HLG</text>") && !hlg.contains("<use"),
+        "{hlg}"
+    );
+}
+
+#[test]
+fn format_logo_misuse_is_rejected() {
+    for body in [
+        r#"<rect data-scryer-logos="true"/>"#,
+        r#"<text data-scryer-logos="yes">{{hdr_label}}</text>"#,
+        r#"<text data-scryer-logos="true"><tspan>{{hdr_label}}</tspan></text>"#,
+    ] {
+        assert!(validate(&template(body)).is_err(), "{body}");
+    }
+    assert!(validate(&template(r#"<text data-scryer-logos="false">x</text>"#)).is_ok());
+}
+
+#[test]
+fn a_format_logo_is_drawn_where_its_label_was() {
+    let svg = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1500" data-scryer-version="1"><text x="500" y="800" font-size="100" fill="#ff0000" text-anchor="middle" data-scryer-logos="true">{{audio_label}}</text></svg>"##;
+    let jpeg = OverlayRenderer::new()
+        .render_preview(
+            None,
+            svg,
+            &values(&[("audio_codec", "dtshd_ma"), ("audio_label", "DTS-HD MA")]),
+        )
+        .expect("preview");
+    let image = image::load_from_memory(&jpeg).unwrap().to_rgb8();
+    let (width, height) = image.dimensions();
+    let red = |pixel: &image::Rgb<u8>| pixel.0[0] > 180 && pixel.0[1] < 90 && pixel.0[2] < 90;
+    let (mut inside, mut left, mut right) = (0, u32::MAX, 0);
+    for (x, y, pixel) in image.enumerate_pixels() {
+        if red(pixel) {
+            // The 80-unit-high logo centred on y 764 of 1500.
+            let unit_y = f64::from(y) * 1500.0 / f64::from(height);
+            assert!(
+                (715.0..=815.0).contains(&unit_y),
+                "logo outside its line at {y}"
+            );
+            inside += 1;
+            left = left.min(x);
+            right = right.max(x);
+        }
+    }
+    assert!(inside > 200, "the logo is drawn in the text's colour");
+    // Centred on x 500, where the label was anchored.
+    let centre = f64::from(left + right) / 2.0 * 1000.0 / f64::from(width);
+    assert!((centre - 500.0).abs() < 15.0, "centred: {centre}");
 }

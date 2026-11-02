@@ -1,0 +1,10 @@
+Format logos drawn on poster badges in place of their labels.
+
+Traced to single-colour vector paths from the PNG artwork in the Silo
+server's overlay assets (web/src/assets/overlay-logos/formats), which were
+in turn cropped from jmxd/Kometa (overlays/images). That repository states
+no licence.
+
+The marks belong to their owners: Dolby Atmos, Dolby Digital Plus, Dolby
+TrueHD and Dolby Vision to Dolby Laboratories; DTS-HD to DTS, Inc.; HDR10+
+to the HDR10+ Technologies licensing body; IMAX to IMAX Corporation.

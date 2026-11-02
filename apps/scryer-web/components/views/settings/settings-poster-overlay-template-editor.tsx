@@ -2,6 +2,7 @@ import * as React from "react";
 import { ChevronDown, Layers, Loader2, Plus, Shuffle, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { IconButton } from "@/components/ui/icon-button";
 import { Input } from "@/components/ui/input";
@@ -582,6 +583,23 @@ function BadgeFields({
           </Select>
         </div>
       </div>
+
+      {element.ratings ? null : (
+        <div className="space-y-1">
+          <label className="flex items-center gap-2 text-[13px] text-[var(--scry-ink2)]">
+            <Checkbox
+              id={id("logos")}
+              checked={element.logos}
+              disabled={busy}
+              onCheckedChange={(checked) => onChange({ logos: checked === true })}
+            />
+            {t("settings.posterOverlays.formatLogos")}
+          </label>
+          <p className="text-[12px] text-[var(--scry-muted3)]">
+            {t("settings.posterOverlays.formatLogosHelp")}
+          </p>
+        </div>
+      )}
     </div>
   );
 }
