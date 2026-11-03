@@ -1575,6 +1575,11 @@ async fn bootstrap_application(
         .filter(|plugin| plugin.descriptor.plugin_type() == "list_provider")
         .cloned()
         .collect::<Vec<_>>();
+    let metadata_runtime_plugins = runtime_plugins
+        .iter()
+        .filter(|plugin| plugin.descriptor.plugin_type() == "metadata_provider")
+        .cloned()
+        .collect::<Vec<_>>();
     let notification_runtime_plugins = runtime_plugins
         .iter()
         .filter(|plugin| plugin.descriptor.plugin_type() == "notification")
@@ -1876,6 +1881,13 @@ async fn bootstrap_application(
                 &disabled_builtin_plugins,
             ),
         )))
+        .with_metadata_plugin_provider(Arc::new(
+            scryer_plugins::DynamicMetadataPluginProvider::new(
+                scryer_plugins::build_metadata_plugin_provider_from_runtime_plugins(
+                    &metadata_runtime_plugins,
+                ),
+            ),
+        ))
         .with_plugin_descriptor_loader(Arc::new(scryer_plugins::WasmPluginDescriptorLoader))
         .with_tracked_download_handle(TrackedDownloadHandle::new(tracked_download_tx))
         .build();
