@@ -1634,6 +1634,8 @@ async fn pushes_to_silo_only_on_change_and_respects_posters_changed_there(
     // Push off: rendering never touches Silo.
     rendered_hash(overlays.process_title(TITLE).await);
     assert_eq!(silo.uploads(), 0);
+    // A rendered title without a Silo push record counts as not found.
+    assert_eq!(store.status_counts().await.unwrap().silo_missing, 1);
 
     // Push on: the overlay is uploaded under the title's TMDB content ID,
     // and only Silo's counts move.
@@ -1643,7 +1645,10 @@ async fn pushes_to_silo_only_on_change_and_respects_posters_changed_there(
     assert!(has_marker(&silo.shown()));
     assert_eq!(silo.uploads(), 1);
     let counts = store.status_counts().await.unwrap();
-    assert_eq!((counts.silo_pushed, counts.silo_failed), (1, 0));
+    assert_eq!(
+        (counts.silo_pushed, counts.silo_failed, counts.silo_missing),
+        (1, 0, 0)
+    );
     assert_eq!(counts.plex_pushed, 0);
 
     // Nothing changed: no upload. Plex push is off, so Plex's restore runs

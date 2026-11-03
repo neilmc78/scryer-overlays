@@ -125,6 +125,9 @@ pub struct PosterOverlayStatusCounts {
     pub silo_failed: i64,
     /// Titles whose poster was changed in Silo after a push and left alone.
     pub silo_changed: i64,
+    /// Rendered titles with no Silo push record: Silo has no item under
+    /// any of their IDs, or no pass has pushed them yet.
+    pub silo_missing: i64,
 }
 
 /// What was pushed to one Plex server for one title.

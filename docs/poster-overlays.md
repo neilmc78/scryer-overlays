@@ -429,7 +429,12 @@ as each title's artwork. It is a separate switch on the overlay settings page.
 Silo keys titles by content IDs built from provider IDs. Scryer builds the
 IDs a title can have from its own TMDB, TVDB and IMDb IDs, in Silo's order
 (TMDB, IMDb, TVDB for a movie; TVDB, TMDB, IMDb for a series or anime), and
-uses the first one Silo has. A title Silo does not have is skipped.
+uses the first one Silo has. A title Silo does not have is skipped; the
+settings page counts rendered titles with no Silo push record as not found.
+
+Silo's catalog reads are profile scoped, so lookups send `X-Profile-Id`. Scryer
+reads the API key's profiles from `GET /api/v2/profiles` once per server and
+uses the household parent.
 
 ### Pushing
 

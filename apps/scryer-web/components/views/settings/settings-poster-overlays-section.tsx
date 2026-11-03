@@ -535,6 +535,11 @@ function SiloPushPanel({
                 {t("settings.posterOverlays.siloChangedCount", { count: counts.siloChanged })}
               </span>
             ) : null}
+            {counts.siloMissing > 0 ? (
+              <span className={`ml-2 ${MUTED_TEXT_CLASS}`}>
+                {t("settings.posterOverlays.siloMissingCount", { count: counts.siloMissing })}
+              </span>
+            ) : null}
             {counts.siloFailed > 0 ? (
               <span className="ml-2 text-destructive">
                 {t("settings.posterOverlays.plexFailedCount", { count: counts.siloFailed })}
