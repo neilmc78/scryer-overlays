@@ -294,6 +294,11 @@ impl AppUseCase {
             .filter(|plugin| plugin.descriptor.plugin_type() == "notification")
             .cloned()
             .collect::<Vec<_>>();
+        let metadata_plugins = runtime_plugins
+            .iter()
+            .filter(|plugin| plugin.descriptor.plugin_type() == "metadata_provider")
+            .cloned()
+            .collect::<Vec<_>>();
         let list_plugins = runtime_plugins
             .iter()
             .filter(|plugin| plugin.descriptor.plugin_type() == "list_provider")
@@ -428,6 +433,13 @@ impl AppUseCase {
             .reload_runtime_plugins(&list_plugins, &disabled_builtins)
             .map_err(|e| {
                 AppError::Repository(format!("failed to reload list provider plugins: {e}"))
+            })?;
+        self.services
+            .library
+            .metadata_plugins
+            .reload_runtime_plugins(&metadata_plugins)
+            .map_err(|e| {
+                AppError::Repository(format!("failed to reload metadata provider plugins: {e}"))
             })?;
 
         Ok(())
