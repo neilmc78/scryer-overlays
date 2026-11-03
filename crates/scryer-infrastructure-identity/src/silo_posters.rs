@@ -4,6 +4,10 @@
 //! which cannot receive images. The admin API key is sent as a bearer token,
 //! so it never appears in a URL or an error. Nothing here deletes anything in
 //! Silo.
+//!
+//! Silo's catalog reads are profile scoped: even an API key must name a
+//! household profile in `X-Profile-Id`, or Silo answers 422. The client reads
+//! the key's profiles once per server and uses the household parent.
 
 use async_trait::async_trait;
 use reqwest::StatusCode;
@@ -11,18 +15,112 @@ use scryer_application::overlays::{PosterOverlaySiloClient, SiloPosterItem, Silo
 use scryer_application::{AppError, AppResult};
 use scryer_outbound_http::generic_reqwest_client;
 use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::Mutex;
 use url::Url;
 
 pub struct HttpSiloPosterClient {
     client: reqwest::Client,
+    /// The profile each server's reads use, keyed by API URL and key.
+    profiles: Mutex<HashMap<(String, String), String>>,
 }
 
 impl HttpSiloPosterClient {
     pub fn new() -> Self {
         Self {
             client: generic_reqwest_client(),
+            profiles: Mutex::new(HashMap::new()),
         }
     }
+
+    fn cache_key(server: &SiloServer) -> (String, String) {
+        (server.api_url.clone(), server.api_key.clone())
+    }
+
+    /// The profile to read the catalog as, from the cache or from Silo.
+    async fn profile(&self, server: &SiloServer) -> AppResult<String> {
+        if let Some(id) = self
+            .profiles
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(&Self::cache_key(server)).cloned())
+        {
+            return Ok(id);
+        }
+        let response = self
+            .client
+            .get(endpoint(server, &["profiles"])?)
+            .bearer_auth(&server.api_key)
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .map_err(request_error)?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(status_error(
+                "list its profiles",
+                status,
+                problem_detail(response).await,
+            ));
+        }
+        let profiles: Profiles = response.json().await.map_err(request_error)?;
+        let id = pick_profile(&profiles.items).ok_or_else(|| {
+            AppError::Repository(
+                "Silo has no profile on the API key's account to read the catalog as".into(),
+            )
+        })?;
+        if let Ok(mut cache) = self.profiles.lock() {
+            cache.insert(Self::cache_key(server), id.clone());
+        }
+        Ok(id)
+    }
+
+    fn forget_profile(&self, server: &SiloServer) {
+        if let Ok(mut cache) = self.profiles.lock() {
+            cache.remove(&Self::cache_key(server));
+        }
+    }
+
+    async fn fetch_item(
+        &self,
+        server: &SiloServer,
+        content_id: &str,
+        profile: &str,
+    ) -> AppResult<reqwest::Response> {
+        self.client
+            .get(endpoint(server, &["catalog", "items", content_id])?)
+            .bearer_auth(&server.api_key)
+            .header("Accept", "application/json")
+            .header("X-Profile-Id", profile)
+            .send()
+            .await
+            .map_err(request_error)
+    }
+}
+
+#[derive(Deserialize)]
+struct Profiles {
+    #[serde(default)]
+    items: Vec<ProfileEntry>,
+}
+
+#[derive(Deserialize)]
+struct ProfileEntry {
+    id: String,
+    #[serde(default)]
+    is_primary: bool,
+    #[serde(default)]
+    is_child: bool,
+}
+
+/// The household parent, else the first adult, else the first profile.
+fn pick_profile(profiles: &[ProfileEntry]) -> Option<String> {
+    profiles
+        .iter()
+        .find(|p| p.is_primary)
+        .or_else(|| profiles.iter().find(|p| !p.is_child))
+        .or_else(|| profiles.first())
+        .map(|p| p.id.clone())
 }
 
 impl Default for HttpSiloPosterClient {
@@ -52,13 +150,28 @@ fn request_error(error: reqwest::Error) -> AppError {
     AppError::Repository(format!("Silo request failed: {error}"))
 }
 
-fn status_error(action: &str, status: StatusCode) -> AppError {
+fn status_error(action: &str, status: StatusCode, detail: Option<String>) -> AppError {
+    let detail = detail.map(|d| format!(" ({d})")).unwrap_or_default();
     match status {
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => AppError::Repository(format!(
-            "Silo refused to {action}: the Jellyfin connection's API key must be a Silo admin key"
+            "Silo refused to {action}: the Jellyfin connection's API key must be a Silo admin key{detail}"
         )),
-        _ => AppError::Repository(format!("Silo could not {action}: HTTP {status}")),
+        _ => AppError::Repository(format!("Silo could not {action}: HTTP {status}{detail}")),
     }
+}
+
+/// The `detail` of Silo's problem response, when it sent one.
+async fn problem_detail(response: reqwest::Response) -> Option<String> {
+    #[derive(Deserialize)]
+    struct Problem {
+        detail: Option<String>,
+    }
+    let text = response.text().await.ok()?;
+    serde_json::from_str::<Problem>(&text)
+        .ok()?
+        .detail
+        .filter(|d| !d.is_empty())
+        .map(|d| d.chars().take(200).collect())
 }
 
 #[derive(Deserialize)]
@@ -107,17 +220,23 @@ impl PosterOverlaySiloClient for HttpSiloPosterClient {
         server: &SiloServer,
         content_id: &str,
     ) -> AppResult<Option<SiloPosterItem>> {
-        let response = self
-            .client
-            .get(endpoint(server, &["catalog", "items", content_id])?)
-            .bearer_auth(&server.api_key)
-            .header("Accept", "application/json")
-            .send()
-            .await
-            .map_err(request_error)?;
+        let profile = self.profile(server).await?;
+        let mut response = self.fetch_item(server, content_id, &profile).await?;
+        if response.status() == StatusCode::UNPROCESSABLE_ENTITY {
+            // The cached profile may be gone; read the profiles again once.
+            self.forget_profile(server);
+            let profile = self.profile(server).await?;
+            response = self.fetch_item(server, content_id, &profile).await?;
+        }
         match response.status() {
             StatusCode::NOT_FOUND => return Ok(None),
-            status if !status.is_success() => return Err(status_error("read a title", status)),
+            status if !status.is_success() => {
+                return Err(status_error(
+                    "read a title",
+                    status,
+                    problem_detail(response).await,
+                ));
+            }
             _ => {}
         }
         let detail: ItemDetail = response.json().await.map_err(request_error)?;
@@ -148,7 +267,11 @@ impl PosterOverlaySiloClient for HttpSiloPosterClient {
             .map_err(request_error)?;
         let status = response.status();
         if !status.is_success() {
-            return Err(status_error("store a poster", status));
+            return Err(status_error(
+                "store a poster",
+                status,
+                problem_detail(response).await,
+            ));
         }
         let applied: Applied = response.json().await.map_err(request_error)?;
         Ok(Some(applied.thumbhash).filter(|hash| !hash.is_empty()))
@@ -187,6 +310,31 @@ mod tests {
             .as_str(),
             "https://example.org/silo/api/v2/admin/items/a%2Fb"
         );
+    }
+
+    #[test]
+    fn reads_use_the_household_parent_else_an_adult() {
+        let p = |id: &str, is_primary, is_child| ProfileEntry {
+            id: id.into(),
+            is_primary,
+            is_child,
+        };
+        let cases = [
+            (
+                vec![
+                    p("1", false, true),
+                    p("2", true, false),
+                    p("3", false, false),
+                ],
+                Some("2"),
+            ),
+            (vec![p("1", false, true), p("3", false, false)], Some("3")),
+            (vec![p("1", false, true)], Some("1")),
+            (vec![], None),
+        ];
+        for (profiles, want) in cases {
+            assert_eq!(pick_profile(&profiles).as_deref(), want);
+        }
     }
 
     #[test]
