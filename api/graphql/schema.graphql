@@ -23477,6 +23477,11 @@ type PosterOverlayCounts {
 	Titles whose poster was changed in Silo after a push and left alone.
 	"""
 	siloChanged: Int!
+	"""
+	Rendered titles with no Silo push record: Silo has no item under
+	any of their IDs, or no pass has pushed them yet.
+	"""
+	siloMissing: Int!
 }
 
 """

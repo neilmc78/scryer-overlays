@@ -5949,7 +5949,7 @@ export const posterOverlaysQuery = `query PosterOverlays {
     settings { parallelism reconcileIntervalSeconds plexPushEnabled siloPushEnabled siloApiUrl }
     libraries { libraryId libraryName facet enabled templateId }
     templates {${POSTER_OVERLAY_TEMPLATE_FIELDS}}
-    counts { enabledTitles rendered failed noArtwork plexPushed plexFailed plexChanged siloPushed siloFailed siloChanged }
+    counts { enabledTitles rendered failed noArtwork plexPushed plexFailed plexChanged siloPushed siloFailed siloChanged siloMissing }
     pass {${POSTER_OVERLAY_PASS_FIELDS}}
     builtinTemplate
     templateSpecVersion

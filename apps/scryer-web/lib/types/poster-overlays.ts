@@ -36,6 +36,7 @@ export type PosterOverlayCounts = {
   siloPushed: number;
   siloFailed: number;
   siloChanged: number;
+  siloMissing: number;
 };
 
 /** A library-wide pass, such as a requested rebuild. */

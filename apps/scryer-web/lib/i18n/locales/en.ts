@@ -7013,6 +7013,7 @@ const en: LocaleDictionary = {
   "settings.posterOverlays.siloPushOff": "Original posters will be put back in Silo.",
   "settings.posterOverlays.siloCounts": "{{pushed}} posters are current in Silo.",
   "settings.posterOverlays.siloChangedCount": "{{count}} changed in Silo and left alone",
+  "settings.posterOverlays.siloMissingCount": "{{count}} not found in Silo",
   "settings.posterOverlays.revertAll": "Revert all to originals",
   "settings.posterOverlays.revertConfirmTitle": "Revert every poster?",
   "settings.posterOverlays.revertConfirm": "Overlays are turned off in every library and every poster is served from its original again. Rendered overlays are removed; originals are kept.",

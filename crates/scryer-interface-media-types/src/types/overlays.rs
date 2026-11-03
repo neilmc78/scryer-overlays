@@ -128,6 +128,9 @@ pub struct PosterOverlayCountsPayload {
     pub silo_failed: i64,
     /// Titles whose poster was changed in Silo after a push and left alone.
     pub silo_changed: i64,
+    /// Rendered titles with no Silo push record: Silo has no item under
+    /// any of their IDs, or no pass has pushed them yet.
+    pub silo_missing: i64,
 }
 
 impl From<PosterOverlayStatusCounts> for PosterOverlayCountsPayload {
@@ -143,6 +146,7 @@ impl From<PosterOverlayStatusCounts> for PosterOverlayCountsPayload {
             silo_pushed: value.silo_pushed,
             silo_failed: value.silo_failed,
             silo_changed: value.silo_changed,
+            silo_missing: value.silo_missing,
         }
     }
 }

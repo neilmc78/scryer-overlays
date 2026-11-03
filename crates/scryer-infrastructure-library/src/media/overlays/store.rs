@@ -650,7 +650,14 @@ impl PosterOverlayRepository for PosterOverlayStore {
                         )
                         AND (t.poster_url IS NULL
                              OR (t.poster_url NOT LIKE 'https://%' AND t.poster_url NOT LIKE 'http://%'))
-                        THEN 1 ELSE 0 END), 0) AS no_artwork
+                        THEN 1 ELSE 0 END), 0) AS no_artwork,
+                    COALESCE(SUM(CASE
+                        WHEN s.output_hash IS NOT NULL AND NOT EXISTS (
+                            SELECT 1 FROM poster_overlay_plex_state p
+                              JOIN media_server_connections c ON c.id = p.connection_id
+                             WHERE p.title_id = t.id AND c.provider <> 'plex'
+                        )
+                        THEN 1 ELSE 0 END), 0) AS silo_missing
                FROM titles t
                JOIN poster_overlay_libraries pol ON pol.library_id = t.library_id
                LEFT JOIN poster_overlay_state s ON s.title_id = t.id
@@ -682,6 +689,7 @@ impl PosterOverlayRepository for PosterOverlayStore {
             silo_pushed: silo_count("pushed")?,
             silo_failed: silo_count("failed")?,
             silo_changed: silo_count("changed")?,
+            silo_missing: row.i64("silo_missing")?,
         })
     }
 
