@@ -652,7 +652,9 @@ impl PosterOverlayRepository for PosterOverlayStore {
                              OR (t.poster_url NOT LIKE 'https://%' AND t.poster_url NOT LIKE 'http://%'))
                         THEN 1 ELSE 0 END), 0) AS no_artwork,
                     COALESCE(SUM(CASE
-                        WHEN s.output_hash IS NOT NULL AND NOT EXISTS (
+                        WHEN s.output_hash IS NOT NULL
+                        AND EXISTS (SELECT 1 FROM media_files f WHERE f.title_id = t.id)
+                        AND NOT EXISTS (
                             SELECT 1 FROM poster_overlay_plex_state p
                               JOIN media_server_connections c ON c.id = p.connection_id
                              WHERE p.title_id = t.id AND c.provider <> 'plex'

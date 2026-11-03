@@ -191,6 +191,7 @@ impl AppPosterOverlayServices {
             Ok(PushOutcome::Unchanged) => counts.unchanged += 1,
             Ok(PushOutcome::NotInSilo) => counts.not_in_silo += 1,
             Ok(PushOutcome::ChangedInSilo) => counts.changed_in_silo += 1,
+            Ok(PushOutcome::NoFiles) => {}
             Err((content_id, error)) => {
                 let message = error.to_string();
                 tracing::warn!(title_id, error = %message, "poster overlay push to Silo failed");
@@ -268,6 +269,11 @@ impl AppPosterOverlayServices {
         let Some(inputs) = self.repository.load_inputs(title_id).await.map_err(fail)? else {
             return Ok(PushOutcome::Unchanged);
         };
+        // A title with nothing downloaded is not in Silo's libraries, so it
+        // is neither looked up nor counted as missing.
+        if inputs.files.is_empty() {
+            return Ok(PushOutcome::NoFiles);
+        }
         let Some((content_id, item)) = self
             .find_silo_item(silo, server, title_id, &inputs)
             .await
@@ -448,6 +454,8 @@ enum PushOutcome {
     Unchanged,
     NotInSilo,
     ChangedInSilo,
+    /// The title has no media files yet.
+    NoFiles,
 }
 
 #[cfg(test)]

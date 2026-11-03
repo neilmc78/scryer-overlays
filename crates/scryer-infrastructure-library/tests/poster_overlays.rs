@@ -1393,6 +1393,7 @@ const SILO_CONTENT_ID: &str = "movie-tmdb-603";
 struct FakeSilo {
     poster: Mutex<Vec<u8>>,
     uploads: AtomicUsize,
+    lookups: AtomicUsize,
     no_thumbhash: std::sync::atomic::AtomicBool,
 }
 
@@ -1412,6 +1413,10 @@ impl FakeSilo {
     fn uploads(&self) -> usize {
         self.uploads.load(Ordering::SeqCst)
     }
+
+    fn lookups(&self) -> usize {
+        self.lookups.load(Ordering::SeqCst)
+    }
 }
 
 #[async_trait]
@@ -1423,6 +1428,7 @@ impl PosterOverlaySiloClient for FakeSilo {
     ) -> AppResult<Option<SiloPosterItem>> {
         assert_eq!(server.api_key, "silo-key");
         assert_eq!(server.connection_id, SILO_CONNECTION);
+        self.lookups.fetch_add(1, Ordering::SeqCst);
         Ok((content_id == SILO_CONTENT_ID).then(|| SiloPosterItem {
             poster_thumbhash: if self.no_thumbhash.load(Ordering::SeqCst) {
                 None
@@ -1636,6 +1642,42 @@ async fn pushes_to_silo_only_on_change_and_respects_posters_changed_there(
     assert_eq!(silo.uploads(), 0);
     // A rendered title without a Silo push record counts as not found.
     assert_eq!(store.status_counts().await.unwrap().silo_missing, 1);
+
+    // One with nothing downloaded is not in Silo's libraries: it is neither
+    // counted nor looked up.
+    exec(
+        &datastore,
+        "INSERT INTO titles (id, name, facet, created_at, root_folder_id)
+         VALUES ('title-elsewhere', 'Elsewhere', 'movie', {}, 'root-1')",
+        vec![SqlArg::Timestamp(now)],
+    )
+    .await;
+    exec(
+        &datastore,
+        "UPDATE media_files SET title_id = 'title-elsewhere' WHERE id = 'file-1'",
+        vec![],
+    )
+    .await;
+    rendered_hash(overlays.process_title(TITLE).await);
+    assert_eq!(store.status_counts().await.unwrap().silo_missing, 0);
+    set_silo_push(&store, true).await;
+    let summary = overlays.reconcile().await.unwrap();
+    assert_eq!(
+        (
+            summary.silo.pushed,
+            summary.silo.not_in_silo,
+            silo.lookups()
+        ),
+        (0, 0, 0)
+    );
+    set_silo_push(&store, false).await;
+    exec(
+        &datastore,
+        "UPDATE media_files SET title_id = {} WHERE id = 'file-1'",
+        vec![SqlArg::Text(TITLE.into())],
+    )
+    .await;
+    rendered_hash(overlays.process_title(TITLE).await);
 
     // Push on: the overlay is uploaded under the title's TMDB content ID,
     // and only Silo's counts move.
