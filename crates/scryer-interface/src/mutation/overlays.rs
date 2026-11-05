@@ -56,6 +56,7 @@ impl PosterOverlayMutations {
                 input.plex_push_enabled,
                 input.silo_push_enabled,
                 input.silo_api_url,
+                input.silo_server_kind,
             )
             .await
             .map_err(to_gql_error)?;

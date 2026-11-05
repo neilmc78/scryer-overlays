@@ -1,4 +1,10 @@
-//! Pushing rendered overlays to Silo.
+//! Pushing rendered overlays to Silo, or to a Jellyfin server.
+//!
+//! The push target speaks one of two APIs (`PosterPushServerKind`): Silo's
+//! native admin API, or Jellyfin's image API. Everything here is shared; only
+//! the client that looks titles up and uploads posters differs. Titles are
+//! named by the same content IDs either way, and the Jellyfin client resolves
+//! them through the provider IDs Jellyfin keeps on each item.
 //!
 //! Silo keys titles by deterministic content IDs built from provider IDs
 //! (`movie-tmdb-603`, `series-tvdb-121361`), so a title is found by building
@@ -66,8 +72,13 @@ impl SiloPush {
         else {
             return Ok(None);
         };
-        let host = host_of(api_url)
-            .ok_or_else(|| AppError::Validation("Silo's API address is not a valid URL".into()))?;
+        let kind = settings.silo_server_kind;
+        let host = host_of(api_url).ok_or_else(|| {
+            AppError::validation_refused(
+                super::reasons::PUSH_ADDRESS_INVALID,
+                format!("{}'s address is not a valid URL", kind.display_name()),
+            )
+        })?;
         let connection = self
             .connections
             .list(Some(MediaServerProvider::Jellyfin))
@@ -82,14 +93,19 @@ impl SiloPush {
                     && host_of(&connection.base_url).as_deref() == Some(host.as_str())
             })
             .ok_or_else(|| {
-                AppError::Validation(format!(
-                    "no enabled Jellyfin connection with an API key points at {host}; add Silo as a Jellyfin media server first"
-                ))
+                AppError::validation_refused(
+                    super::reasons::PUSH_CONNECTION_MISSING,
+                    format!(
+                        "no enabled Jellyfin connection with an API key points at {host}; add {} as a Jellyfin media server first",
+                        kind.display_name()
+                    ),
+                )
             })?;
         Ok(Some(SiloServer {
             api_key: connection.api_key.clone().unwrap_or_default(),
             connection_id: connection.id,
             api_url: api_url.trim_end_matches('/').to_string(),
+            kind,
         }))
     }
 }
@@ -497,6 +513,20 @@ mod tests {
             silo_content_ids(&inputs("anime", None, Some("79824"), None)),
             ["series-tvdb-79824"]
         );
+    }
+
+    #[test]
+    fn server_kinds_round_trip_and_unknown_ones_are_refused() {
+        use super::super::ports::PosterPushServerKind;
+        for kind in PosterPushServerKind::ALL {
+            assert_eq!(PosterPushServerKind::parse(kind.as_str()), Some(kind));
+        }
+        assert_eq!(
+            PosterPushServerKind::parse(" Jellyfin "),
+            Some(PosterPushServerKind::Jellyfin)
+        );
+        assert_eq!(PosterPushServerKind::parse("emby"), None);
+        assert_eq!(PosterPushServerKind::default(), PosterPushServerKind::Silo);
     }
 
     #[test]

@@ -23656,10 +23656,14 @@ type PosterOverlaySettings {
 	"""
 	siloPushEnabled: Boolean!
 	"""
-	Silo's native API address. The API key comes from the Jellyfin
-	connection whose host matches it.
+	Silo's native API address, or a Jellyfin server's address. The API
+	key comes from the Jellyfin connection whose host matches it.
 	"""
 	siloApiUrl: String
+	"""
+	The API that address speaks: `silo` or `jellyfin`.
+	"""
+	siloServerKind: String!
 }
 
 """
@@ -34375,6 +34379,11 @@ input UpdatePosterOverlaySettingsInput {
 	current address and an empty string clears it.
 	"""
 	siloApiUrl: String
+	"""
+	The API that address speaks, `silo` or `jellyfin`; null keeps the
+	current one.
+	"""
+	siloServerKind: String
 }
 
 """
