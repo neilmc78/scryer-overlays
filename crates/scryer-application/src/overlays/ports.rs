@@ -19,9 +19,49 @@ pub struct PosterOverlaySettings {
     pub plex_push_enabled: bool,
     /// Upload rendered posters to Silo as each title's artwork.
     pub silo_push_enabled: bool,
-    /// Silo's native API address, such as `http://silo:8090`. The API key
-    /// comes from the Jellyfin connection whose host matches it.
+    /// Silo's native API address, such as `http://silo:8090`, or a Jellyfin
+    /// server's address. The API key comes from the Jellyfin connection whose
+    /// host matches it.
     pub silo_api_url: Option<String>,
+    /// Which API that address speaks.
+    pub silo_server_kind: PosterPushServerKind,
+}
+
+/// The API a Silo-style poster push target speaks. Both kinds hold their key
+/// on a Jellyfin connection and share the push records.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PosterPushServerKind {
+    /// Silo's native admin API (`/api/v2`).
+    #[default]
+    Silo,
+    /// A Jellyfin server's image API.
+    Jellyfin,
+}
+
+impl PosterPushServerKind {
+    pub const ALL: [Self; 2] = [Self::Silo, Self::Jellyfin];
+
+    /// The stored and wire value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Silo => "silo",
+            Self::Jellyfin => "jellyfin",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|kind| kind.as_str().eq_ignore_ascii_case(value.trim()))
+    }
+
+    /// The name shown to people.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Silo => "Silo",
+            Self::Jellyfin => "Jellyfin",
+        }
+    }
 }
 
 impl Default for PosterOverlaySettings {
@@ -32,6 +72,7 @@ impl Default for PosterOverlaySettings {
             plex_push_enabled: false,
             silo_push_enabled: false,
             silo_api_url: None,
+            silo_server_kind: PosterPushServerKind::Silo,
         }
     }
 }
@@ -484,13 +525,15 @@ pub struct PlexMaintenanceWindow {
     pub end_hour: u32,
 }
 
-/// Where Silo is and the admin API key to use there.
+/// Where the push target is, the API it speaks and the admin API key to use
+/// there.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SiloServer {
     /// The Jellyfin connection the key comes from; push records hang off it.
     pub connection_id: String,
     pub api_url: String,
     pub api_key: String,
+    pub kind: PosterPushServerKind,
 }
 
 /// A title as Silo has it.

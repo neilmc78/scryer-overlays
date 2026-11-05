@@ -1,5 +1,8 @@
 //! Silo poster reads and uploads for poster overlays.
 //!
+//! A push target whose server type is Jellyfin is handed to
+//! [`JellyfinPosterClient`]; everything below is Silo's own API.
+//!
 //! Talks to Silo's native API (`/api/v2`), not its Jellyfin-compatible one,
 //! which cannot receive images. The admin API key is sent as a bearer token,
 //! so it never appears in a URL or an error. Nothing here deletes anything in
@@ -11,7 +14,9 @@
 
 use async_trait::async_trait;
 use reqwest::StatusCode;
-use scryer_application::overlays::{PosterOverlaySiloClient, SiloPosterItem, SiloServer};
+use scryer_application::overlays::{
+    PosterOverlaySiloClient, PosterPushServerKind, SiloPosterItem, SiloServer,
+};
 use scryer_application::{AppError, AppResult};
 use scryer_outbound_http::generic_reqwest_client;
 use serde::Deserialize;
@@ -19,16 +24,22 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use url::Url;
 
+use crate::jellyfin_posters::JellyfinPosterClient;
+
 pub struct HttpSiloPosterClient {
     client: reqwest::Client,
     /// The profile each server's reads use, keyed by API URL and key.
     profiles: Mutex<HashMap<(String, String), String>>,
+    /// Push targets whose server type is Jellyfin.
+    jellyfin: JellyfinPosterClient,
 }
 
 impl HttpSiloPosterClient {
     pub fn new() -> Self {
+        let client = generic_reqwest_client();
         Self {
-            client: generic_reqwest_client(),
+            jellyfin: JellyfinPosterClient::new(client.clone()),
+            client,
             profiles: Mutex::new(HashMap::new()),
         }
     }
@@ -220,6 +231,9 @@ impl PosterOverlaySiloClient for HttpSiloPosterClient {
         server: &SiloServer,
         content_id: &str,
     ) -> AppResult<Option<SiloPosterItem>> {
+        if server.kind == PosterPushServerKind::Jellyfin {
+            return self.jellyfin.item(server, content_id).await;
+        }
         let profile = self.profile(server).await?;
         let mut response = self.fetch_item(server, content_id, &profile).await?;
         if response.status() == StatusCode::UNPROCESSABLE_ENTITY {
@@ -251,6 +265,12 @@ impl PosterOverlaySiloClient for HttpSiloPosterClient {
         content_id: &str,
         poster: Vec<u8>,
     ) -> AppResult<Option<String>> {
+        if server.kind == PosterPushServerKind::Jellyfin {
+            return self
+                .jellyfin
+                .upload_poster(server, content_id, poster)
+                .await;
+        }
         let (content_type, body) = poster_form(&poster);
         let response = self
             .client
@@ -287,6 +307,7 @@ mod tests {
             connection_id: "c".into(),
             api_url: api_url.into(),
             api_key: "k".into(),
+            kind: PosterPushServerKind::Silo,
         }
     }
 

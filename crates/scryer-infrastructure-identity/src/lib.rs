@@ -1,6 +1,7 @@
 mod emby;
 pub mod external_identity;
 mod jellyfin;
+pub mod jellyfin_posters;
 /// Maintenance safety: live playback observation (RFC 137 §9.10, WP-G).
 pub mod media_server_playback;
 /// Poster overlay uploads to Plex.

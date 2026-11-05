@@ -26,9 +26,11 @@ pub struct PosterOverlaySettingsPayload {
     pub plex_push_enabled: bool,
     /// Whether rendered posters are uploaded to Silo as each title's artwork.
     pub silo_push_enabled: bool,
-    /// Silo's native API address. The API key comes from the Jellyfin
-    /// connection whose host matches it.
+    /// Silo's native API address, or a Jellyfin server's address. The API
+    /// key comes from the Jellyfin connection whose host matches it.
     pub silo_api_url: Option<String>,
+    /// The API that address speaks: `silo` or `jellyfin`.
+    pub silo_server_kind: String,
 }
 
 impl From<PosterOverlaySettings> for PosterOverlaySettingsPayload {
@@ -40,6 +42,7 @@ impl From<PosterOverlaySettings> for PosterOverlaySettingsPayload {
             plex_push_enabled: value.plex_push_enabled,
             silo_push_enabled: value.silo_push_enabled,
             silo_api_url: value.silo_api_url,
+            silo_server_kind: value.silo_server_kind.as_str().to_string(),
         }
     }
 }
@@ -337,6 +340,9 @@ pub struct UpdatePosterOverlaySettingsInput {
     /// Silo's native API address, such as `http://silo:8090`; null keeps the
     /// current address and an empty string clears it.
     pub silo_api_url: Option<String>,
+    /// The API that address speaks, `silo` or `jellyfin`; null keeps the
+    /// current one.
+    pub silo_server_kind: Option<String>,
 }
 
 /// A custom template to create or replace.

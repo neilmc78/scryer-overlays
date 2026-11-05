@@ -5872,6 +5872,7 @@ name = "scryer-infrastructure-identity"
 version = "0.21.23"
 dependencies = [
  "async-trait",
+ "base64 0.23.1",
  "chrono",
  "futures-util",
  "percent-encoding",

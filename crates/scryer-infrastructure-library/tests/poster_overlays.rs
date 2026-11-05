@@ -16,7 +16,8 @@ use scryer_application::MediaServerConnectionRepository;
 use scryer_application::overlays::{
     AppPosterOverlayServices, PlexMaintenanceWindow, PlexMovieVersion, PlexPosterItem,
     PosterOverlayOutcome, PosterOverlayPlexClient, PosterOverlayRepository, PosterOverlaySettings,
-    PosterOverlaySiloClient, SiloPosterItem, SiloServer, overlay_title_for_proxy_source,
+    PosterOverlaySiloClient, PosterPushServerKind, SiloPosterItem, SiloServer,
+    overlay_title_for_proxy_source,
 };
 use scryer_application::{
     AppResult, ImageProxyKind, ImageProxyRegistration, ImageProxyRepository, TitleExternalRating,
@@ -1634,6 +1635,16 @@ async fn pushes_to_silo_only_on_change_and_respects_posters_changed_there(
         Arc::new(FakePlex::default()),
     )
     .with_silo(Arc::new(SiloAndPlexConnections), silo.clone());
+    // The push server type is stored, and defaults to Silo.
+    let settings = store.get_settings().await.unwrap();
+    assert_eq!(settings.silo_server_kind, PosterPushServerKind::Silo);
+    let jellyfin = PosterOverlaySettings {
+        silo_server_kind: PosterPushServerKind::Jellyfin,
+        ..settings.clone()
+    };
+    store.save_settings(&jellyfin).await.unwrap();
+    assert_eq!(store.get_settings().await.unwrap(), jellyfin);
+    store.save_settings(&settings).await.unwrap();
     store.set_library_config(LIBRARY, true, None).await.unwrap();
     let silo_record = || store.get_plex_state(SILO_CONNECTION, TITLE, SILO_CONTENT_ID);
 

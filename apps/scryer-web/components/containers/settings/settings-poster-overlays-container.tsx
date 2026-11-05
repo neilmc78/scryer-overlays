@@ -199,7 +199,9 @@ export function SettingsPosterOverlaysContainer({
         setSettingsDraft={setSettingsDraft}
         onSaveSettings={saveSettings}
         onSetPlexPush={(enabled) => void overlays.setPlexPush(enabled)}
-        onSetSiloPush={(enabled, apiUrl) => overlays.setSiloPush(enabled, apiUrl)}
+        onSetSiloPush={(enabled, apiUrl, serverKind) =>
+          overlays.setSiloPush(enabled, apiUrl, serverKind)
+        }
         onRebuild={() => void overlays.rebuild()}
         onRequestRevertAll={() => setConfirmRevert(true)}
         templateDraft={templateDraft}
