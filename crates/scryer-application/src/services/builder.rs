@@ -736,15 +736,6 @@ impl AppServicesBuilder {
         self.services.poster_overlays = value;
         self
     }
-    /// The installed metadata-provider plugins (a local addition).
-    pub fn with_metadata_plugin_provider(
-        mut self,
-        value: Arc<dyn crate::metadata_plugins::MetadataPluginProvider>,
-    ) -> Self {
-        self.services.library.metadata_plugins = value;
-        self.configured.metadata_plugins = true;
-        self
-    }
     /// The installed list-provider plugins. Without one, every provider-origin
     /// subscription fails its fetch with "provider not installed".
     pub fn with_list_plugin_provider(
