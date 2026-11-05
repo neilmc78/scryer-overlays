@@ -5,6 +5,7 @@ edition.workspace = true
 publish = false
 
 [dependencies]
+base64 = { workspace = true }
 scryer-domain = { path = "../scryer-domain" }
 scryer-application = { path = "../scryer-application" }
 scryer-outbound-http = { path = "../scryer-outbound-http" }

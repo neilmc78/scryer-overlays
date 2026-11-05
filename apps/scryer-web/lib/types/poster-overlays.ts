@@ -3,9 +3,14 @@ export type PosterOverlaySettings = {
   reconcileIntervalSeconds: number;
   plexPushEnabled: boolean;
   siloPushEnabled: boolean;
-  /** Silo's native API address; null until set. */
+  /** Silo's native API address, or a Jellyfin server's; null until set. */
   siloApiUrl: string | null;
+  /** The API that address speaks. */
+  siloServerKind: PosterPushServerKind;
 };
+
+/** The API a Silo-style poster push target speaks. */
+export type PosterPushServerKind = "silo" | "jellyfin";
 
 export type PosterOverlayLibrary = {
   libraryId: string;

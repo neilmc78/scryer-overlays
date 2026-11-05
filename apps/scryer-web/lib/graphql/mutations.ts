@@ -3527,7 +3527,7 @@ export const setPosterOverlayLibraryMutation = `mutation SetPosterOverlayLibrary
 }`;
 
 export const updatePosterOverlaySettingsMutation = `mutation UpdatePosterOverlaySettings($input: UpdatePosterOverlaySettingsInput!) {
-  updatePosterOverlaySettings(input: $input) { parallelism reconcileIntervalSeconds plexPushEnabled siloPushEnabled siloApiUrl }
+  updatePosterOverlaySettings(input: $input) { parallelism reconcileIntervalSeconds plexPushEnabled siloPushEnabled siloApiUrl siloServerKind }
 }`;
 
 export const savePosterOverlayTemplateMutation = `mutation SavePosterOverlayTemplate($input: SavePosterOverlayTemplateInput!) {

@@ -10,7 +10,7 @@ use scryer_application::overlays::{
     PlexCollectionMember, PlexCollectionTitle, PosterOverlayInputs, PosterOverlayLibraryConfig,
     PosterOverlayPlexState, PosterOverlayPreviewPoster, PosterOverlayRepository,
     PosterOverlaySettings, PosterOverlayState, PosterOverlayStatusCounts, PosterOverlayTemplate,
-    SILO_POSTER_CHANGED_IN_SILO,
+    PosterPushServerKind, SILO_POSTER_CHANGED_IN_SILO,
 };
 use scryer_application::{AppResult, TitleImageKind};
 
@@ -94,7 +94,7 @@ impl PosterOverlayRepository for PosterOverlayStore {
         let row = SqlRuntime::fetch_optional(
             self.read(),
             "SELECT parallelism, reconcile_interval_seconds, plex_push_enabled,
-                    silo_push_enabled, silo_api_url
+                    silo_push_enabled, silo_api_url, silo_server_kind
                FROM poster_overlay_settings WHERE id = {}",
             &[SqlArg::Text(SETTINGS_ID.into())],
         )
@@ -115,6 +115,11 @@ impl PosterOverlayRepository for PosterOverlayStore {
             plex_push_enabled: row.bool("plex_push_enabled")?,
             silo_push_enabled: row.bool("silo_push_enabled")?,
             silo_api_url: row.opt_text("silo_api_url")?,
+            silo_server_kind: row
+                .opt_text("silo_server_kind")?
+                .as_deref()
+                .and_then(PosterPushServerKind::parse)
+                .unwrap_or_default(),
         })
     }
 
@@ -124,14 +129,15 @@ impl PosterOverlayRepository for PosterOverlayStore {
             "save_poster_overlay_settings",
             "INSERT INTO poster_overlay_settings
                 (id, parallelism, reconcile_interval_seconds, plex_push_enabled,
-                 silo_push_enabled, silo_api_url, updated_at)
-             VALUES ({}, {}, {}, {}, {}, {}, {})
+                 silo_push_enabled, silo_api_url, silo_server_kind, updated_at)
+             VALUES ({}, {}, {}, {}, {}, {}, {}, {})
              ON CONFLICT (id) DO UPDATE SET
                 parallelism = excluded.parallelism,
                 reconcile_interval_seconds = excluded.reconcile_interval_seconds,
                 plex_push_enabled = excluded.plex_push_enabled,
                 silo_push_enabled = excluded.silo_push_enabled,
                 silo_api_url = excluded.silo_api_url,
+                silo_server_kind = excluded.silo_server_kind,
                 updated_at = excluded.updated_at",
             vec![
                 SqlArg::Text(SETTINGS_ID.into()),
@@ -140,6 +146,7 @@ impl PosterOverlayRepository for PosterOverlayStore {
                 SqlArg::Bool(settings.plex_push_enabled),
                 SqlArg::Bool(settings.silo_push_enabled),
                 SqlArg::OptText(settings.silo_api_url.clone()),
+                SqlArg::Text(settings.silo_server_kind.as_str().into()),
                 SqlArg::Timestamp(Utc::now()),
             ],
         )

@@ -673,7 +673,7 @@ mod tests {
         );
         // The local block itself runs 9001, 9002, ... without gaps: poster
         // overlays, Plex collections from lists, their order, their posters,
-        // custom poster logos, then Silo poster push.
+        // custom poster logos, Silo poster push, then the push server type.
         assert_eq!(
             &versions[local..],
             &[
@@ -682,7 +682,8 @@ mod tests {
                 LOCAL_MIGRATION_START + 2,
                 LOCAL_MIGRATION_START + 3,
                 LOCAL_MIGRATION_START + 4,
-                LOCAL_MIGRATION_START + 5
+                LOCAL_MIGRATION_START + 5,
+                LOCAL_MIGRATION_START + 6
             ]
         );
     }

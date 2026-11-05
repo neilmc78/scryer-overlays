@@ -3714,6 +3714,23 @@ file = "postgres/migrations/9006_silo_poster_push.sql"
 engine = "postgres"
 scope = "all"
 
+[[migration]]
+version = 9007
+description = "poster push server kind"
+checksum_algo = "blake3"
+
+[[migration.steps]]
+kind = "sql"
+file = "migrations/9007_poster_push_server_kind.sql"
+engine = "sqlite"
+scope = "all"
+
+[[migration.steps]]
+kind = "sql"
+file = "postgres/migrations/9007_poster_push_server_kind.sql"
+engine = "postgres"
+scope = "all"
+
 [[baseline]]
 through_version = 254
 file = "baselines/0254_baseline.sql"

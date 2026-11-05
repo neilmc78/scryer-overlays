@@ -7,6 +7,7 @@ mod collections;
 mod fields;
 mod plex;
 mod ports;
+pub mod reasons;
 mod runtime;
 mod service;
 mod silo;
@@ -38,8 +39,8 @@ pub use ports::{
     PosterOverlayPlexClient, PosterOverlayPlexState, PosterOverlayPreviewPoster,
     PosterOverlayPreviewRequest, PosterOverlayRenderRequest, PosterOverlayRendered,
     PosterOverlayRepository, PosterOverlaySettings, PosterOverlaySiloClient, PosterOverlayState,
-    PosterOverlayStatusCounts, PosterOverlayTemplate, PosterOverlayVariant, SiloPosterItem,
-    SiloServer,
+    PosterOverlayStatusCounts, PosterOverlayTemplate, PosterOverlayVariant, PosterPushServerKind,
+    SiloPosterItem, SiloServer,
 };
 pub use runtime::{drain_overlay_events, start_poster_overlay_worker};
 pub use service::{

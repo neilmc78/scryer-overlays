@@ -34,7 +34,9 @@ import type {
   PosterOverlaySample,
   PosterOverlayTemplateDraft,
   PosterOverlayTemplateValidation,
+  PosterPushServerKind,
 } from "@/lib/types/poster-overlays";
+import { posterPushServerName } from "@/lib/utils/overlay-error-message";
 import { selectorId } from "@/lib/utils/dom-ids";
 
 /** Radix Select forbids an empty value, so the built-in template needs a token. */
@@ -65,7 +67,11 @@ type SettingsPosterOverlaysSectionProps = {
   >;
   onSaveSettings: (event: React.FormEvent<HTMLFormElement>) => void;
   onSetPlexPush: (enabled: boolean) => void;
-  onSetSiloPush: (enabled: boolean, apiUrl: string) => Promise<boolean>;
+  onSetSiloPush: (
+    enabled: boolean,
+    apiUrl: string,
+    serverKind: PosterPushServerKind,
+  ) => Promise<boolean>;
   onRebuild: () => void;
   onRequestRevertAll: () => void;
   templateDraft: PosterOverlayTemplateDraft | null;
@@ -469,7 +475,8 @@ export function SettingsPosterOverlaysSection({
   );
 }
 
-/** Silo push: the API address, the switch, and how many posters are current. */
+/** Silo or Jellyfin push: the server type and address, the switch, and how
+ *  many posters are current there. */
 function SiloPushPanel({
   settings,
   counts,
@@ -479,65 +486,111 @@ function SiloPushPanel({
   settings: PosterOverlayOverview["settings"];
   counts: PosterOverlayOverview["counts"];
   disabled: boolean;
-  onSave: (enabled: boolean, apiUrl: string) => Promise<boolean>;
+  onSave: (
+    enabled: boolean,
+    apiUrl: string,
+    serverKind: PosterPushServerKind,
+  ) => Promise<boolean>;
 }) {
   const t = useTranslate();
   const [apiUrl, setApiUrl] = React.useState(settings.siloApiUrl ?? "");
+  const [serverKind, setServerKind] = React.useState<PosterPushServerKind>(
+    settings.siloServerKind,
+  );
   React.useEffect(() => setApiUrl(settings.siloApiUrl ?? ""), [settings.siloApiUrl]);
-  const urlChanged = apiUrl.trim() !== (settings.siloApiUrl ?? "");
+  React.useEffect(() => setServerKind(settings.siloServerKind), [settings.siloServerKind]);
+  const changed =
+    apiUrl.trim() !== (settings.siloApiUrl ?? "") || serverKind !== settings.siloServerKind;
+  const server = posterPushServerName(serverKind);
   return (
     <section id="settings-poster-overlays-silo" className={PANEL_CLASS}>
       <div className={PANEL_HEADER_CLASS}>
         <h3 className={PANEL_TITLE_CLASS}>{t("settings.posterOverlays.siloTitle")}</h3>
         <Switch
           id="settings-poster-overlays-silo-push"
-          aria-label={t("settings.posterOverlays.siloPush")}
+          aria-label={t("settings.posterOverlays.siloPush", { server })}
           checked={settings.siloPushEnabled}
           disabled={disabled || apiUrl.trim() === ""}
-          onCheckedChange={(enabled) => void onSave(enabled, apiUrl)}
+          onCheckedChange={(enabled) => void onSave(enabled, apiUrl, serverKind)}
         />
       </div>
       <div className={`${PANEL_BODY_CLASS} space-y-3`}>
-        <p className={MUTED_TEXT_CLASS}>{t("settings.posterOverlays.siloPushHelp")}</p>
+        <p className={MUTED_TEXT_CLASS}>{t("settings.posterOverlays.siloPushHelp", { server })}</p>
         <form
-          className="space-y-1"
+          className="space-y-3"
           onSubmit={(event) => {
             event.preventDefault();
-            void onSave(settings.siloPushEnabled, apiUrl);
+            void onSave(settings.siloPushEnabled, apiUrl, serverKind);
           }}
         >
-          <Label htmlFor="settings-poster-overlays-silo-url">
-            {t("settings.posterOverlays.siloApiUrl")}
-          </Label>
-          <div className="flex gap-2">
-            <Input
-              id="settings-poster-overlays-silo-url"
-              type="url"
-              placeholder="http://silo:8090"
-              value={apiUrl}
+          <div className="space-y-1">
+            <Label htmlFor="settings-poster-overlays-silo-kind">
+              {t("settings.posterOverlays.siloServerKind")}
+            </Label>
+            <Select
+              value={serverKind}
               disabled={disabled}
-              onChange={(event) => setApiUrl(event.target.value)}
-            />
-            <Button type="submit" disabled={disabled || !urlChanged}>
-              {t("label.save")}
-            </Button>
+              onValueChange={(value) => setServerKind(value as PosterPushServerKind)}
+            >
+              <SelectTrigger
+                id="settings-poster-overlays-silo-kind"
+                className="w-full max-w-[260px]"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="silo">{posterPushServerName("silo")}</SelectItem>
+                <SelectItem value="jellyfin">{posterPushServerName("jellyfin")}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-          <p className={`text-xs ${MUTED_TEXT_CLASS}`}>
-            {t("settings.posterOverlays.siloApiUrlHelp")}
-          </p>
+          <div className="space-y-1">
+            <Label htmlFor="settings-poster-overlays-silo-url">
+              {t("settings.posterOverlays.siloApiUrl", { server })}
+            </Label>
+            <div className="flex gap-2">
+              <Input
+                id="settings-poster-overlays-silo-url"
+                type="url"
+                placeholder={serverKind === "jellyfin" ? "http://jellyfin:8096" : "http://silo:8090"}
+                value={apiUrl}
+                disabled={disabled}
+                onChange={(event) => setApiUrl(event.target.value)}
+              />
+              <Button type="submit" disabled={disabled || !changed}>
+                {t("label.save")}
+              </Button>
+            </div>
+            <p className={`text-xs ${MUTED_TEXT_CLASS}`}>
+              {t(
+                serverKind === "jellyfin"
+                  ? "settings.posterOverlays.jellyfinApiUrlHelp"
+                  : "settings.posterOverlays.siloApiUrlHelp",
+              )}
+            </p>
+          </div>
         </form>
         {settings.siloPushEnabled ||
         counts.siloPushed + counts.siloFailed + counts.siloChanged > 0 ? (
           <p id="settings-poster-overlays-silo-counts">
-            {t("settings.posterOverlays.siloCounts", { pushed: counts.siloPushed })}
+            {t("settings.posterOverlays.siloCounts", {
+              pushed: counts.siloPushed,
+              server: posterPushServerName(settings.siloServerKind),
+            })}
             {counts.siloChanged > 0 ? (
               <span className={`ml-2 ${MUTED_TEXT_CLASS}`}>
-                {t("settings.posterOverlays.siloChangedCount", { count: counts.siloChanged })}
+                {t("settings.posterOverlays.siloChangedCount", {
+                  count: counts.siloChanged,
+                  server: posterPushServerName(settings.siloServerKind),
+                })}
               </span>
             ) : null}
             {counts.siloMissing > 0 ? (
               <span className={`ml-2 ${MUTED_TEXT_CLASS}`}>
-                {t("settings.posterOverlays.siloMissingCount", { count: counts.siloMissing })}
+                {t("settings.posterOverlays.siloMissingCount", {
+                  count: counts.siloMissing,
+                  server: posterPushServerName(settings.siloServerKind),
+                })}
               </span>
             ) : null}
             {counts.siloFailed > 0 ? (

@@ -11,7 +11,7 @@ use super::ports::{
     MAX_OVERLAY_PARALLELISM, MIN_OVERLAY_RECONCILE_INTERVAL_SECONDS, PosterOverlayEngine,
     PosterOverlayLibraryConfig, PosterOverlayPreviewPoster, PosterOverlayPreviewRequest,
     PosterOverlayRenderRequest, PosterOverlayRepository, PosterOverlaySettings, PosterOverlayState,
-    PosterOverlayStatusCounts, PosterOverlayTemplate, PosterOverlayVariant,
+    PosterOverlayStatusCounts, PosterOverlayTemplate, PosterOverlayVariant, PosterPushServerKind,
 };
 use super::silo::{SiloPush, SiloSyncCounts};
 use crate::{
@@ -625,11 +625,21 @@ impl AppUseCase {
         plex_push_enabled: Option<bool>,
         silo_push_enabled: Option<bool>,
         silo_api_url: Option<String>,
+        silo_server_kind: Option<String>,
     ) -> AppResult<PosterOverlaySettings> {
         self.require_app_permission(actor, AppPermission::ManageCatalogSettings)
             .await?;
         let overlays = self.require_poster_overlays()?;
         let previous = overlays.repository.get_settings().await?;
+        let silo_server_kind = match silo_server_kind.as_deref() {
+            None => previous.silo_server_kind,
+            Some(value) => PosterPushServerKind::parse(value).ok_or_else(|| {
+                AppError::validation_refused(
+                    super::reasons::PUSH_SERVER_KIND_UNKNOWN,
+                    format!("unknown poster push server type '{}'", value.trim()),
+                )
+            })?,
+        };
         let settings = PosterOverlaySettings {
             parallelism,
             reconcile_interval_seconds,
@@ -640,6 +650,7 @@ impl AppUseCase {
                 Some(url) => Some(url.trim().to_string()).filter(|url| !url.is_empty()),
                 None => previous.silo_api_url.clone(),
             },
+            silo_server_kind,
         };
         if settings.parallelism == 0 || settings.parallelism > MAX_OVERLAY_PARALLELISM {
             return Err(AppError::Validation(format!(
@@ -654,8 +665,12 @@ impl AppUseCase {
         if let Some(url) = settings.silo_api_url.as_deref()
             && !matches!(url::Url::parse(url), Ok(parsed) if matches!(parsed.scheme(), "http" | "https"))
         {
-            return Err(AppError::Validation(
-                "Silo's API address must be an http or https URL".into(),
+            return Err(AppError::validation_refused(
+                super::reasons::PUSH_ADDRESS_INVALID,
+                format!(
+                    "{}'s address must be an http or https URL",
+                    settings.silo_server_kind.display_name()
+                ),
             ));
         }
         if settings.silo_push_enabled
@@ -663,8 +678,12 @@ impl AppUseCase {
         {
             // Fails when no Jellyfin connection holds Silo's key.
             if silo.server(&settings).await?.is_none() {
-                return Err(AppError::Validation(
-                    "set Silo's API address before turning Silo push on".into(),
+                return Err(AppError::validation_refused(
+                    super::reasons::PUSH_ADDRESS_REQUIRED,
+                    format!(
+                        "set {}'s address before turning poster push on",
+                        settings.silo_server_kind.display_name()
+                    ),
                 ));
             }
         }
@@ -675,6 +694,7 @@ impl AppUseCase {
         if previous.plex_push_enabled != settings.plex_push_enabled
             || previous.silo_push_enabled != settings.silo_push_enabled
             || previous.silo_api_url != settings.silo_api_url
+            || previous.silo_server_kind != settings.silo_server_kind
         {
             overlays.request_pass();
         }

@@ -25,7 +25,12 @@ import type {
   PosterOverlaySample,
   PosterOverlayTemplateDraft,
   PosterOverlayTemplateValidation,
+  PosterPushServerKind,
 } from "@/lib/types/poster-overlays";
+import {
+  overlayErrorMessage,
+  posterPushServerName,
+} from "@/lib/utils/overlay-error-message";
 
 /**
  * Network side of Settings > Poster overlays. The backend owns every rule;
@@ -98,7 +103,7 @@ export function usePosterOverlays() {
       try {
         const result = await client.mutation(document, variables).toPromise();
         if (result.error || !result.data) {
-          showStatus(result.error?.message || t(failureKey));
+          showStatus(overlayErrorMessage(result.error, t, t(failureKey)));
           return null;
         }
         await reload();
@@ -160,9 +165,9 @@ export function usePosterOverlays() {
     [overview, run, showStatus, t],
   );
 
-  /** Save Silo's API address and whether posters are pushed there. */
+  /** Save the push server's type and address, and whether posters are pushed there. */
   const setSiloPush = React.useCallback(
-    async (enabled: boolean, apiUrl: string) => {
+    async (enabled: boolean, apiUrl: string, serverKind: PosterPushServerKind) => {
       if (!overview) {
         return false;
       }
@@ -174,6 +179,7 @@ export function usePosterOverlays() {
             reconcileIntervalSeconds: overview.settings.reconcileIntervalSeconds,
             siloPushEnabled: enabled,
             siloApiUrl: apiUrl.trim(),
+            siloServerKind: serverKind,
           },
         },
         "settings.posterOverlays.saveError",
@@ -187,6 +193,7 @@ export function usePosterOverlays() {
               : enabled
                 ? "settings.posterOverlays.siloPushOn"
                 : "settings.posterOverlays.siloPushOff",
+            { server: posterPushServerName(serverKind) },
           ),
         );
       }
