@@ -754,6 +754,15 @@ impl AppServicesBuilder {
         self.services.lists.plugins = value;
         self
     }
+    /// The installed metadata-provider plugins (a local addition).
+    pub fn with_metadata_plugin_provider(
+        mut self,
+        value: Arc<dyn crate::metadata_plugins::MetadataPluginProvider>,
+    ) -> Self {
+        self.services.library.metadata_plugins = value;
+        self.configured.metadata_plugins = true;
+        self
+    }
     pub fn with_list_account_auth_gateway(
         mut self,
         value: Arc<dyn crate::lists::account_transport::ListAccountAuthGateway>,
