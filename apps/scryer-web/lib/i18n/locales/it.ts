@@ -1,6 +1,8 @@
 import type { LocaleDictionary } from "../types";
 
 const it: LocaleDictionary = {
+  "error.reason.ACQUISITION_PROWLARR_VERSION_UNSUPPORTED":
+    "Questa versione di Prowlarr non è supportata. Aggiorna Prowlarr alla 2.0 o successiva.",
   "error.reason.METADATA_GATEWAY_CLOCK_SKEW":
     "Scryer non può connettersi al gateway dei metadati perché l’orologio di sistema ha uno scarto superiore a 5 minuti. Sincronizza l’orologio di sistema e riavvia Scryer.",
   "httpRelease.refusal.detailsUnavailable":
@@ -608,6 +610,10 @@ const it: LocaleDictionary = {
   "jobs.column.status": "Stato",
   "jobs.action.run": "Esegui",
   "jobs.action.runNow": "Esegui ora",
+  "jobs.cancelSearchRequested":
+    "Annullamento richiesto. Il passaggio di ricerca corrente terminerà prima di fermare i successivi.",
+  "jobs.cancelSearchNotRunning": "Questa ricerca non è più in corso.",
+  "jobs.cancelSearchFailed": "Impossibile annullare la ricerca.",
   "jobs.status.idle": "Inattivo",
   "jobs.status.queued": "In coda",
   "jobs.status.discovering": "Rilevamento",
@@ -859,6 +865,9 @@ const it: LocaleDictionary = {
   "settings.renameTokenMalId": "ID MAL",
   "settings.renameTokenAnilistId": "ID AniList",
   "settings.renameTokenSource": "Sorgente (es. BluRay, WEB-DL)",
+  "settings.renameTokenDynamicRange": "Gamma dinamica (es. HDR10, DV, HDR10+)",
+  "settings.renameTokenRevision": "Revisione release (Proper/REPACK)",
+  "settings.renameTokenIs3d": "Indicatore 3D",
   "settings.renameTokenVideoCodec": "Codec video (es. x265)",
   "settings.renameTokenAudioCodec": "Codec audio (es. DTS)",
   "settings.renameTokenAudioChannels": "Canali audio (es. 5.1)",

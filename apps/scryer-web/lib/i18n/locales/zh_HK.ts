@@ -1,6 +1,8 @@
 import type { LocaleDictionary } from "../types";
 
 const zh_HK: LocaleDictionary = {
+  "error.reason.ACQUISITION_PROWLARR_VERSION_UNSUPPORTED":
+    "不支援此 Prowlarr 版本。請將 Prowlarr 升級至 2.0 或更新版本。",
   "error.reason.METADATA_GATEWAY_CLOCK_SKEW":
     "系統時鐘偏差超過 5 分鐘，Scryer 無法連線至中繼資料閘道。請同步系統時鐘並重新啟動 Scryer。",
   "httpRelease.refusal.detailsUnavailable":
@@ -758,6 +760,10 @@ const zh_HK: LocaleDictionary = {
   "jobs.column.status": "狀態",
   "jobs.action.run": "運行",
   "jobs.action.runNow": "立即運行",
+  "jobs.cancelSearchRequested":
+    "已請求取消。當前搜尋步驟完成後，其餘步驟將停止。",
+  "jobs.cancelSearchNotRunning": "此搜尋已不在執行。",
+  "jobs.cancelSearchFailed": "無法取消搜尋。",
   "jobs.action.runArtworkNow": "立即執行 (覆寫排程)",
   "jobs.status.idle": "空閒",
   "jobs.status.queued": "隊列中",
@@ -1190,6 +1196,9 @@ const zh_HK: LocaleDictionary = {
   "settings.renameTokenMalId": "MAL ID",
   "settings.renameTokenAnilistId": "AniList ID",
   "settings.renameTokenSource": "來源（例如 BluRay、WEB-DL）",
+  "settings.renameTokenDynamicRange": "動態範圍（例如 HDR10、DV、HDR10+）",
+  "settings.renameTokenRevision": "發行修訂版（Proper/REPACK）",
+  "settings.renameTokenIs3d": "3D 標記",
   "settings.renameTokenVideoCodec": "影片編碼器（例如 x265）",
   "settings.renameTokenAudioCodec": "音訊編碼器（例如 DTS）",
   "settings.renameTokenAudioChannels": "音訊聲道（例如 5.1）",
