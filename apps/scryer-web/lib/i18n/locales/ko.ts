@@ -1,6 +1,8 @@
 import type { LocaleDictionary } from "../types";
 
 const ko: LocaleDictionary = {
+  "error.reason.ACQUISITION_PROWLARR_VERSION_UNSUPPORTED":
+    "이 Prowlarr 버전은 지원되지 않습니다. Prowlarr를 2.0 이상으로 업그레이드하세요.",
   "error.reason.METADATA_GATEWAY_CLOCK_SKEW":
     "시스템 시계가 5분 이상 차이 나서 Scryer가 메타데이터 게이트웨이에 연결할 수 없습니다. 시스템 시계를 동기화한 후 Scryer를 다시 시작하세요.",
   "httpRelease.refusal.detailsUnavailable":
@@ -589,6 +591,10 @@ const ko: LocaleDictionary = {
   "jobs.column.status": "상태",
   "jobs.action.run": "실행",
   "jobs.action.runNow": "지금 실행",
+  "jobs.cancelSearchRequested":
+    "취소를 요청했습니다. 현재 검색 단계가 끝난 뒤 나머지 단계가 중지됩니다.",
+  "jobs.cancelSearchNotRunning": "이 검색은 더 이상 실행 중이 아닙니다.",
+  "jobs.cancelSearchFailed": "검색을 취소하지 못했습니다.",
   "jobs.status.idle": "유휴",
   "jobs.status.queued": "대기 중",
   "jobs.status.discovering": "탐색 중",
@@ -829,6 +835,9 @@ const ko: LocaleDictionary = {
   "settings.renameTokenMalId": "MAL ID",
   "settings.renameTokenAnilistId": "AniList ID",
   "settings.renameTokenSource": "소스 (예: BluRay, WEB-DL)",
+  "settings.renameTokenDynamicRange": "다이내믹 레인지 (예: HDR10, DV, HDR10+)",
+  "settings.renameTokenRevision": "릴리스 리비전 (Proper/REPACK)",
+  "settings.renameTokenIs3d": "3D 표시",
   "settings.renameTokenVideoCodec": "비디오 코덱 (예: x265)",
   "settings.renameTokenAudioCodec": "오디오 코덱 (예: DTS)",
   "settings.renameTokenAudioChannels": "오디오 채널 (예: 5.1)",
