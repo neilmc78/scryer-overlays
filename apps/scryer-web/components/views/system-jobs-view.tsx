@@ -1,3 +1,4 @@
+import { translateNativeJobText } from "@/lib/i18n/native-jobs";
 import { ArrowDown, ArrowUp, Edit, Plus, Power, Trash2 } from "lucide-react";
 import {
   useCallback,
@@ -127,6 +128,7 @@ type SystemJobsViewState = {
   triggeringKeys: Partial<Record<string, boolean>>;
   onSelectJob: (target: JobTarget | null) => void;
   onTriggerJob: (target: JobTarget) => void;
+  onCancelAcquisitionSearch: (runId: string) => void | Promise<void>;
   customJobEditor: CustomJobEditorState;
 };
 
@@ -611,6 +613,7 @@ export function SystemJobsView({ state }: { state: SystemJobsViewState }) {
     triggeringKeys,
     onSelectJob,
     onTriggerJob,
+    onCancelAcquisitionSearch,
     customJobEditor,
   } = state;
 
@@ -801,7 +804,7 @@ export function SystemJobsView({ state }: { state: SystemJobsViewState }) {
   }, [jobRows, sortDirection, sortKey, t]);
 
   const renderRows = (rows: JobTableRow[]) =>
-    rows.map(({ instanceKey, job, lastRun, status, isDisabled }) => (
+    rows.map(({ instanceKey, job, activeRun, lastRun, status, isDisabled }) => (
       <TableRow
         key={instanceKey}
         data-ui="activity-row"
@@ -811,10 +814,10 @@ export function SystemJobsView({ state }: { state: SystemJobsViewState }) {
         <TableCell className="min-w-0">
           <div className="space-y-1">
             <p className="font-medium text-[var(--scry-ink2)]">
-              {job.displayName}
+              {translateNativeJobText(job.key, job.displayName, t)}
             </p>
             <p className={`text-xs ${JOBS_MUTED_TEXT_CLASS}`}>
-              {job.description}
+              {translateNativeJobText(job.key, job.description, t)}
             </p>
             {job.key === "ARTWORK_ENCODING" && lastRun?.summaryText ? (
               <p className={`text-xs ${JOBS_MUTED_TEXT_CLASS}`}>
@@ -826,7 +829,7 @@ export function SystemJobsView({ state }: { state: SystemJobsViewState }) {
         <TableCell
           className={`w-[14rem] max-w-[14rem] ${JOBS_MUTED_TEXT_CLASS}`}
         >
-          {job.schedule.description}
+          {translateNativeJobText(job.key, job.schedule.description, t)}
         </TableCell>
         <TableCell
           className={`w-[10.5rem] min-w-[10.5rem] ${JOBS_MUTED_TEXT_CLASS}`}
@@ -848,7 +851,20 @@ export function SystemJobsView({ state }: { state: SystemJobsViewState }) {
           </span>
         </TableCell>
         <TableCell className="min-w-[6rem] text-right">
-          {job.manualTriggerAllowed ? (
+          {activeRun?.jobKey === "ACQUISITION_SEARCH" ? (
+            <Button
+              size="sm"
+              variant="destructive"
+              aria-label={t("label.cancel")}
+              title={t("label.cancel")}
+              onClick={(event) => {
+                event.stopPropagation();
+                void onCancelAcquisitionSearch(activeRun.id);
+              }}
+            >
+              {t("label.cancel")}
+            </Button>
+          ) : job.manualTriggerAllowed ? (
             <Button
               size="sm"
               variant="primary"
@@ -1146,7 +1162,7 @@ export function SystemJobsView({ state }: { state: SystemJobsViewState }) {
     )?.script ?? null;
 
   const renderMobileCards = (rows: JobTableRow[]) =>
-    rows.map(({ instanceKey, job, lastRun, status, isDisabled }) => (
+    rows.map(({ instanceKey, job, activeRun, lastRun, status, isDisabled }) => (
       <div key={instanceKey} className={`${JOBS_INSET_CLASS} p-4`}>
         <div
           className="cursor-pointer space-y-3"
@@ -1163,10 +1179,10 @@ export function SystemJobsView({ state }: { state: SystemJobsViewState }) {
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 space-y-1">
               <p className="text-sm font-semibold text-[var(--scry-ink2)]">
-                {job.displayName}
+                {translateNativeJobText(job.key, job.displayName, t)}
               </p>
               <p className={`text-xs leading-relaxed ${JOBS_MUTED_TEXT_CLASS}`}>
-                {job.description}
+                {translateNativeJobText(job.key, job.description, t)}
               </p>
               {job.key === "ARTWORK_ENCODING" && lastRun?.summaryText ? (
                 <p className={`text-xs ${JOBS_MUTED_TEXT_CLASS}`}>
@@ -1192,7 +1208,7 @@ export function SystemJobsView({ state }: { state: SystemJobsViewState }) {
                 {t("jobs.column.schedule")}
               </p>
               <p className="text-sm text-[var(--scry-ink2)]">
-                {job.schedule.description}
+                {translateNativeJobText(job.key, job.schedule.description, t)}
               </p>
             </div>
             <div className="space-y-1">
@@ -1230,7 +1246,20 @@ export function SystemJobsView({ state }: { state: SystemJobsViewState }) {
           >
             {t("jobs.recentRuns")}
           </button>
-          {job.manualTriggerAllowed ? (
+          {activeRun?.jobKey === "ACQUISITION_SEARCH" ? (
+            <Button
+              size="sm"
+              variant="destructive"
+              aria-label={t("label.cancel")}
+              title={t("label.cancel")}
+              onClick={(event) => {
+                event.stopPropagation();
+                void onCancelAcquisitionSearch(activeRun.id);
+              }}
+            >
+              {t("label.cancel")}
+            </Button>
+          ) : job.manualTriggerAllowed ? (
             <Button
               size="sm"
               variant="primary"
