@@ -414,6 +414,8 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     assert!(sdl.contains("scalar Date"));
     assert!(sdl.contains("scalar DateTime"));
     assert!(sdl.contains("scalar Long"));
+    assert!(sdl.contains("type TitleAliasPayload"));
+    assert!(sdl.contains("taggedAliases: [TitleAliasPayload!]!"));
 
     let body = gql(
         &ctx,
@@ -1277,26 +1279,29 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     ] {
         assert!(public_type_names.contains(&name), "missing type {name}");
     }
+    // Tagged alias metadata adds TitleAliasPayload: public types 990->991,
+    // OBJECT 534->535.
+    assert!(public_type_names.contains(&"TitleAliasPayload"));
     // Poster overlays add ten payloads (overview, settings, library,
     // template, counts, validation, preview, the two sample-option types, and
     // the rebuild pass) and four inputs (library, settings, template save,
-    // preview): public types 990->1004, OBJECT 534->544, INPUT_OBJECT 243->247.
+    // preview): public types 991->1005, OBJECT 535->545, INPUT_OBJECT 243->247.
     assert!(public_type_names.contains(&"PosterOverlayTemplatePreview"));
     assert!(public_type_names.contains(&"PreviewPosterOverlayTemplateInput"));
     assert!(public_type_names.contains(&"PosterOverlayPass"));
     // Plex collections from lists add their list payload: public types
-    // 1004->1005, OBJECT 544->545.
+    // 1005->1006, OBJECT 545->546.
     assert!(public_type_names.contains(&"PlexCollectionList"));
     // Their posters add the design input and the preview payload: public
-    // types 1005->1007, OBJECT 545->546, INPUT_OBJECT 247->248.
+    // types 1006->1008, OBJECT 546->547, INPUT_OBJECT 247->248.
     assert!(public_type_names.contains(&"PlexCollectionPosterInput"));
     assert!(public_type_names.contains(&"PlexCollectionPosterPreview"));
     assert_eq!(
         public_types.len(),
-        1007,
+        1008,
         "public types: {public_type_names:?}"
     );
-    assert_eq!(kind_count("OBJECT"), 546);
+    assert_eq!(kind_count("OBJECT"), 547);
     assert_eq!(kind_count("INPUT_OBJECT"), 248);
     assert_eq!(kind_count("ENUM"), 201);
     assert_eq!(kind_count("SCALAR"), 10);
