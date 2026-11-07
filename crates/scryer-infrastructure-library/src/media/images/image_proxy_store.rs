@@ -415,6 +415,9 @@ pub(super) fn approved_upstream_url(raw: &str) -> Option<String> {
     let host = parsed.host_str()?.to_ascii_lowercase();
     match host.as_str() {
         "image.tmdb.org" | "artworks.thetvdb.com" | "cdn.myanimelist.net" => {}
+        // IMDb's poster CDN, which the OMDb metadata-provider plugin returns
+        // for titles SMG has no record of (a local addition).
+        "m.media-amazon.com" => {}
         _ if is_anilist_cdn_host(&host) => {}
         _ => return None,
     }
@@ -604,6 +607,15 @@ mod tests {
         assert!(approved_upstream_url("https://s4.anilist.co.evil.test/a.jpg").is_none());
         assert!(approved_upstream_url("https://evil-s4.anilist.co/a.jpg").is_none());
         assert!(approved_upstream_url("https://cdn.myanimelist.net.evil.test/a.jpg").is_none());
+    }
+
+    #[test]
+    fn source_allowlist_admits_imdb_posters_from_metadata_plugins() {
+        let poster = "https://m.media-amazon.com/images/M/MV5BMTk@._V1_SX300.jpg";
+        assert_eq!(approved_upstream_url(poster).as_deref(), Some(poster));
+        assert!(approved_upstream_url("https://media-amazon.com/a.jpg").is_none());
+        assert!(approved_upstream_url("https://m.media-amazon.com.evil.test/a.jpg").is_none());
+        assert!(approved_upstream_url("https://images-na.ssl-images-amazon.com/a.jpg").is_none());
     }
 
     #[tokio::test]

@@ -61,7 +61,7 @@ pub fn normalize_title_image_source_url(source_url: &str) -> AppResult<String> {
         AppError::validation_refused(
             crate::error_reasons::MEDIA_TITLE_IMAGE_HOST_UNAPPROVED,
             "title image URL host must be image.tmdb.org, artworks.thetvdb.com, \
-             cdn.myanimelist.net, or an AniList CDN shard",
+             cdn.myanimelist.net, m.media-amazon.com, or an AniList CDN shard",
         )
     })
 }
