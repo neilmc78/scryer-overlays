@@ -17,6 +17,8 @@ use serde_json::{Value, json};
 
 use crate::middleware::{AuthState, map_app_error, resolve_actor};
 
+mod history;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Flavor {
     Sonarr,
@@ -36,6 +38,7 @@ pub(crate) fn router(auth: AuthState) -> Router {
             .route("/api/v3/system/status", get(status))
             .route("/api/v3/release/push", post(push))
             .route("/api/v3/tag", get(tags))
+            .route("/api/v3/history", get(history::history))
             .route(list_path, get(titles))
             .layer(DefaultBodyLimit::max(64 * 1024))
             .with_state(CompatState {
