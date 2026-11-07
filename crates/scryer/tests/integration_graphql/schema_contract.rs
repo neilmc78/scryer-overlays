@@ -788,16 +788,25 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     assert!(query_field_names.contains(&"restoreStatus"));
     // Indexer clients add `indexerClients`, the administration list: 196->197.
     assert!(query_field_names.contains(&"indexerClients"));
+    // Recycle-bin item history adds `recycledItemHistory`: 197->198.
+    assert!(query_field_names.contains(&"recycledItemHistory"));
+    // Folder-conflict resolution adds `pendingImportConflictTask`: 198->199.
+    assert!(query_field_names.contains(&"pendingImportConflictTask"));
+    // The library graph adds `libraryGraph`, a facet's stored similarity graph
+    // pruned to what the viewer can see, and `discoveryNeighbors`, which
+    // expands any graph node, owned or not: 199->201.
+    assert!(query_field_names.contains(&"libraryGraph"));
+    assert!(query_field_names.contains(&"discoveryNeighbors"));
     // Poster overlays add the settings overview, template validation, the
-    // editor's live template preview and `posterOverlayPass`: 197->201.
+    // editor's live template preview and `posterOverlayPass`, Plex collections
+    // from lists add `plexCollectionLists`, and their posters
+    // `previewPlexCollectionPoster` (local additions): 201->207.
     assert!(query_field_names.contains(&"previewPosterOverlayTemplate"));
     assert!(query_field_names.contains(&"posterOverlayPass"));
-    // Plex collections from lists add `plexCollectionLists`: 201->202.
     assert!(query_field_names.contains(&"plexCollectionLists"));
-    // Their posters add `previewPlexCollectionPoster`: 202->203.
     assert!(query_field_names.contains(&"previewPlexCollectionPoster"));
     assert_eq!(
-        query_field_count, 203,
+        query_field_count, 207,
         "query fields: {query_field_names:?}"
     );
     // First-class proxies (WP4) add one mutation, resetProxyHostKey: SSH host
@@ -875,15 +884,45 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     assert!(mutation_field_names.contains(&"createFolder"));
     // The first-run authentication decision adds one mutation: 284->285.
     assert!(mutation_field_names.contains(&"completeInitialAuthentication"));
-    // Poster overlays add six: per-library enablement, render settings,
-    // template save and delete, rebuild, and revert all: 285->291. Plex
+    // Restarting so a saved listening address takes effect adds one
+    // mutation: 285->286.
+    assert!(mutation_field_names.contains(&"restartForNetworkChange"));
+    // Folder-conflict resolution adds `previewPendingImportConflicts` and
+    // `resolvePendingImportConflicts`: 286->288.
+    for name in [
+        "previewPendingImportConflicts",
+        "resolvePendingImportConflicts",
+    ] {
+        assert!(
+            mutation_field_names.contains(&name),
+            "missing mutation {name}"
+        );
+    }
+    // Durable source imports add acceptance, status, retry, and explicit skip,
+    // and drop the compatibility `executeExternalImport`: 288->291.
+    for name in [
+        "startExternalImportSources",
+        "externalImportSourceStatus",
+        "retryExternalImportSources",
+        "skipExternalImportSource",
+    ] {
+        assert!(
+            mutation_field_names.contains(&name),
+            "missing mutation {name}"
+        );
+    }
+    assert!(!mutation_field_names.contains(&"executeExternalImport"));
+    // Queueing a saved standby release with conflict confirmation adds
+    // `queueStandbyRelease`: 291->292.
+    assert!(mutation_field_names.contains(&"queueStandbyRelease"));
+    // Poster overlays add six mutations: per-library enablement, render
+    // settings, template save and delete, rebuild, and revert all. Plex
     // collections from lists add `setPlexCollectionList` and
-    // `syncPlexCollections`: 291->293. Ordering them adds
-    // `movePlexCollectionList` and `movePlexCollectionProvider`: 293->295.
-    // Their posters add `setPlexCollectionPoster`: 295->296, and custom
-    // logos `uploadPlexCollectionLogo`: 296->297.
+    // `syncPlexCollections`, ordering them `movePlexCollectionList` and
+    // `movePlexCollectionProvider`, their posters `setPlexCollectionPoster`,
+    // and custom logos `uploadPlexCollectionLogo` (local additions): 292->304.
     assert_eq!(
-        mutation_field_count, 297,
+        mutation_field_count, 304,
         "mutation fields: {mutation_field_names:?}"
     );
     // Cross-library transfer (T082, FR-055/FR-056) surfaces destination-title
@@ -1282,28 +1321,107 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     // Tagged alias metadata adds TitleAliasPayload: public types 990->991,
     // OBJECT 534->535.
     assert!(public_type_names.contains(&"TitleAliasPayload"));
-    // Poster overlays add ten payloads (overview, settings, library,
-    // template, counts, validation, preview, the two sample-option types, and
-    // the rebuild pass) and four inputs (library, settings, template save,
-    // preview): public types 991->1005, OBJECT 535->545, INPUT_OBJECT 243->247.
+    // Unroutable search results add InteractiveReleaseSearchUnroutableResultsPayload:
+    // public types 991->992, OBJECT 535->536.
+    assert!(public_type_names.contains(&"InteractiveReleaseSearchUnroutableResultsPayload"));
+    // The listening address adds what pins it and the first-run network
+    // choice: public types 992->994, ENUM 201->203. The stated baseline was
+    // also one OBJECT behind the schema it ran against, so the totals absorb
+    // that drift: public types 994->995, OBJECT 536->537.
+    for name in ["BindPinValue", "InitialNetworkAccess"] {
+        assert!(public_type_names.contains(&name), "missing type {name}");
+    }
+    // Watch-history sweep state on media-server connections adds
+    // MediaServerWatchSignalSyncPayload: public types 995->996, OBJECT 537->538.
+    assert!(public_type_names.contains(&"MediaServerWatchSignalSyncPayload"));
+    // Paged discovery sections and the "browse by" cards add the browse card
+    // payload and two enums (section sort and browse label family): public
+    // types 996->999, OBJECT 538->539, ENUM 203->205. The section input fields,
+    // the section on the items payload and the grid preferences are additive
+    // fields on types that already existed.
+    for name in [
+        "DiscoveryBrowseLabelPayload",
+        "DiscoveryBrowseLabelFamilyValue",
+        "DiscoverySectionSortValue",
+    ] {
+        assert!(public_type_names.contains(&name), "missing type {name}");
+    }
+    // Folder-conflict resolution adds the pending-conflict task, preview, row
+    // and rename payloads, two inputs and two enums: public types 999->1007,
+    // OBJECT 539->543, INPUT_OBJECT 243->245, ENUM 205->207.
+    for name in [
+        "PendingImportConflictTaskPayload",
+        "PendingImportConflictPreviewPayload",
+        "PendingImportConflictInput",
+        "PendingImportConflictPolicy",
+    ] {
+        assert!(public_type_names.contains(&name), "missing type {name}");
+    }
+    // Durable source imports add a job progress object and per-item receipt
+    // object, and dropping `executeExternalImport` removes its result payload:
+    // public types 1007->1008, OBJECT 543->544.
+    for name in [
+        "ExternalImportSourceJobPayload",
+        "ExternalImportSourceItemPayload",
+    ] {
+        assert!(public_type_names.contains(&name), "missing type {name}");
+    }
+    assert!(!public_type_names.contains(&"ExternalImportResultPayload"));
+    // Standby queueing adds its payload, the conflict identity input and the
+    // choice enum: public types 1008->1011, OBJECT 544->545,
+    // INPUT_OBJECT 245->246, ENUM 207->208.
+    for name in [
+        "QueueStandbyReleasePayload",
+        "StandbyConflictIdentityInput",
+        "StandbyQueueChoiceValue",
+    ] {
+        assert!(public_type_names.contains(&name), "missing type {name}");
+    }
+    // The library graph catalog view is a GRAPH value on the existing catalog
+    // view mode enum, so every count below is unchanged.
+    // The library graph read adds the graph, node, edge and cluster objects
+    // and its input, and expanding a node adds the neighbours input: public
+    // types 1007->1013, OBJECT 543->547, INPUT_OBJECT 245->247.
+    for name in [
+        "LibraryGraph",
+        "LibraryGraphNode",
+        "LibraryGraphEdge",
+        "LibraryGraphCluster",
+        "LibraryGraphInput",
+        "DiscoveryNeighborsInput",
+    ] {
+        assert!(public_type_names.contains(&name), "missing type {name}");
+    }
+    // Neighbour groups wrap the expansion in a payload that carries the
+    // gateway's neighbourhoods: public types 1017->1019, OBJECT 549->551.
+    for name in ["DiscoveryNeighborsPayload", "DiscoveryNeighborGroup"] {
+        assert!(public_type_names.contains(&name), "missing type {name}");
+    }
+    // Local additions. Poster overlays add ten payloads (overview, settings,
+    // library, template, counts, validation, preview, the two sample-option
+    // types, and the rebuild pass) and four inputs (library, settings,
+    // template save, preview); Plex collections from lists add their list
+    // payload; their posters add the design input and the preview payload:
+    // public types 1019->1036, OBJECT 551->563, INPUT_OBJECT 247->252.
     assert!(public_type_names.contains(&"PosterOverlayTemplatePreview"));
     assert!(public_type_names.contains(&"PreviewPosterOverlayTemplateInput"));
     assert!(public_type_names.contains(&"PosterOverlayPass"));
-    // Plex collections from lists add their list payload: public types
-    // 1005->1006, OBJECT 545->546.
     assert!(public_type_names.contains(&"PlexCollectionList"));
-    // Their posters add the design input and the preview payload: public
-    // types 1006->1008, OBJECT 546->547, INPUT_OBJECT 247->248.
     assert!(public_type_names.contains(&"PlexCollectionPosterInput"));
     assert!(public_type_names.contains(&"PlexCollectionPosterPreview"));
     assert_eq!(
         public_types.len(),
-        1008,
+        1036,
         "public types: {public_type_names:?}"
     );
-    assert_eq!(kind_count("OBJECT"), 547);
-    assert_eq!(kind_count("INPUT_OBJECT"), 248);
-    assert_eq!(kind_count("ENUM"), 201);
+    assert_eq!(kind_count("OBJECT"), 563);
+    // Library roots are no longer sent by path: UpdateLibraryPathsInput and
+    // RootFolderInput are gone (-2). EpisodeSubtitleSearchInput arrived
+    // without a census update (+1).
+    assert_eq!(kind_count("INPUT_OBJECT"), 252);
+    // The search walk intensity setting adds AcquisitionWalkIntensityValue:
+    // ENUM 208->209.
+    assert_eq!(kind_count("ENUM"), 209);
     assert_eq!(kind_count("SCALAR"), 10);
     assert_eq!(kind_count("UNION"), 2);
     assert!(mutation_field_names.contains(&"mediaFileDiscEpisodeTargets"));
@@ -6480,7 +6598,7 @@ async fn graphql_introspection_exposes_typed_settings_fields() {
     assert!(mutation_names.contains(&"updateAcquisitionSettings"));
     assert!(mutation_names.contains(&"updateGeneralSettings"));
     assert!(mutation_names.contains(&"updateMediaSettings"));
-    assert!(mutation_names.contains(&"updateLibraryPaths"));
+    assert!(!mutation_names.contains(&"updateLibraryPaths"));
     assert!(mutation_names.contains(&"updateServiceSettings"));
     assert!(mutation_names.contains(&"saveQualityProfileSettings"));
     assert!(mutation_names.contains(&"updateDownloadClientRouting"));
