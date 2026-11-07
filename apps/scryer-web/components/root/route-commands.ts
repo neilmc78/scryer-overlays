@@ -45,6 +45,7 @@ import {
   LIBRARY_PERMISSIONS,
   hasAnyAppPermission,
   hasAnyLibraryPermission,
+  hasAnyPrivilegedLibraryAccess,
 } from "../../lib/utils/permissions.ts";
 import {
   canAccessDashboard,
@@ -138,6 +139,8 @@ export function buildRouteCommands({
     LIBRARY_PERMISSIONS.resolveImports,
   );
   const canAccessActivity = canResolveImports || canManageTitle;
+  // Download activity, history and wanted state are privileged.
+  const canViewLibraryInternals = hasAnyPrivilegedLibraryAccess(user);
   const canManageUserAccounts = hasAnyAppPermission(user, [
     APP_PERMISSIONS.manageUsers,
   ]);
@@ -357,7 +360,7 @@ export function buildRouteCommands({
           } satisfies RouteCommand,
         ]
       : []),
-    ...(canViewCatalog
+    ...(canViewLibraryInternals
       ? [
           {
             id: "wanted-items",
@@ -381,6 +384,10 @@ export function buildRouteCommands({
               "wanted",
             ),
           } satisfies RouteCommand,
+        ]
+      : []),
+    ...(canViewCatalog
+      ? [
           {
             id: "calendar",
             label: t("nav.calendar"),
@@ -444,7 +451,7 @@ export function buildRouteCommands({
           } satisfies RouteCommand,
         ]
       : []),
-    ...(canAccessActivity
+    ...(canAccessActivity && canViewLibraryInternals
       ? [
           {
             id: "activity-overview",
@@ -466,7 +473,7 @@ export function buildRouteCommands({
         ]
       : []),
     ...mediaDetailCommands,
-    ...(canViewCatalog
+    ...(canViewLibraryInternals
       ? [
           {
             id: "wanted-cutoff",
@@ -523,7 +530,7 @@ export function buildRouteCommands({
           } satisfies RouteCommand,
         ]
       : []),
-    ...(canAccessActivity
+    ...(canAccessActivity && canViewLibraryInternals
       ? [
           {
             id: "activity-history",
@@ -598,10 +605,20 @@ export function buildRouteCommands({
       ? [
           {
             id: "settings-security",
-            label: `${systemGroupLabel} / ${t("settings.security")}`,
-            description: t("settings.security"),
+            label: `${systemGroupLabel} / ${t("nav.securityAccess")}`,
+            description: t("nav.securityAccess"),
             groupLabel: systemGroupLabel,
-            keywords: ["settings", "security", "auth", "login", "password"],
+            keywords: [
+              "settings",
+              "security",
+              "access",
+              "auth",
+              "login",
+              "password",
+              "network",
+              "public url",
+              "proxy",
+            ],
             icon: ShieldCheck,
             onSelect: buildNavigate(onNavigate, "settings", "security"),
           } satisfies RouteCommand,
@@ -611,7 +628,7 @@ export function buildRouteCommands({
       ? [
           {
             id: "settings-users",
-            label: `${systemGroupLabel} / ${t("nav.usersAccess")}`,
+            label: `${systemGroupLabel} / ${t("nav.users")}`,
             description: t("settings.users"),
             groupLabel: systemGroupLabel,
             keywords: ["settings", "users", "access", "accounts", "management"],

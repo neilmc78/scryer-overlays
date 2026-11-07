@@ -419,6 +419,7 @@ async fn titles(
                     TitleListProjection {
                         include_external_ids: true,
                         include_canonical_tags: false,
+                        ..Default::default()
                     },
                     Default::default(),
                 )
