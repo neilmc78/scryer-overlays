@@ -1382,8 +1382,8 @@ pub struct StorageRootUsage {
     pub facet: MediaFacet,
     pub used_bytes: Option<i64>,
     pub total_bytes: Option<i64>,
-    /// Bytes of this library's media, as its catalogue page totals them;
-    /// `None` for a library with several roots, or when unreadable.
+    /// Bytes of this library's media in this root, counted as the catalogue
+    /// counts them; `None` when they could not be read.
     pub library_bytes: Option<i64>,
 }
 

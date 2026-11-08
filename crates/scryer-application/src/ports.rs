@@ -1672,6 +1672,17 @@ pub struct DiscoveryAffinityTitle {
 
 #[async_trait]
 pub trait TitleRepository: Send + Sync {
+    /// Bytes of live media files per library and title root folder, counted
+    /// exactly as the catalogue counts its managed bytes. Stores without the
+    /// data answer nothing.
+    async fn media_bytes_by_library_root(
+        &self,
+        library_ids: &[String],
+    ) -> AppResult<Vec<crate::types::LibraryRootMediaBytes>> {
+        let _ = library_ids;
+        Ok(Vec::new())
+    }
+
     /// SQL implementations join the submitted generation without hydrating titles.
     /// A token the datastore replaces in the same transaction as any write
     /// the affinity read depends on: a title added, removed, moved to another

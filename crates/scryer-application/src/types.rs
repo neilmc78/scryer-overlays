@@ -1472,6 +1472,15 @@ pub enum TitleCatalogContentStatus {
     Ended,
 }
 
+/// Bytes of live media files for one library's titles in one root folder.
+/// `root_folder_id` is `None` for titles that record no root folder.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LibraryRootMediaBytes {
+    pub library_id: String,
+    pub root_folder_id: Option<String>,
+    pub bytes: i64,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TitleCatalogAggregates {
     pub total_count: bool,

@@ -567,25 +567,38 @@ async fn graphql_storage_roots_returns_one_row_per_library_root() {
         assert_eq!(row["libraryId"], series_library_id.as_str());
         assert_eq!(row["libraryName"], "Dashboard Storage Series");
         assert_eq!(row["facet"], "SERIES");
-        // A library's total cannot be split between its roots.
         assert!(
-            row["libraryBytes"].is_null(),
-            "a multi-root library reports no per-root size: {row}"
+            row["libraryBytes"].is_i64(),
+            "every root reports its own size: {row}"
         );
     }
 
-    // A one-root library reports the size its catalogue page shows, not the
-    // volume's shared used figure.
-    let catalog = gql(
-        &ctx,
-        r#"query($libraryIds: [ID!]) { titles(libraryIds: $libraryIds) { managedBytes } }"#,
-        json!({ "libraryIds": [movie_library_id] }),
-    )
-    .await;
-    assert_no_errors(&catalog);
+    // Each library's roots add up to the size its catalogue page shows, not
+    // to the volume's shared used figure.
+    let catalog_bytes = async |library_id: &str| {
+        let catalog = gql(
+            &ctx,
+            r#"query($libraryIds: [ID!]) { titles(libraryIds: $libraryIds) { managedBytes } }"#,
+            json!({ "libraryIds": [library_id] }),
+        )
+        .await;
+        assert_no_errors(&catalog);
+        catalog["data"]["titles"]["managedBytes"]
+            .as_i64()
+            .expect("managedBytes")
+    };
     assert_eq!(
-        movie_rows[0]["libraryBytes"], catalog["data"]["titles"]["managedBytes"],
-        "dashboard and catalogue agree on the library size: {body}"
+        movie_rows[0]["libraryBytes"].as_i64(),
+        Some(catalog_bytes(&movie_library_id).await),
+        "a one-root library shows its catalogue total: {body}"
+    );
+    assert_eq!(
+        series_rows
+            .iter()
+            .map(|row| row["libraryBytes"].as_i64().unwrap_or_default())
+            .sum::<i64>(),
+        catalog_bytes(&series_library_id).await,
+        "a library's roots add up to its catalogue total: {body}"
     );
 
     #[cfg(unix)]

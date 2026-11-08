@@ -5,6 +5,8 @@ const STORAGE_ROOT_STAT_TIMEOUT: std::time::Duration = std::time::Duration::from
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LibraryRootFolder {
+    /// The root's own id, which titles record as their `root_folder_id`.
+    pub root_id: String,
     pub library_id: String,
     pub library_name: String,
     pub facet: MediaFacet,
@@ -79,6 +81,7 @@ pub(crate) fn library_root_folders_from_libraries(
                 continue;
             }
             roots.push(LibraryRootFolder {
+                root_id: root.id.clone(),
                 library_id: library.id.clone(),
                 library_name: library.name.clone(),
                 facet: library.facet.clone(),
@@ -499,57 +502,55 @@ impl AppUseCase {
         }
 
         // The volume figures above are shared by every library on the same
-        // filesystem. Each library's own size is the total its catalogue page
-        // shows, so a library with one root gets that figure; with several
-        // roots it cannot be split between them and is left unknown.
-        // Roots are counted as the rows above are: one per distinct folder, so
-        // a library that stores the same folder twice (with and without a
-        // trailing slash, say) still has one root here.
-        let mut folders_per_library: HashMap<&str, usize> = HashMap::new();
-        for root in &dedup_roots {
-            *folders_per_library.entry(root.library_id.as_str()).or_default() += 1;
-        }
-        let mut library_bytes: HashMap<String, i64> = HashMap::new();
-        for library in libraries
+        // filesystem. Each root's own size comes from the sizes recorded for
+        // its titles' media files, counted as the catalogue counts them, so a
+        // library's roots add up to its catalogue total. A failed read leaves
+        // the size unknown rather than failing the dashboard.
+        let library_ids = dedup_roots
             .iter()
-            .filter(|library| folders_per_library.get(library.id.as_str()) == Some(&1))
+            .map(|root| root.library_id.clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let media_bytes = match self
+            .services
+            .catalog
+            .titles
+            .media_bytes_by_library_root(&library_ids)
+            .await
         {
-            match self
-                .list_titles(
-                    actor,
-                    Some(library.facet.clone()),
-                    Some(vec![library.id.clone()]),
-                    None,
-                    crate::TitleCatalogFilter::default(),
-                    crate::TitleCatalogSort::default(),
-                    1,
-                    0,
-                    crate::TitleListProjection {
-                        include_external_ids: false,
-                        include_canonical_tags: false,
-                        ..Default::default()
-                    },
-                    crate::TitleCatalogAggregates {
-                        managed_bytes: true,
-                        ..Default::default()
-                    },
-                )
-                .await
-            {
-                Ok(catalog) => {
-                    library_bytes.insert(library.id.clone(), catalog.managed_bytes);
-                }
-                Err(error) => {
-                    tracing::warn!(%error, library_id = %library.id, "could not read a library's size for storage usage");
-                }
+            Ok(rows) => Some(rows),
+            Err(error) => {
+                tracing::warn!(%error, "could not total library media sizes for storage usage");
+                None
             }
-        }
+        };
+        let root_ids_by_library = libraries
+            .iter()
+            .map(|library| {
+                (
+                    library.id.clone(),
+                    library
+                        .roots
+                        .iter()
+                        .map(|root| root.id.clone())
+                        .collect::<HashSet<_>>(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
 
         Ok(dedup_roots
             .into_iter()
             .map(|root| {
                 let usage = usage_by_path.get(&root.normalized_path).copied().flatten();
-                let library_bytes = library_bytes.get(&root.library_id).copied();
+                let library_bytes = media_bytes.as_deref().map(|rows| {
+                    library_root_media_bytes(
+                        rows,
+                        &root.library_id,
+                        &root.root_id,
+                        root_ids_by_library.get(&root.library_id),
+                    )
+                });
                 StorageRootUsage {
                     path: root.path,
                     library_id: root.library_id,
@@ -561,6 +562,61 @@ impl AppUseCase {
                 }
             })
             .collect())
+    }
+}
+
+/// The media bytes one library holds in one of its roots. Titles that record
+/// no root, or a root the library no longer has, count toward the library's
+/// only root; with several roots there is no telling where they live, so they
+/// are left out rather than guessed.
+pub(crate) fn library_root_media_bytes(
+    rows: &[crate::LibraryRootMediaBytes],
+    library_id: &str,
+    root_id: &str,
+    library_root_ids: Option<&HashSet<String>>,
+) -> i64 {
+    let single_root = library_root_ids.is_some_and(|ids| ids.len() == 1);
+    rows.iter()
+        .filter(|row| row.library_id == library_id)
+        .filter(|row| match row.root_folder_id.as_deref() {
+            Some(id) if id == root_id => true,
+            Some(id) => single_root && !library_root_ids.is_some_and(|ids| ids.contains(id)),
+            None => single_root,
+        })
+        .map(|row| row.bytes)
+        .sum()
+}
+
+#[cfg(test)]
+mod library_root_media_bytes_tests {
+    use super::*;
+
+    fn row(library: &str, root: Option<&str>, bytes: i64) -> crate::LibraryRootMediaBytes {
+        crate::LibraryRootMediaBytes {
+            library_id: library.into(),
+            root_folder_id: root.map(str::to_string),
+            bytes,
+        }
+    }
+
+    #[test]
+    fn each_root_gets_its_own_titles_and_a_lone_root_takes_the_unplaced() {
+        let rows = [
+            row("movies", Some("main"), 2_000),
+            row("movies", Some("replaced"), 50),
+            row("movies", None, 7),
+            row("series", Some("tv"), 3_000),
+            row("series", None, 5),
+            row("series", Some("gone"), 1),
+        ];
+        let movies: HashSet<String> = ["main".into(), "replaced".into()].into();
+        let series: HashSet<String> = ["tv".into()].into();
+        // Two roots: each its own; titles with no root are not guessed.
+        assert_eq!(library_root_media_bytes(&rows, "movies", "main", Some(&movies)), 2_000);
+        assert_eq!(library_root_media_bytes(&rows, "movies", "replaced", Some(&movies)), 50);
+        // One root: it also takes titles with no root or a root since removed.
+        assert_eq!(library_root_media_bytes(&rows, "series", "tv", Some(&series)), 3_006);
+        assert_eq!(library_root_media_bytes(&rows, "anime", "x", None), 0);
     }
 }
 
