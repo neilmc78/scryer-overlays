@@ -653,6 +653,13 @@ fn title_name_candidate_from_row(
 
 #[async_trait]
 impl TitleRepository for TitleStore {
+    async fn media_bytes_by_library_root(
+        &self,
+        library_ids: &[String],
+    ) -> AppResult<Vec<scryer_application::LibraryRootMediaBytes>> {
+        fetch_media_bytes_by_library_root(&self.datastore, library_ids).await
+    }
+
     async fn discovery_affinity_revision(&self) -> AppResult<Option<String>> {
         let row = SqlRuntime::fetch_optional(
             self.datastore.read_exec(),
@@ -4504,6 +4511,52 @@ async fn fetch_title_catalog_count(
             .unwrap_or(0)
             .max(0) as usize,
     )
+}
+
+/// Live media bytes per library and title root folder, counted with the same
+/// per-title size subquery as [`fetch_title_catalog_managed_bytes`], so the
+/// roots of a library add up to its catalogue total.
+async fn fetch_media_bytes_by_library_root(
+    datastore: &StoreDatastore,
+    library_ids: &[String],
+) -> AppResult<Vec<scryer_application::LibraryRootMediaBytes>> {
+    if library_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let dialect = title_catalog_dialect_for_datastore(datastore);
+    let placeholders = std::iter::repeat_n("{}", library_ids.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let media_size_sql = title_catalog_media_size_subquery_scoped(
+        dialect,
+        "JOIN scoped_titles ON scoped_titles.id = mf.title_id",
+    );
+    let sql = format!(
+        "WITH scoped_titles AS (SELECT id FROM titles WHERE library_id IN ({placeholders})) \
+         SELECT titles.library_id, titles.root_folder_id, \
+                CAST(COALESCE(SUM(catalog_media_size.total_size_bytes), 0) AS BIGINT) AS media_bytes \
+           FROM ({media_size_sql}) catalog_media_size \
+           JOIN titles ON titles.id = catalog_media_size.title_id \
+          GROUP BY titles.library_id, titles.root_folder_id"
+    );
+    let args = library_ids
+        .iter()
+        .cloned()
+        .map(SqlArg::Text)
+        .collect::<Vec<_>>();
+    SqlRuntime::fetch_all(datastore.read_exec(), &sql, &args)
+        .await?
+        .into_iter()
+        .map(|row| {
+            Ok(scryer_application::LibraryRootMediaBytes {
+                library_id: row.text("library_id")?,
+                root_folder_id: row
+                    .opt_text("root_folder_id")?
+                    .filter(|id| !id.trim().is_empty()),
+                bytes: row.i64("media_bytes")?.max(0),
+            })
+        })
+        .collect()
 }
 
 async fn fetch_title_catalog_managed_bytes(
