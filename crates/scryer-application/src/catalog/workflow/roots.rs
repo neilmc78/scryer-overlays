@@ -502,8 +502,18 @@ impl AppUseCase {
         // filesystem. Each library's own size is the total its catalogue page
         // shows, so a library with one root gets that figure; with several
         // roots it cannot be split between them and is left unknown.
+        // Roots are counted as the rows above are: one per distinct folder, so
+        // a library that stores the same folder twice (with and without a
+        // trailing slash, say) still has one root here.
+        let mut folders_per_library: HashMap<&str, usize> = HashMap::new();
+        for root in &dedup_roots {
+            *folders_per_library.entry(root.library_id.as_str()).or_default() += 1;
+        }
         let mut library_bytes: HashMap<String, i64> = HashMap::new();
-        for library in libraries.iter().filter(|library| library.roots.len() == 1) {
+        for library in libraries
+            .iter()
+            .filter(|library| folders_per_library.get(library.id.as_str()) == Some(&1))
+        {
             match self
                 .list_titles(
                     actor,
