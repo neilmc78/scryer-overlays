@@ -113,10 +113,10 @@ use scryer_application::{
     AUTO_BACKUP_POST_UPGRADE_PENDING_VERSION_KEY, AppUseCase, ArchiveExtractorPluginProvider,
     AutoBackupRunOutcome, DownloadClientCategorySnapshotStore, DownloadClientPluginProvider,
     DownloadQueuePollerOptions, FacetRegistry, IndexerArtifactResolver, IndexerPluginProvider,
-    JobTriggerSource, MovieFacetHandler, NotificationPluginProvider, PLUGIN_HTTP_CA_BUNDLE_PEM_KEY,
-    PluginHttpTrustConfigRuntime, PluginInstallationRepository, SETTINGS_SCOPE_SYSTEM,
-    SeriesFacetHandler, SubtitlePluginProvider, SystemInfoProvider, TitleImageKind,
-    TitleImageRepository,
+    IndexerProviderRegistry, JobTriggerSource, MovieFacetHandler, NotificationPluginProvider,
+    PLUGIN_HTTP_CA_BUNDLE_PEM_KEY, PluginHttpTrustConfigRuntime, PluginInstallationRepository,
+    SETTINGS_SCOPE_SYSTEM, SeriesFacetHandler, SubtitlePluginProvider, SystemInfoProvider,
+    TitleImageKind, TitleImageRepository,
     overlays::{AppPosterOverlayServices, start_poster_overlay_worker},
     start_background_acquisition_poller,
     start_background_auto_backup_scheduler, start_background_custom_job_scheduler,
@@ -1629,12 +1629,15 @@ async fn bootstrap_application(
         .with_indexer_stats_tracker(indexer_stats.clone())
         .with_archive_extractor_provider(dynamic_archive_extractor_plugin_provider.clone()),
     ));
+    // Host-native providers sit beside the plugin provider, not in front of
+    // it: the registry routes each call by provider type.
     let plugin_provider: Arc<dyn IndexerPluginProvider> = Arc::new(
-        NativeProwlarrIndexerProvider::new_with_indexer_error_repository(
-            dynamic_provider,
-            indexer_errors.clone(),
-        )
-        .with_indexer_stats_tracker(indexer_stats.clone()),
+        IndexerProviderRegistry::new(dynamic_provider).with_native(Arc::new(
+            NativeProwlarrIndexerProvider::new_with_indexer_error_repository(
+                indexer_errors.clone(),
+            )
+            .with_indexer_stats_tracker(indexer_stats.clone()),
+        )),
     );
 
     // Artifacts are resolved at the indexer boundary, so this is built before
