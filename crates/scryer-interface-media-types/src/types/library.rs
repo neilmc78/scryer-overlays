@@ -542,10 +542,10 @@ pub struct StorageRootUsagePayload {
     pub used_bytes: Option<Long>,
     /// Total bytes on the backing filesystem; null when it cannot be inspected.
     pub total_bytes: Option<Long>,
-    /// Bytes of this library's media, the total its catalogue page shows.
-    /// Unlike `usedBytes` it is not shared with other libraries on the
-    /// volume. Null for a library with several root folders, whose total
-    /// cannot be split between them, or when it could not be read.
+    /// Bytes of this library's media in this root folder, counted as the
+    /// catalogue counts them, so a library's roots add up to its catalogue
+    /// total. Unlike `usedBytes` it is not shared with other libraries on the
+    /// volume. Null when it could not be read.
     pub library_bytes: Option<Long>,
 }
 
