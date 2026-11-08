@@ -498,10 +498,48 @@ impl AppUseCase {
             }
         }
 
+        // The volume figures above are shared by every library on the same
+        // filesystem. Each library's own size is the total its catalogue page
+        // shows, so a library with one root gets that figure; with several
+        // roots it cannot be split between them and is left unknown.
+        let mut library_bytes: HashMap<String, i64> = HashMap::new();
+        for library in libraries.iter().filter(|library| library.roots.len() == 1) {
+            match self
+                .list_titles(
+                    actor,
+                    Some(library.facet.clone()),
+                    Some(vec![library.id.clone()]),
+                    None,
+                    crate::TitleCatalogFilter::default(),
+                    crate::TitleCatalogSort::default(),
+                    1,
+                    0,
+                    crate::TitleListProjection {
+                        include_external_ids: false,
+                        include_canonical_tags: false,
+                        ..Default::default()
+                    },
+                    crate::TitleCatalogAggregates {
+                        managed_bytes: true,
+                        ..Default::default()
+                    },
+                )
+                .await
+            {
+                Ok(catalog) => {
+                    library_bytes.insert(library.id.clone(), catalog.managed_bytes);
+                }
+                Err(error) => {
+                    tracing::warn!(%error, library_id = %library.id, "could not read a library's size for storage usage");
+                }
+            }
+        }
+
         Ok(dedup_roots
             .into_iter()
             .map(|root| {
                 let usage = usage_by_path.get(&root.normalized_path).copied().flatten();
+                let library_bytes = library_bytes.get(&root.library_id).copied();
                 StorageRootUsage {
                     path: root.path,
                     library_id: root.library_id,
@@ -509,6 +547,7 @@ impl AppUseCase {
                     facet: root.facet,
                     used_bytes: usage.map(|(used, _)| used),
                     total_bytes: usage.map(|(_, total)| total),
+                    library_bytes,
                 }
             })
             .collect())

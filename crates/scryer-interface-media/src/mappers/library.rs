@@ -501,6 +501,7 @@ pub fn from_storage_root_usage(usage: StorageRootUsage) -> StorageRootUsagePaylo
         facet: MediaFacetValue::from_domain(usage.facet),
         used_bytes: usage.used_bytes.map(Long::from),
         total_bytes: usage.total_bytes.map(Long::from),
+        library_bytes: usage.library_bytes.map(Long::from),
     }
 }
 
