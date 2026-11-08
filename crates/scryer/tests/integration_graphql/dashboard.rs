@@ -22,7 +22,7 @@ const DEFAULT_DASHBOARD_ACTIVITY_STATS_QUERY: &str = r#"
 
 const STORAGE_ROOTS_QUERY: &str = r#"
 query StorageRoots {
-  storageRoots { path libraryId libraryName facet usedBytes totalBytes }
+  storageRoots { path libraryId libraryName facet usedBytes totalBytes libraryBytes }
 }
 "#;
 
@@ -567,7 +567,26 @@ async fn graphql_storage_roots_returns_one_row_per_library_root() {
         assert_eq!(row["libraryId"], series_library_id.as_str());
         assert_eq!(row["libraryName"], "Dashboard Storage Series");
         assert_eq!(row["facet"], "SERIES");
+        // A library's total cannot be split between its roots.
+        assert!(
+            row["libraryBytes"].is_null(),
+            "a multi-root library reports no per-root size: {row}"
+        );
     }
+
+    // A one-root library reports the size its catalogue page shows, not the
+    // volume's shared used figure.
+    let catalog = gql(
+        &ctx,
+        r#"query($libraryIds: [ID!]) { titles(libraryIds: $libraryIds) { managedBytes } }"#,
+        json!({ "libraryIds": [movie_library_id] }),
+    )
+    .await;
+    assert_no_errors(&catalog);
+    assert_eq!(
+        movie_rows[0]["libraryBytes"], catalog["data"]["titles"]["managedBytes"],
+        "dashboard and catalogue agree on the library size: {body}"
+    );
 
     #[cfg(unix)]
     {
