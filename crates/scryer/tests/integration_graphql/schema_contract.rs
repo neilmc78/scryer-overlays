@@ -797,16 +797,19 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     // expands any graph node, owned or not: 199->201.
     assert!(query_field_names.contains(&"libraryGraph"));
     assert!(query_field_names.contains(&"discoveryNeighbors"));
+    // Linking a media server account adds `mediaServerConnectionAccounts`,
+    // the accounts a connection offers to link: 201->202.
+    assert!(query_field_names.contains(&"mediaServerConnectionAccounts"));
     // Poster overlays add the settings overview, template validation, the
     // editor's live template preview and `posterOverlayPass`, Plex collections
     // from lists add `plexCollectionLists`, and their posters
-    // `previewPlexCollectionPoster` (local additions): 201->207.
+    // `previewPlexCollectionPoster` (local additions): 202->208.
     assert!(query_field_names.contains(&"previewPosterOverlayTemplate"));
     assert!(query_field_names.contains(&"posterOverlayPass"));
     assert!(query_field_names.contains(&"plexCollectionLists"));
     assert!(query_field_names.contains(&"previewPlexCollectionPoster"));
     assert_eq!(
-        query_field_count, 207,
+        query_field_count, 208,
         "query fields: {query_field_names:?}"
     );
     // First-class proxies (WP4) add one mutation, resetProxyHostKey: SSH host
@@ -915,14 +918,23 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     // Queueing a saved standby release with conflict confirmation adds
     // `queueStandbyRelease`: 291->292.
     assert!(mutation_field_names.contains(&"queueStandbyRelease"));
+    // The server-side Arr custom-format translator adds
+    // `translateArrCustomFormats`: 292->293.
+    assert!(mutation_field_names.contains(&"translateArrCustomFormats"));
+    // Import-warning dismissal adds one mutation and one exact-identity
+    // input: 293->294.
+    assert!(mutation_field_names.contains(&"setTrackedDownloadImportDismissed"));
+    // Ignoring pending imports in bulk adds `ignorePendingImports`, one call
+    // for a selection instead of one per row: 294->295.
+    assert!(mutation_field_names.contains(&"ignorePendingImports"));
     // Poster overlays add six mutations: per-library enablement, render
     // settings, template save and delete, rebuild, and revert all. Plex
     // collections from lists add `setPlexCollectionList` and
     // `syncPlexCollections`, ordering them `movePlexCollectionList` and
     // `movePlexCollectionProvider`, their posters `setPlexCollectionPoster`,
-    // and custom logos `uploadPlexCollectionLogo` (local additions): 292->304.
+    // and custom logos `uploadPlexCollectionLogo` (local additions): 295->307.
     assert_eq!(
-        mutation_field_count, 304,
+        mutation_field_count, 307,
         "mutation fields: {mutation_field_names:?}"
     );
     // Cross-library transfer (T082, FR-055/FR-056) surfaces destination-title
@@ -1397,12 +1409,56 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     for name in ["DiscoveryNeighborsPayload", "DiscoveryNeighborGroup"] {
         assert!(public_type_names.contains(&name), "missing type {name}");
     }
+    // Ranking-only audio language preferences add the per-release rank on a
+    // decision and the priority enum: public types 1019->1021, OBJECT 551->552,
+    // ENUM 209->210.
+    assert!(public_type_names.contains(&"AudioLanguageRankPayload"));
+    // The per-profile decision order replaces the library audio language
+    // priority and the profile ranking mode: QualityDecisionGateValue and
+    // ReleaseDecidingStepValue arrive as AudioLanguagePriorityValue and
+    // QualityRankingModeValue leave, so every count is unchanged.
+    for name in ["QualityDecisionGateValue", "ReleaseDecidingStepValue"] {
+        assert!(public_type_names.contains(&name), "missing type {name}");
+    }
+    for name in ["AudioLanguagePriorityValue", "QualityRankingModeValue"] {
+        assert!(!public_type_names.contains(&name), "retired type {name}");
+    }
+    // The Arr custom-format translator adds its result objects, its input and
+    // score input, and its source, severity and status enums: public types
+    // 1022->1032, OBJECT 552->557, INPUT_OBJECT 247->249, ENUM 211->214.
+    for name in [
+        "ArrCustomFormatTranslationPayload",
+        "ArrCustomFormatPayload",
+        "ArrCustomFormatDiagnosticPayload",
+        "ArrCustomFormatSuggestedScorePayload",
+        "ArrCustomFormatSpecificationPayload",
+        "TranslateArrCustomFormatsInput",
+        "ArrCustomFormatScoreInput",
+        "ArrSourceApplication",
+        "ArrDiagnosticSeverity",
+        "ArrCustomFormatStatus",
+    ] {
+        assert!(public_type_names.contains(&name), "missing type {name}");
+    }
+    // The dismissal command's TrackedDownloadImportTrackingInput: +1.
+    assert!(public_type_names.contains(&"TrackedDownloadImportTrackingInput"));
+    // The media-server account list and the bulk pending-import ignore each
+    // add result objects: MediaServerConnectionAccountPayload,
+    // IgnorePendingImportsPayload and IgnorePendingImportFailurePayload.
+    // Public types 1033->1036, OBJECT 557->560.
+    for name in [
+        "MediaServerConnectionAccountPayload",
+        "IgnorePendingImportsPayload",
+        "IgnorePendingImportFailurePayload",
+    ] {
+        assert!(public_type_names.contains(&name), "missing type {name}");
+    }
     // Local additions. Poster overlays add ten payloads (overview, settings,
     // library, template, counts, validation, preview, the two sample-option
     // types, and the rebuild pass) and four inputs (library, settings,
     // template save, preview); Plex collections from lists add their list
     // payload; their posters add the design input and the preview payload:
-    // public types 1019->1036, OBJECT 551->563, INPUT_OBJECT 247->252.
+    // public types 1036->1053, OBJECT 560->572, INPUT_OBJECT 250->255.
     assert!(public_type_names.contains(&"PosterOverlayTemplatePreview"));
     assert!(public_type_names.contains(&"PreviewPosterOverlayTemplateInput"));
     assert!(public_type_names.contains(&"PosterOverlayPass"));
@@ -1411,17 +1467,18 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     assert!(public_type_names.contains(&"PlexCollectionPosterPreview"));
     assert_eq!(
         public_types.len(),
-        1036,
+        1053,
         "public types: {public_type_names:?}"
     );
-    assert_eq!(kind_count("OBJECT"), 563);
+    assert_eq!(kind_count("OBJECT"), 572);
     // Library roots are no longer sent by path: UpdateLibraryPathsInput and
     // RootFolderInput are gone (-2). EpisodeSubtitleSearchInput arrived
     // without a census update (+1).
-    assert_eq!(kind_count("INPUT_OBJECT"), 252);
+    // TrackedDownloadImportTrackingInput is the dismissal command's new input.
+    assert_eq!(kind_count("INPUT_OBJECT"), 255);
     // The search walk intensity setting adds AcquisitionWalkIntensityValue:
     // ENUM 208->209.
-    assert_eq!(kind_count("ENUM"), 209);
+    assert_eq!(kind_count("ENUM"), 214);
     assert_eq!(kind_count("SCALAR"), 10);
     assert_eq!(kind_count("UNION"), 2);
     assert!(mutation_field_names.contains(&"mediaFileDiscEpisodeTargets"));
@@ -4084,7 +4141,7 @@ async fn graphql_introspection_library_delete_uses_id_and_payload_result() {
         .iter()
         .filter_map(|field| field["name"].as_str())
         .collect();
-    assert_eq!(payload_fields, vec!["id"]);
+    assert_eq!(payload_fields, vec!["id", "jobRun"]);
 }
 
 #[tokio::test]
@@ -4240,16 +4297,7 @@ async fn graphql_introspection_title_delete_uses_payload_result() {
         .iter()
         .filter_map(|field| field["name"].as_str())
         .collect();
-    assert_eq!(
-        payload_fields,
-        vec![
-            "id",
-            "recyclePurged",
-            "recyclePreserved",
-            "recycleBusy",
-            "recycleFailed"
-        ]
-    );
+    assert_eq!(payload_fields, vec!["id"]);
 }
 
 #[tokio::test]
