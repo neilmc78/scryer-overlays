@@ -6,6 +6,8 @@ mod catalog;
 pub mod challenge_solver;
 mod contracts;
 pub mod delete_refusal;
+#[cfg(feature = "runtime-diagnostics")]
+pub mod diagnostics;
 mod discovery;
 pub use discovery::{
     CatalogOwnershipDecisions, DISCOVERY_CREDIBLE_RATING_MIN_VOTES,
@@ -124,6 +126,7 @@ mod ports;
 pub use acquisition::anime_numbering::{ExactCourTitleMatch, exact_cour_title_match};
 pub use ports::ObservationTouch;
 pub use ports::UnfinishedLibraryScanSession;
+pub use ports::ensure_acquisition_scopes_grabbed_per_row;
 pub use ports::{
     AnimeSearchNumberingContext, CatalogOwnedExternalIdRecord, CatalogOwnedProbe,
     CatalogOwnedSeriesMovieRecord, CatalogOwnedTitleRecord, DiscoveryItemTargetRecord,
@@ -149,6 +152,7 @@ mod rate_limit_signal;
 mod release_facts;
 pub mod request_rules;
 mod rules;
+pub use rules::arr_custom_format;
 pub use rules::preview::{
     RuleSetTestContext, RuleSetTestDraft, RuleSetTestDraftContribution, RuleSetTestEntry,
     RuleSetTestError, RuleSetTestListingFacts, RuleSetTestListingInput, RuleSetTestParsed,
@@ -163,7 +167,10 @@ mod settings;
 pub mod stored_paths;
 pub mod subtitles;
 pub mod testing;
+pub mod title_folder_keys;
+pub mod title_folder_repair;
 pub mod title_folder_rules;
+pub use title_folder_keys::{ExpectedTitleFolder, TitleFolderWrite};
 mod types;
 pub mod upstream_scheduler;
 pub mod url_redaction;
@@ -173,6 +180,10 @@ pub(crate) use acquisition::admission;
 pub(crate) use acquisition::anime_numbering;
 pub(crate) use acquisition::coverage as acquisition_coverage;
 pub(crate) use acquisition::decision_helpers as acquisition_decision_helpers;
+pub(crate) use acquisition::decision_pipeline;
+pub use acquisition::decision_pipeline::{
+    DecisionGate, DecisionPipeline, DuplicateDecisionGate, ReleaseDecidingStep,
+};
 pub(crate) use acquisition::delay_profile;
 pub(crate) use acquisition::policy as acquisition_policy;
 pub(crate) use acquisition::release_search as acquisition_release_search;
@@ -202,6 +213,9 @@ pub(crate) use library::rename as library_rename;
 pub(crate) use library::title_matching;
 pub(crate) use media::audio_requirements;
 pub(crate) use media::language_data as media_language_data;
+pub use media::language_preference::{
+    AudioLanguageMatch, AudioLanguagePreferences, AudioLanguageRank,
+};
 pub(crate) use quality::canonical as canonical_scoring;
 pub(crate) use quality::profile as quality_profile;
 pub(crate) use quality::release_group_db;
@@ -233,7 +247,8 @@ pub use ports::{
     MediaRequestResolution, MediaRequestResolutionResult, MediaRequestSubmissionResult,
     MediaRequestUpdateResult, SeriesMovieExternalIdLookupMatch, SubtitleSyncClient,
     SubtitleSyncJob, TitleArtworkUrlUpdate, TitleDeletePreviewInfo, TitleExternalIdLookup,
-    TitleExternalIdLookupMatch, UserUiSettingsRepository,
+    TitleExternalIdLookupMatch, TitleExternalIdPresence, TitleExternalIdPresenceLookup,
+    UserUiSettingsRepository,
 };
 pub(crate) mod normalize;
 pub use acquisition::submission::describe_acquisition_metrics;
@@ -254,6 +269,10 @@ pub use integration::indexer_caps_cache::{
 pub use integration::tracked_downloads;
 pub use library::filesystem_walk;
 pub use library::leftover_title_folders::EmptyDuplicateTitleFolderReport;
+pub use library::pending_imports::{
+    PENDING_IMPORT_FOLDER_OWNERSHIP_REASON_CODES, PENDING_IMPORT_IGNORE_BATCH_MAX,
+    pending_import_item_requires_action,
+};
 pub use library::recycle_bin;
 pub use metrics_support::describe_freshness_and_health_metrics;
 pub use notifications::runtime::{
@@ -470,13 +489,13 @@ pub use media_requests::snapshot::{
     MediaRequestMetadataSnapshotExt,
 };
 pub use media_requests::{
-    ApproveMediaRequestOutcome, CLAIM_RELEASE_REQUEST_CANCELED, CLAIM_RELEASE_REQUEST_REJECTED,
-    ListMediaRequestsInput, MediaRequestAdmission, SubmitMediaRequestInput,
-    SubmitMediaRequestOutcome, UpdateMediaRequestInput,
+    ApproveMediaRequestOutcome, ApprovedAudioLanguages, CLAIM_RELEASE_REQUEST_CANCELED,
+    CLAIM_RELEASE_REQUEST_REJECTED, ListMediaRequestsInput, MediaRequestAdmission,
+    SubmitMediaRequestInput, SubmitMediaRequestOutcome, UpdateMediaRequestInput,
 };
 pub use media_servers::{
-    EmbyConnectionMode, EmbyLocalSetupMethod, MediaServerConnectionDraft,
-    MediaServerConnectionPatch, MediaServerPlaybackLink,
+    EmbyConnectionMode, EmbyLocalSetupMethod, MediaServerConnectionAccount,
+    MediaServerConnectionDraft, MediaServerConnectionPatch, MediaServerPlaybackLink,
     start_background_media_server_playback_reconciliation_loop,
 };
 pub use plugins::plugins::{
@@ -517,18 +536,20 @@ pub use security::restore_job::{
     read_restore_job,
 };
 pub use settings::settings::{
-    AcquisitionSettings, AutoBackupSettings, BackupSettings, DownloadClientRoutingSettingsEntry,
+    AcquisitionSettings, AudioLanguagePreferenceOverrides, AudioLanguagePreferenceSettings,
+    AutoBackupSettings, BackupSettings, DownloadClientRoutingSettingsEntry,
     ExternalImportLibrarySettingsAutoApplyDraft, ExternalImportLibrarySettingsAutoApplyResult,
     ExternalImportSettingsAutoApplySkip, FacetScoringPersonaSelection, GeneralSettings,
-    IndexerRoutingSettingsEntry, InstanceFeatures, LibraryPathsSettings, LibrarySettings,
-    LibrarySettingsOverrideDraft, MediaSettings, MovieAvailabilityOverrides,
-    MovieAvailabilitySettings, PluginAutoUpdateSettings, PublicUrlChangePreview, PublicUrlSettings,
-    QualityProfileSelection, QualityProfileSettings, RequestQualityProfileSettings,
-    SaveQualityProfileSettings, SecuritySettings, ServiceSettings, SubtitleSettings,
-    UpdateAutoBackupSettings, UpdateBackupSettings, UpdateFacetScoringPersonaSelection,
-    UpdateGeneralSettings, UpdateMediaSettings, UpdatePluginAutoUpdateSettings,
-    UpdateQualityProfileSelection, UpdateScriptInterpreterSettings, UpdateSecuritySettings,
-    UpdateServiceSettings, UpdateSubtitleSettings,
+    IndexerRoutingSettingsEntry, InstanceFeatures, LibraryAudioLanguageDefaults,
+    LibraryPathsSettings, LibrarySettings, LibrarySettingsOverrideDraft, MediaSettings,
+    MovieAvailabilityOverrides, MovieAvailabilitySettings, PluginAutoUpdateSettings,
+    PublicUrlChangePreview, PublicUrlSettings, QualityProfileSelection, QualityProfileSettings,
+    RequestQualityProfileSettings, SaveQualityProfileSettings, SecuritySettings, ServiceSettings,
+    SubtitleSettings, UpdateAutoBackupSettings, UpdateBackupSettings,
+    UpdateFacetScoringPersonaSelection, UpdateGeneralSettings, UpdateMediaSettings,
+    UpdatePluginAutoUpdateSettings, UpdateQualityProfileSelection, UpdateScriptInterpreterSettings,
+    UpdateSecuritySettings, UpdateServiceSettings, UpdateSubtitleSettings,
+    validated_title_audio_overrides, validated_title_audio_patch,
 };
 pub use subtitles::orchestration::{
     DownloadSubtitleForMediaFileRequest, SubtitleSearchOutcome, SubtitleSearchStatus,
@@ -709,10 +730,11 @@ pub use ports::{
     ScopeCoverageRow, ScopeIndexerCoverageRepository, SeedingProfileRepository, SettingsRepository,
     ShowRepository, SrrdbFilenameLookup, SrrdbOutage, StagedNzbStore, SubtitleDownloadRepository,
     SubtitlePluginProvider, SubtitleProviderClient, SubtitleProviderConfigRepository,
-    SystemInfoProvider, TitleImageProcessor, TitleImageRepository, TitleListProjection,
-    TitleNameBucketQuery, TitleNameCandidate, TitleRepository, TitleRowProjection, TotpRepository,
-    UserExternalAccountRepository, UserRepository, VerifiedExternalIdentity, WebauthnRepository,
-    WorkflowOperationInfo, WorkflowOperationRepository,
+    SystemInfoProvider, TitleHistoryTitleScope, TitleImageProcessor, TitleImageRepository,
+    TitleListProjection, TitleNameBucketQuery, TitleNameCandidate, TitleRepository,
+    TitleRowProjection, TotpRepository, UserExternalAccountRepository, UserRepository,
+    VerifiedExternalIdentity, WebauthnRepository, WorkflowOperationInfo,
+    WorkflowOperationRepository,
 };
 pub use ports::{
     AudiencePlay, AudienceRead, MediaServerSignalReader, MediaServerSignalRepository,
@@ -761,8 +783,8 @@ pub use settings::keys::{
     AUTO_BACKUP_POST_UPGRADE_PENDING_VERSION_KEY, BACKUP_PATH_KEY, CHOWN_GROUP_KEY,
     DEFAULT_ANIME_LIBRARY_PATH, DEFAULT_AUTO_BACKUP_DAILY_TIME_LOCAL, DEFAULT_FILLER_POLICY,
     DEFAULT_FOLDER_TEMPLATE_ANIME, DEFAULT_FOLDER_TEMPLATE_MOVIE, DEFAULT_FOLDER_TEMPLATE_SERIES,
-    DEFAULT_IMAGE_CACHE_MAX_SIZE_MB, DEFAULT_MOVIE_LIBRARY_PATH, DEFAULT_RECAP_POLICY,
-    DEFAULT_RENAME_COLLISION_POLICY, DEFAULT_RENAME_MISSING_METADATA_POLICY,
+    DEFAULT_IMAGE_CACHE_MAX_SIZE_MB, DEFAULT_MONITOR_TYPE_KEY, DEFAULT_MOVIE_LIBRARY_PATH,
+    DEFAULT_RECAP_POLICY, DEFAULT_RENAME_COLLISION_POLICY, DEFAULT_RENAME_MISSING_METADATA_POLICY,
     DEFAULT_RENAME_TEMPLATE_ANIME, DEFAULT_RENAME_TEMPLATE_MOVIE, DEFAULT_RENAME_TEMPLATE_SERIES,
     DEFAULT_SEASON_FOLDER_TEMPLATE, DEFAULT_SEEDING_PROFILE_SETTING_KEY,
     DEFAULT_SERIES_LIBRARY_PATH, DEFAULT_SPECIALS_FOLDER_TEMPLATE,
@@ -780,13 +802,14 @@ pub use settings::keys::{
     MOVIE_AVAILABILITY_DELAY_DAYS_KEY, MOVIE_DEFAULT_AVAILABILITY_KEY, MOVIE_RELEASE_MARKET_KEY,
     MOVIES_PATH_KEY, MOVIES_ROOT_FOLDERS_KEY, NFO_WRITE_ON_IMPORT_ANIME_KEY,
     NFO_WRITE_ON_IMPORT_MOVIE_KEY, NFO_WRITE_ON_IMPORT_SERIES_KEY,
-    NZBGET_OLDER_PRIORITY_SETTING_KEY, NZBGET_RECENT_PRIORITY_SETTING_KEY, PASSWORD_MIN_LENGTH_KEY,
-    PASSWORD_MIN_LENGTH_MIN, PLEXMATCH_WRITE_ON_IMPORT_ANIME_KEY,
+    NZBGET_OLDER_PRIORITY_SETTING_KEY, NZBGET_RECENT_PRIORITY_SETTING_KEY,
+    OPTIONAL_AUDIO_LANGUAGES_KEEP_SEARCHING_KEY, OPTIONAL_AUDIO_LANGUAGES_KEY,
+    PASSWORD_MIN_LENGTH_KEY, PASSWORD_MIN_LENGTH_MIN, PLEXMATCH_WRITE_ON_IMPORT_ANIME_KEY,
     PLEXMATCH_WRITE_ON_IMPORT_SERIES_KEY, PLUGIN_AUTO_UPDATE_ENABLED_KEY,
     PLUGIN_HTTP_CA_BUNDLE_PEM_KEY, POST_PROCESSING_SCRIPT_ANIME_KEY,
     POST_PROCESSING_SCRIPT_MOVIE_KEY, POST_PROCESSING_SCRIPT_SERIES_KEY,
-    POST_PROCESSING_TIMEOUT_KEY, RECYCLE_BIN_ENABLED_KEY, RECYCLE_BIN_PATH_KEY,
-    RECYCLE_BIN_RETENTION_DAYS_KEY, RENAME_COLLISION_POLICY_ANIME_GLOBAL_KEY,
+    POST_PROCESSING_TIMEOUT_KEY, PREFERRED_AUDIO_LANGUAGES_KEY, RECYCLE_BIN_ENABLED_KEY,
+    RECYCLE_BIN_PATH_KEY, RECYCLE_BIN_RETENTION_DAYS_KEY, RENAME_COLLISION_POLICY_ANIME_GLOBAL_KEY,
     RENAME_COLLISION_POLICY_GLOBAL_KEY, RENAME_COLLISION_POLICY_KEY,
     RENAME_COLLISION_POLICY_MOVIE_GLOBAL_KEY, RENAME_COLLISION_POLICY_SERIES_GLOBAL_KEY,
     RENAME_ENABLED_KEY, RENAME_MISSING_METADATA_POLICY_ANIME_GLOBAL_KEY,
@@ -801,11 +824,12 @@ pub use settings::keys::{
     SETTINGS_SCOPE_SYSTEM, SETTINGS_SOURCE_TYPED_GRAPHQL, SETUP_COMPLETE_KEY,
     SKIP_LOGIN_FOR_LOCAL_IPS_KEY, SPECIALS_FOLDER_TEMPLATE_KEY,
     SRRDB_FILENAME_RECOVERY_ENABLED_KEY, TITLE_METADATA_LANGUAGE_OVERRIDE_KEY,
-    TITLE_REQUIRED_AUDIO_OVERRIDE_KEY, TLS_CERT_PATH_KEY, TLS_KEY_PATH_KEY,
-    TOTP_REQUIRE_EMBY_LOGIN_KEY, TOTP_REQUIRE_JELLYFIN_LOGIN_KEY, USE_SEASON_FOLDERS_KEY,
-    VERIFICATION_DEPTH_KEY,
+    TITLE_PREFERRED_AUDIO_OVERRIDE_KEY, TITLE_REQUIRED_AUDIO_OVERRIDE_KEY, TLS_CERT_PATH_KEY,
+    TLS_KEY_PATH_KEY, TOTP_REQUIRE_EMBY_LOGIN_KEY, TOTP_REQUIRE_JELLYFIN_LOGIN_KEY,
+    USE_SEASON_FOLDERS_KEY, VERIFICATION_DEPTH_KEY,
 };
 pub use settings::runtime::is_bootstrap_default_library_root_set;
+pub use types::DeleteLibraryJobAccepted;
 pub(crate) use types::JwtClaims;
 pub use types::MetadataFieldUpdate;
 pub use types::PasskeyEnrollmentCounts;
@@ -824,8 +848,8 @@ pub use types::{
     DownloadHistorySortKey, DownloadImportFilter, DownloadImportPage, DownloadQueueCommandRecord,
     DownloadQueuePage, DownloadSourceKind, EpisodeMediaAvailability, EpisodeMediaAvailabilityState,
     EpisodeMediaSizeSummary, EpisodeScopedMediaFile, FixTitleMatchResult, HealthCheckResult,
-    HealthCheckStatus, HousekeepingReport, IgnorePendingImportResult, IndexerQueryStats,
-    JwtAuthConfig, JwtSessionScope, LibraryRootDraft, LibraryScanUnmatchedItem,
+    HealthCheckStatus, HousekeepingReport, IgnorePendingImportResult, IgnorePendingImportsResult,
+    IndexerQueryStats, JwtAuthConfig, JwtSessionScope, LibraryRootDraft, LibraryScanUnmatchedItem,
     LibraryScanUnmatchedSearchAttempt, LoginFailureTimingClass, LoginVerificationChallengeRecord,
     LoginVerificationMethod, LoginVerificationRequirement, LoginVerificationSatisfied,
     ManualImportSelection, ManualImportSelectionCandidate, MdblistSummary, MediaFileAssociations,
@@ -851,17 +875,18 @@ pub use types::{
     TitleImageBlob, TitleImageKind, TitleImageSourceResult, TitleImageSyncTask,
     TitleImageVariantRecord, TitleImageVariantSpec, TitleMediaFile, TitleMediaSizeSummary,
     TitleMetadataUpdate, TitleMovieMediaSummary, TitleQualitySummary, TitleRatingSummary,
-    TitleReleaseBlocklistEntry, TitleTagDefinitionSummary, TitleTagDefinitionUpdate,
-    TitleTagMembershipCounts, TitleTagRewriteCounts, TotpCredentialRecord,
-    TotpEnrollmentChallengeRecord, TotpEnrollmentComplete, TotpEnrollmentStart,
-    TotpFailedAttemptRecord, TotpRecoveryCodeRecord, TotpStatus, UiCatalogViewMode,
-    UiCatalogViewSetting, UiCatalogViewUpdate, UiDashboardBreakpoint, UiDashboardLayout,
-    UiDashboardLayoutItem, UiDateTimeFormat, UiDefaultLandingView, UiDensity, UiDeviceClass,
-    UiPalette, UiSettings, UiSettingsFacet, UiSettingsUpdate, UiSidebarMode, UiTableColumnSetting,
-    UiTableViewMode, UiTheme, UpdateRecycleBinSettings, UpdateVerificationSettings, UpdatedLibrary,
-    UserAuthFactorStatus, UserLoginSnapshot, VerificationSettings, VerifiedLocalCredentials,
-    WantedKind, WantedStatusCount, WebauthnChallengePurpose, WebauthnChallengeRecord,
-    WebauthnChallengeStart, WebauthnChallengeType, WebauthnCredentialRecord,
+    TitleReleaseBlocklistEntry, TitleReleaseDateWindow, TitleTagDefinitionSummary,
+    TitleTagDefinitionUpdate, TitleTagMembershipCounts, TitleTagRewriteCounts,
+    TotpCredentialRecord, TotpEnrollmentChallengeRecord, TotpEnrollmentComplete,
+    TotpEnrollmentStart, TotpFailedAttemptRecord, TotpRecoveryCodeRecord, TotpStatus,
+    UiCatalogViewMode, UiCatalogViewSetting, UiCatalogViewUpdate, UiDashboardBreakpoint,
+    UiDashboardLayout, UiDashboardLayoutItem, UiDateTimeFormat, UiDefaultLandingView, UiDensity,
+    UiDeviceClass, UiPalette, UiSettings, UiSettingsFacet, UiSettingsUpdate, UiSidebarMode,
+    UiTableColumnSetting, UiTableViewMode, UiTheme, UpdateRecycleBinSettings,
+    UpdateVerificationSettings, UpdatedLibrary, UserAuthFactorStatus, UserLoginSnapshot,
+    VerificationSettings, VerifiedLocalCredentials, WantedKind, WantedStatusCount,
+    WebauthnChallengePurpose, WebauthnChallengeRecord, WebauthnChallengeStart,
+    WebauthnChallengeType, WebauthnCredentialRecord,
 };
 pub use types::{
     CapturedIndexerHttpHeader, CapturedIndexerHttpResponse, INDEXER_PAGE_CURSOR_MAX_BYTES,
@@ -1462,4 +1487,5 @@ pub(crate) mod lib_tests;
 pub(crate) mod test_wait;
 
 pub use ports::TitleCounts;
+pub use ports::TitleRecyclePurge;
 pub use types::{DashboardImportEvidence, DashboardImportKind, DashboardRecentImport};
