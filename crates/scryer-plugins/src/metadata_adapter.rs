@@ -42,6 +42,9 @@ const METADATA_PLUGIN_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct WasmMetadataClient {
     spec: PluginInstanceSpec,
     descriptor: PluginDescriptor,
+    /// What the client was built from, to tell an unchanged plugin on reload.
+    descriptor_json: Vec<u8>,
+    plugin_config: BTreeMap<String, String>,
 }
 
 impl WasmMetadataClient {
@@ -143,13 +146,16 @@ impl MetadataProviderClient for WasmMetadataClient {
 
 /// The installed metadata providers, keyed by provider type with aliases.
 ///
-/// Clients are built once per load, not per call: each owns the command host
-/// that holds the plugin's state, so a provider's answer cache and request
-/// budget last until the plugin is next installed, reconfigured or reloaded.
+/// Each provider's client owns the command host that holds the plugin's
+/// state, so its answer cache and request budget live as long as the client.
+/// A client is rebuilt only when its own plugin changes (bytes, descriptor or
+/// settings); installing, updating, removing or reloading any other plugin
+/// keeps it. State is in memory, so a restart starts it afresh.
 pub struct WasmMetadataPluginProvider {
     plugins: HashMap<String, LoadedPlugin>,
     aliases: HashMap<String, String>,
-    clients: Vec<Arc<dyn MetadataProviderClient>>,
+    /// One client per loaded provider, by primary key (sorted).
+    clients: BTreeMap<String, Arc<WasmMetadataClient>>,
 }
 
 impl WasmMetadataPluginProvider {
@@ -157,22 +163,8 @@ impl WasmMetadataPluginProvider {
         Self {
             plugins: HashMap::new(),
             aliases: HashMap::new(),
-            clients: Vec::new(),
+            clients: BTreeMap::new(),
         }
-    }
-
-    fn rebuild_clients(&mut self) {
-        let mut loaded = self.plugins.values().collect::<Vec<_>>();
-        loaded.sort_by(|left, right| {
-            left.descriptor
-                .provider_type()
-                .cmp(right.descriptor.provider_type())
-        });
-        self.clients = loaded
-            .into_iter()
-            .filter_map(Self::build_client)
-            .map(|client| Arc::new(client) as Arc<dyn MetadataProviderClient>)
-            .collect();
     }
 
     fn prepare_runtime_plugin_record(
@@ -193,25 +185,92 @@ impl WasmMetadataPluginProvider {
         ))
     }
 
-    pub fn with_runtime_plugin(mut self, plugin: RuntimePluginLoad) -> Self {
-        match Self::prepare_runtime_plugin_record(plugin) {
-            Ok(record) => {
-                let _ =
-                    insert_loaded_plugin(&mut self.plugins, &mut self.aliases, record, true, true);
-                self.rebuild_clients();
+    /// Load one plugin without building clients. Returns the primary keys
+    /// whose client must be refreshed.
+    fn insert_runtime_plugin(&mut self, plugin: RuntimePluginLoad) -> Result<Vec<String>, String> {
+        let record = Self::prepare_runtime_plugin_record(plugin)?;
+        Ok(insert_loaded_plugin(
+            &mut self.plugins,
+            &mut self.aliases,
+            record,
+            true,
+            true,
+        ))
+    }
+
+    /// Install or replace one plugin, refreshing only its own client.
+    pub fn try_with_runtime_plugin(
+        mut self,
+        plugin: RuntimePluginLoad,
+    ) -> (Self, Result<(), String>) {
+        match self.insert_runtime_plugin(plugin) {
+            Ok(affected) => {
+                self.refresh_clients(&affected);
+                (self, Ok(()))
             }
-            Err(error) => warn!(error = %error, "failed to load runtime metadata provider plugin"),
+            Err(error) => (self, Err(error)),
         }
-        self
+    }
+
+    pub fn with_runtime_plugin(self, plugin: RuntimePluginLoad) -> Self {
+        let (provider, result) = self.try_with_runtime_plugin(plugin);
+        if let Err(error) = result {
+            warn!(error = %error, "failed to load runtime metadata provider plugin");
+        }
+        provider
     }
 
     pub fn without_provider_type(mut self, provider_type: &str) -> Self {
-        let _ = remove_loaded_plugin(&mut self.plugins, &mut self.aliases, provider_type);
-        self.rebuild_clients();
+        let affected = remove_loaded_plugin(&mut self.plugins, &mut self.aliases, provider_type);
+        self.refresh_clients(&affected);
         self
     }
 
-    fn build_client(loaded: &LoadedPlugin) -> Option<WasmMetadataClient> {
+    /// Bring the clients for `keys` in line with the loaded plugins: build or
+    /// keep one for each key still loaded, drop the rest.
+    fn refresh_clients(&mut self, keys: &[String]) {
+        for key in keys {
+            let previous = self.clients.remove(key);
+            if let Some(loaded) = self.plugins.get(key)
+                && let Some(client) = Self::build_or_keep(loaded, previous)
+            {
+                self.clients.insert(key.clone(), client);
+            }
+        }
+    }
+
+    /// Load every plugin in `runtime_plugins`, keeping the client from
+    /// `previous` for each plugin that is unchanged, and building clients
+    /// once, after all plugins are loaded.
+    fn from_runtime_plugins(
+        runtime_plugins: &[RuntimePluginLoad],
+        mut previous: BTreeMap<String, Arc<WasmMetadataClient>>,
+    ) -> Self {
+        let mut provider = Self::empty();
+        for plugin in runtime_plugins.iter().cloned() {
+            if let Err(error) = provider.insert_runtime_plugin(plugin) {
+                warn!(error = %error, "failed to load runtime metadata provider plugin");
+            }
+        }
+        let mut keys = provider.plugins.keys().cloned().collect::<Vec<_>>();
+        keys.sort();
+        for key in keys {
+            let kept = previous.remove(&key);
+            if let Some(loaded) = provider.plugins.get(&key)
+                && let Some(client) = Self::build_or_keep(loaded, kept)
+            {
+                provider.clients.insert(key, client);
+            }
+        }
+        provider
+    }
+
+    /// The client for `loaded`: `previous` when it was built from the same
+    /// bytes, descriptor and settings, otherwise a new one.
+    fn build_or_keep(
+        loaded: &LoadedPlugin,
+        previous: Option<Arc<WasmMetadataClient>>,
+    ) -> Option<Arc<WasmMetadataClient>> {
         let provider_type = loaded.descriptor.provider_type().to_string();
         let wasm_bytes = match loaded.materialize_wasm() {
             Ok(wasm_bytes) => wasm_bytes,
@@ -224,6 +283,26 @@ impl WasmMetadataPluginProvider {
                 return None;
             }
         };
+        let mut plugin_config = BTreeMap::new();
+        loaded.bind_settings(&mut plugin_config);
+        let descriptor_json = serde_json::to_vec(&loaded.descriptor).unwrap_or_default();
+        if let Some(previous) = previous
+            && previous.descriptor_json == descriptor_json
+            && previous.plugin_config == plugin_config
+            && previous.spec.wasm.as_slice() == wasm_bytes.as_slice()
+        {
+            return Some(previous);
+        }
+        Self::build_client(loaded, wasm_bytes, plugin_config, descriptor_json).map(Arc::new)
+    }
+
+    fn build_client(
+        loaded: &LoadedPlugin,
+        wasm_bytes: Vec<u8>,
+        plugin_config: BTreeMap<String, String>,
+        descriptor_json: Vec<u8>,
+    ) -> Option<WasmMetadataClient> {
+        let provider_type = loaded.descriptor.provider_type().to_string();
         match PluginRuntimeBacking::for_artifact(&loaded.descriptor, &wasm_bytes) {
             Ok(PluginRuntimeBacking::Metadata) => {}
             Ok(_) => {
@@ -243,17 +322,15 @@ impl WasmMetadataPluginProvider {
             }
         }
 
-        let mut plugin_config = BTreeMap::new();
         let base_url = loaded
             .descriptor
             .metadata_provider()
             .and_then(|provider| provider.default_base_url.as_deref());
         let allowed_hosts = allowed_hosts_for_descriptor(&loaded.descriptor, base_url, Some("{}"));
         let egress_policy = operator_egress_policy_for_descriptor(None, Some("{}"));
-        loaded.bind_settings(&mut plugin_config);
         let command_host = CommandHost::with_archive_provider(
             loaded.descriptor.id.clone(),
-            plugin_config,
+            plugin_config.clone(),
             allowed_hosts,
             egress_policy,
             METADATA_PLUGIN_TIMEOUT,
@@ -270,13 +347,18 @@ impl WasmMetadataPluginProvider {
                 command_host,
             },
             descriptor: loaded.descriptor.clone(),
+            descriptor_json,
+            plugin_config,
         })
     }
 }
 
 impl MetadataPluginProvider for WasmMetadataPluginProvider {
     fn clients(&self) -> Vec<Arc<dyn MetadataProviderClient>> {
-        self.clients.clone()
+        self.clients
+            .values()
+            .map(|client| client.clone() as Arc<dyn MetadataProviderClient>)
+            .collect()
     }
 }
 
@@ -292,16 +374,18 @@ impl DynamicMetadataPluginProvider {
         }
     }
 
-    fn replace_with(
+    fn replace_with<T>(
         &self,
-        update: impl FnOnce(WasmMetadataPluginProvider) -> WasmMetadataPluginProvider,
-    ) {
+        update: impl FnOnce(WasmMetadataPluginProvider) -> (WasmMetadataPluginProvider, T),
+    ) -> T {
         let mut guard = self
             .inner
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let current = std::mem::replace(&mut *guard, WasmMetadataPluginProvider::empty());
-        *guard = update(current);
+        let (next, result) = update(current);
+        *guard = next;
+        result
     }
 }
 
@@ -314,21 +398,21 @@ impl MetadataPluginProvider for DynamicMetadataPluginProvider {
     }
 
     fn upsert_runtime_plugin(&self, plugin: RuntimePluginLoad) -> Result<(), String> {
-        self.replace_with(|current| current.with_runtime_plugin(plugin));
-        Ok(())
+        self.replace_with(|current| current.try_with_runtime_plugin(plugin))
     }
 
     fn remove_runtime_plugin(&self, provider_type: &str) -> Result<(), String> {
-        self.replace_with(|current| current.without_provider_type(provider_type));
+        self.replace_with(|current| (current.without_provider_type(provider_type), ()));
         Ok(())
     }
 
     fn reload_runtime_plugins(&self, runtime_plugins: &[RuntimePluginLoad]) -> Result<(), String> {
-        let rebuilt = build_metadata_plugin_provider_from_runtime_plugins(runtime_plugins);
-        *self
-            .inner
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = rebuilt;
+        self.replace_with(|current| {
+            (
+                WasmMetadataPluginProvider::from_runtime_plugins(runtime_plugins, current.clients),
+                (),
+            )
+        });
         Ok(())
     }
 }
@@ -336,9 +420,52 @@ impl MetadataPluginProvider for DynamicMetadataPluginProvider {
 pub fn build_metadata_plugin_provider_from_runtime_plugins(
     runtime_plugins: &[RuntimePluginLoad],
 ) -> WasmMetadataPluginProvider {
-    let mut provider = WasmMetadataPluginProvider::empty();
-    for plugin in runtime_plugins.iter().cloned() {
-        provider = provider.with_runtime_plugin(plugin);
+    WasmMetadataPluginProvider::from_runtime_plugins(runtime_plugins, BTreeMap::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use scryer_plugin_sdk::{
+        MetadataProviderCapabilities, MetadataProviderDescriptor, ProviderDescriptor,
+    };
+
+    use super::*;
+
+    fn runtime_plugin(allowed_hosts: Vec<String>) -> RuntimePluginLoad {
+        RuntimePluginLoad {
+            installation_id: Some("installation".to_string()),
+            descriptor: PluginDescriptor {
+                id: "example-metadata".to_string(),
+                name: "Example metadata".to_string(),
+                version: "0.1.0".to_string(),
+                sdk_version: scryer_plugin_sdk::SDK_VERSION.to_string(),
+                sdk_constraint: String::new(),
+                socket_permissions: Vec::new(),
+                settings: Vec::new(),
+                provider: ProviderDescriptor::MetadataProvider(MetadataProviderDescriptor {
+                    provider_type: "example".to_string(),
+                    provider_aliases: Vec::new(),
+                    display_name: "Example".to_string(),
+                    summary: None,
+                    coverage: vec![MetadataMediaKind::Movie],
+                    capabilities: MetadataProviderCapabilities::default(),
+                    config_fields: Vec::new(),
+                    default_base_url: None,
+                    allowed_hosts,
+                }),
+            },
+            wasm_bytes: Vec::new(),
+            first_party: false,
+            settings: BTreeMap::new(),
+        }
     }
-    provider
+
+    #[test]
+    fn a_rejected_install_is_reported_and_loads_nothing() {
+        let provider = DynamicMetadataPluginProvider::new(WasmMetadataPluginProvider::empty());
+        let result =
+            provider.upsert_runtime_plugin(runtime_plugin(vec!["not a host/".to_string()]));
+        assert!(result.is_err());
+        assert!(provider.clients().is_empty());
+    }
 }

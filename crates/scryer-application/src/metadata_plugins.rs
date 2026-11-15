@@ -153,10 +153,15 @@ const MOVIE_KIND: &str = "movie";
 /// - an IMDb-anchored scan lookup SMG returned nothing for gets the plugin's
 ///   title as its one auto-match-safe result, so the scan creates the title
 ///   exactly as it would from SMG;
-/// - a Search & Match query that is an IMDb id SMG does not know returns the
-///   plugin's title as the single result;
-/// - a refresh of a movie SMG cannot resolve is answered from the plugin, so
-///   such titles keep their metadata instead of failing every refresh.
+/// - a Search & Match query that is an IMDb id SMG does not know gets the
+///   plugin's title added after SMG's own results;
+/// - a refresh of a movie SMG has no id for and cannot resolve is answered
+///   from the plugin, so such titles keep their metadata instead of failing
+///   every refresh. A movie SMG identified by its own id is never answered
+///   from a plugin.
+///
+/// Each call asks the plugins once per distinct IMDb id, however many queries
+/// or refs carry it.
 pub struct PluginFallbackMetadataGateway {
     inner: Arc<dyn MetadataGateway>,
     plugins: Arc<dyn MetadataPluginProvider>,
@@ -171,25 +176,60 @@ impl PluginFallbackMetadataGateway {
         lookup_by_imdb_id(self.plugins.as_ref(), imdb_id).await
     }
 
+    /// The plugins' titles for each distinct normalized IMDb id among
+    /// `imdb_ids`, keyed by that id. Every id is asked once, so a batch whose
+    /// queries share an id spends one lookup on it.
+    async fn plugin_titles<'a>(
+        &self,
+        imdb_ids: impl IntoIterator<Item = &'a str>,
+    ) -> HashMap<String, PluginMetadataMatch> {
+        let mut wanted = imdb_ids
+            .into_iter()
+            .filter_map(scryer_plugin_sdk::normalize_imdb_id)
+            .collect::<Vec<_>>();
+        wanted.sort();
+        wanted.dedup();
+        let mut found = HashMap::with_capacity(wanted.len());
+        for imdb_id in wanted {
+            if let Some(title) = self.plugin_title(&imdb_id).await {
+                found.insert(imdb_id, title);
+            }
+        }
+        found
+    }
+
     /// Fill refs SMG left missing from the plugins, where the ref carries an
-    /// IMDb id.
+    /// IMDb id and no SMG id. A ref SMG identified by its own id but did not
+    /// return stays missing: SMG's record is the authority for that title.
     async fn fill_missing_movies(
         &self,
         refs: &[MovieTitleRef],
         mut result: MovieTitleBulkResult,
     ) -> MovieTitleBulkResult {
+        let missing = std::mem::take(&mut result.missing_ref_indexes);
+        let plugin_imdb_id = |index: usize| {
+            refs.get(index)
+                .filter(|movie| movie.smg_id.is_none())
+                .and_then(|movie| movie.imdb_id.as_deref())
+                .and_then(scryer_plugin_sdk::normalize_imdb_id)
+        };
+        let ids = missing
+            .iter()
+            .filter_map(|index| plugin_imdb_id(*index))
+            .collect::<Vec<_>>();
+        if ids.is_empty() {
+            result.missing_ref_indexes = missing;
+            return result;
+        }
+        let found = self.plugin_titles(ids.iter().map(String::as_str)).await;
         let mut still_missing = Vec::new();
-        for index in std::mem::take(&mut result.missing_ref_indexes) {
-            let imdb_id = refs.get(index).and_then(|movie| movie.imdb_id.as_deref());
-            match imdb_id {
-                Some(imdb_id) => match self.plugin_title(imdb_id).await {
-                    Some(found) => {
-                        result
-                            .by_ref_index
-                            .insert(index, movie_metadata_from_plugin(&found));
-                    }
-                    None => still_missing.push(index),
-                },
+        for index in missing {
+            match plugin_imdb_id(index).and_then(|imdb_id| found.get(&imdb_id)) {
+                Some(title) => {
+                    result
+                        .by_ref_index
+                        .insert(index, movie_metadata_from_plugin(title));
+                }
                 None => still_missing.push(index),
             }
         }
@@ -481,6 +521,13 @@ impl MetadataGateway for PluginFallbackMetadataGateway {
             .await
     }
 
+    async fn library_graph(
+        &self,
+        input: &LibraryGraphGatewayInput,
+    ) -> AppResult<LibraryGraphGatewayResult> {
+        self.inner.library_graph(input).await
+    }
+
     async fn search_titles_batch(
         &self,
         queries: &[MetadataSearchQuery],
@@ -495,15 +542,26 @@ impl MetadataGateway for PluginFallbackMetadataGateway {
         if !kind.eq_ignore_ascii_case(MOVIE_KIND) {
             return Ok(results);
         }
-        for query in queries {
-            let Some(imdb_id) = query.imdb_id.as_deref() else {
-                continue;
-            };
-            if results.get(query).is_some_and(|items| !items.is_empty()) {
-                continue;
-            }
-            if let Some(found) = self.plugin_title(imdb_id).await {
-                results.insert(query.clone(), vec![search_item_from_plugin(&found)]);
+        let unanswered = queries
+            .iter()
+            .filter(|query| !results.get(*query).is_some_and(|items| !items.is_empty()))
+            .filter_map(|query| {
+                query
+                    .imdb_id
+                    .as_deref()
+                    .and_then(scryer_plugin_sdk::normalize_imdb_id)
+                    .map(|imdb_id| (query, imdb_id))
+            })
+            .collect::<Vec<_>>();
+        if unanswered.is_empty() {
+            return Ok(results);
+        }
+        let found = self
+            .plugin_titles(unanswered.iter().map(|(_, imdb_id)| imdb_id.as_str()))
+            .await;
+        for (query, imdb_id) in unanswered {
+            if let Some(title) = found.get(&imdb_id) {
+                results.insert(query.clone(), vec![search_item_from_plugin(title)]);
             }
         }
         Ok(results)
@@ -537,11 +595,13 @@ impl MetadataGateway for PluginFallbackMetadataGateway {
         }) {
             return Ok(results);
         }
-        // An exact id is one title: the plugin's, alone, when it has it.
-        match self.plugin_title(&imdb_id).await {
-            Some(found) => Ok(vec![rich_item_from_plugin(&found)]),
-            None => Ok(results),
+        // SMG has no title under the id: add the plugin's after SMG's own
+        // results, which stay available to choose from.
+        let mut results = results;
+        if let Some(found) = self.plugin_title(&imdb_id).await {
+            results.push(rich_item_from_plugin(&found));
         }
+        Ok(results)
     }
 
     async fn get_movie_titles(
@@ -792,6 +852,16 @@ mod tests {
             })
         }
 
+        async fn library_graph(
+            &self,
+            _input: &LibraryGraphGatewayInput,
+        ) -> AppResult<LibraryGraphGatewayResult> {
+            Ok(LibraryGraphGatewayResult {
+                generated_at: "smg".to_string(),
+                ..LibraryGraphGatewayResult::default()
+            })
+        }
+
         async fn get_movie_titles(
             &self,
             refs: &[MovieTitleRef],
@@ -875,15 +945,60 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_imdb_id_search_smg_does_not_know_returns_the_plugin_title_alone() {
+    async fn an_imdb_id_search_smg_does_not_know_adds_the_plugin_title_after_smg() {
         let (gateway, lookups) = gateway();
         let results = gateway
             .search_titles(FAN_EDIT, MOVIE_KIND, 20, "eng", None)
             .await
             .unwrap();
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].imdb_id.as_deref(), Some(FAN_EDIT));
-        assert_eq!(results[0].name, "The Fan Edit");
+        // SMG's own results stay, so one can still be chosen and applied.
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].name, "Noise");
+        assert_eq!(results[1].imdb_id.as_deref(), Some(FAN_EDIT));
+        assert_eq!(results[1].name, "The Fan Edit");
+        assert_eq!(lookups.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn the_library_graph_is_smg_s_answer_passed_through() {
+        let (gateway, lookups) = gateway();
+        let graph = gateway
+            .library_graph(&LibraryGraphGatewayInput {
+                subjects: Vec::new(),
+                axis: LibraryGraphAxis::Semantic,
+                neighbors_per_node: 5,
+                min_cosine: 0.5,
+            })
+            .await
+            .unwrap();
+        assert_eq!(graph.generated_at, "smg");
+        assert_eq!(lookups.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn queries_sharing_an_imdb_id_spend_one_lookup() {
+        let (gateway, lookups) = gateway();
+        // One file yields a query per search candidate and year variant, all
+        // anchored on the same id; the id is written in two spellings too.
+        let queries = (0..6)
+            .map(|variant| MetadataSearchQuery {
+                query: format!("Candidate {variant}"),
+                year: (variant % 2 == 0).then_some(2021),
+                imdb_id: Some(if variant == 5 {
+                    FAN_EDIT.to_uppercase()
+                } else {
+                    FAN_EDIT.to_string()
+                }),
+                ..query(None)
+            })
+            .collect::<Vec<_>>();
+        let results = gateway
+            .search_titles_batch(&queries, MOVIE_KIND, "eng", true)
+            .await
+            .unwrap();
+        for query in &queries {
+            assert_eq!(results[query][0].name, "The Fan Edit");
+        }
         assert_eq!(lookups.load(Ordering::SeqCst), 1);
     }
 
@@ -930,6 +1045,33 @@ mod tests {
         assert_eq!(filled.runtime_minutes, 201);
         assert_eq!(filled.ratings.external_ratings[0].score, Some(82.0));
         assert_eq!(result.missing_ref_indexes, vec![2]);
+        assert_eq!(lookups.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn refresh_never_answers_a_title_smg_identified_from_a_plugin() {
+        let (gateway, lookups) = gateway();
+        let refs = [
+            // SMG knows this title by its own id but did not return it.
+            MovieTitleRef {
+                smg_id: Some(7),
+                imdb_id: Some(FAN_EDIT.to_string()),
+                ..MovieTitleRef::default()
+            },
+            MovieTitleRef {
+                imdb_id: Some(FAN_EDIT.to_string()),
+                ..MovieTitleRef::default()
+            },
+            MovieTitleRef {
+                imdb_id: Some(FAN_EDIT.to_string()),
+                ..MovieTitleRef::default()
+            },
+        ];
+        let result = gateway.get_movie_titles(&refs, "eng").await.unwrap();
+
+        assert_eq!(result.missing_ref_indexes, vec![0]);
+        assert_eq!(result.by_ref_index[&1].name, "The Fan Edit");
+        assert_eq!(result.by_ref_index[&2].name, "The Fan Edit");
         assert_eq!(lookups.load(Ordering::SeqCst), 1);
     }
 }
