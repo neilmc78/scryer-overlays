@@ -1453,12 +1453,15 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     ] {
         assert!(public_type_names.contains(&name), "missing type {name}");
     }
+    // The request list's order argument adds MediaRequestOrderValue:
+    // public types 1036->1037, ENUM 214->215.
+    assert!(public_type_names.contains(&"MediaRequestOrderValue"));
     // Local additions. Poster overlays add ten payloads (overview, settings,
     // library, template, counts, validation, preview, the two sample-option
     // types, and the rebuild pass) and four inputs (library, settings,
     // template save, preview); Plex collections from lists add their list
     // payload; their posters add the design input and the preview payload:
-    // public types 1036->1053, OBJECT 560->572, INPUT_OBJECT 250->255.
+    // public types 1037->1054, OBJECT 560->572, INPUT_OBJECT 250->255.
     assert!(public_type_names.contains(&"PosterOverlayTemplatePreview"));
     assert!(public_type_names.contains(&"PreviewPosterOverlayTemplateInput"));
     assert!(public_type_names.contains(&"PosterOverlayPass"));
@@ -1467,7 +1470,7 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     assert!(public_type_names.contains(&"PlexCollectionPosterPreview"));
     assert_eq!(
         public_types.len(),
-        1053,
+        1054,
         "public types: {public_type_names:?}"
     );
     assert_eq!(kind_count("OBJECT"), 572);
@@ -1478,7 +1481,7 @@ async fn graphql_introspection_schema_census_matches_contract_baseline() {
     assert_eq!(kind_count("INPUT_OBJECT"), 255);
     // The search walk intensity setting adds AcquisitionWalkIntensityValue:
     // ENUM 208->209.
-    assert_eq!(kind_count("ENUM"), 214);
+    assert_eq!(kind_count("ENUM"), 215);
     assert_eq!(kind_count("SCALAR"), 10);
     assert_eq!(kind_count("UNION"), 2);
     assert!(mutation_field_names.contains(&"mediaFileDiscEpisodeTargets"));
