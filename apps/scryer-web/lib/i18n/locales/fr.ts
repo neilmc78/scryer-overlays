@@ -625,7 +625,7 @@ const fr: LocaleDictionary = {
   "persona.trait.balanced.audio": "Audio : pondération de codec équilibrée",
   "persona.trait.balanced.x265": "x265 : pénalisé sous 4K",
   "persona.trait.balanced.size":
-    "Taille de fichier : préfère les fichiers volumineux",
+    "Taille de fichier : les fichiers surdimensionnés sont pénalisés",
   "persona.trait.balanced.remux": "Remux : non prioritaire par défaut",
   "persona.trait.balanced.hdr": "HDR : Dolby Vision et HDR10 récompensés",
   "persona.trait.audiophile.source": "Source : BluRay fortement préféré",
@@ -641,14 +641,15 @@ const fr: LocaleDictionary = {
     "Audio : codecs avec perte acceptables (DDP préféré)",
   "persona.trait.efficient.x265": "x265 : récompensé à toutes les résolutions",
   "persona.trait.efficient.size":
-    "Taille de fichier : encodes compacts préférés",
+    "Taille de fichier : encodes compacts préférés, fichiers surdimensionnés fortement pénalisés",
   "persona.trait.efficient.remux": "Remux : non prioritaire",
   "persona.trait.efficient.hdr": "HDR : standard",
   "persona.trait.compatible.source": "Source : WEB-DL préféré",
   "persona.trait.compatible.audio":
     "Audio : DDP et AAC prioritaires pour une large compatibilité",
   "persona.trait.compatible.x265": "x265 : H.264 préféré au H.265",
-  "persona.trait.compatible.size": "Taille de fichier : préférences standard",
+  "persona.trait.compatible.size":
+    "Taille de fichier : les fichiers surdimensionnés sont pénalisés",
   "persona.trait.compatible.remux": "Remux : non prioritaire",
   "persona.trait.compatible.hdr":
     "HDR : Dolby Vision pénalisé (risque de compatibilité)",
@@ -2542,6 +2543,7 @@ const fr: LocaleDictionary = {
   "history.episodeCountMultiple": "{{count}} épisodes",
   "history.unknownEvent": "Inconnu",
   "history.noMore": "Plus d'événements",
+  "history.pageRange": "{{start}}–{{end}}",
   "history.loadMore": "Charger plus",
   "settings.recycleBin": "Corbeille",
   "settings.recycleBinEnabled": "Activer la corbeille",
