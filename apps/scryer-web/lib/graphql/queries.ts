@@ -5343,6 +5343,7 @@ export const dashboardStorageQuery = `query DashboardStorage {
     facet
     usedBytes
     totalBytes
+    libraryBytes
   }
 }`;
 

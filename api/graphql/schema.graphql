@@ -31915,6 +31915,13 @@ type StorageRootUsagePayload {
 	Total bytes on the backing filesystem; null when it cannot be inspected.
 	"""
 	totalBytes: Long
+	"""
+	Bytes of this library's media in this root folder, counted as the
+	catalogue counts them, so a library's roots add up to its catalogue
+	total. Unlike `usedBytes` it is not shared with other libraries on the
+	volume. Null when it could not be read.
+	"""
+	libraryBytes: Long
 }
 
 """

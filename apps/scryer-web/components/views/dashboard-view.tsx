@@ -1699,12 +1699,18 @@ function StorageRootTile({
   compact: boolean;
 }) {
   const t = useTranslate();
-  const percent = usagePercent(root.usedBytes, root.totalBytes);
-  const { tone, tag } = usageTone(percent ?? 0);
+  // The drive's fullness drives the warning colour and tag; the figures
+  // shown are this library's own share, since every library on the same
+  // drive would otherwise show the same used total.
+  const volumePercent = usagePercent(root.usedBytes, root.totalBytes);
+  const shownBytes = root.libraryBytes ?? root.usedBytes;
+  const percent =
+    volumePercent === null ? null : usagePercent(shownBytes, root.totalBytes);
+  const { tone, tag } = usageTone(volumePercent ?? 0);
   const toneStyle = usageToneStyle(tone);
   const tagTone = percent === null ? null : usageTagBadgeTone(tag);
   const tagKey = percent === null ? null : usageTagLabelKey(tag);
-  const usedTb = formatTerabytes(root.usedBytes);
+  const usedTb = formatTerabytes(shownBytes);
   const totalTb = formatTerabytes(root.totalBytes);
   const freeStorage =
     root.usedBytes !== null && root.totalBytes !== null
