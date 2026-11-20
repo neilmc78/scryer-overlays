@@ -1013,7 +1013,9 @@ const en: LocaleDictionary = {
   "error.reason.FOLDER_OWNERSHIP_TITLE_FOLDER_INVALID":
     "Title folder must be an absolute path without parent traversal.",
   "error.reason.FOLDER_OWNERSHIP_TITLE_FOLDER_NO_EXISTING_ANCESTOR":
-    "Title folder has no existing ancestor.",
+    "The drive or volume of the title folder is missing.",
+  "error.missingDriveNamed":
+    "Title folder {{titleFolder}} cannot be reached: drive or volume {{missingDrive}} is missing.",
   "error.reason.FOLDER_OWNERSHIP_TITLE_FOLDER_PATH_REQUIRED":
     "Title folder path is required.",
   "error.reason.FS_SAFETY_CONFIGURED_MEDIA_ROOT_EMPTY":
@@ -5178,7 +5180,7 @@ const en: LocaleDictionary = {
     "Source: standard preferences (BluRay > WEB-DL > WeRip)",
   "persona.trait.balanced.audio": "Audio: balanced codec weighting",
   "persona.trait.balanced.x265": "x265: penalized below 4K",
-  "persona.trait.balanced.size": "File size: prefers larger files",
+  "persona.trait.balanced.size": "File size: oversized files are penalized",
   "persona.trait.balanced.remux": "Remux: not prioritized by default",
   "persona.trait.balanced.hdr": "HDR: Dolby Vision and HDR10 rewarded",
   "persona.trait.audiophile.source": "Source: BluRay strongly preferred",
@@ -5192,14 +5194,15 @@ const en: LocaleDictionary = {
   "persona.trait.efficient.audio":
     "Audio: lossy codecs acceptable (DDP preferred)",
   "persona.trait.efficient.x265": "x265: rewarded at all resolutions",
-  "persona.trait.efficient.size": "File size: compact encodes preferred",
+  "persona.trait.efficient.size":
+    "File size: compact encodes preferred, oversized files strongly penalized",
   "persona.trait.efficient.remux": "Remux: not prioritized",
   "persona.trait.efficient.hdr": "HDR: standard",
   "persona.trait.compatible.source": "Source: WEB-DL preferred",
   "persona.trait.compatible.audio":
     "Audio: DDP and AAC prioritized for broad device support",
   "persona.trait.compatible.x265": "x265: H.264 preferred over H.265",
-  "persona.trait.compatible.size": "File size: standard preferences",
+  "persona.trait.compatible.size": "File size: oversized files are penalized",
   "persona.trait.compatible.remux": "Remux: not prioritized",
   "persona.trait.compatible.hdr":
     "HDR: Dolby Vision penalized (compatibility risk)",
@@ -9176,6 +9179,7 @@ const en: LocaleDictionary = {
   "history.episodeCountMultiple": "{{count}} episodes",
   "history.unknownEvent": "Unknown",
   "history.noMore": "No more events",
+  "history.pageRange": "{{start}}–{{end}}",
   "history.loadMore": "Load more",
 
   // Indexer error diagnostics

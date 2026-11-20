@@ -695,7 +695,7 @@ const ru: LocaleDictionary = {
   "persona.trait.balanced.x265":
     "x265: пониженный приоритет для разрешений ниже 4K",
   "persona.trait.balanced.size":
-    "Размер файла: предпочтение отдаётся более крупным файлам",
+    "Размер файла: слишком большие файлы получают штраф",
   "persona.trait.balanced.remux": "Remux: по умолчанию не является приоритетом",
   "persona.trait.balanced.hdr":
     "HDR: Dolby Vision и HDR10 получают преимущество",
@@ -716,14 +716,15 @@ const ru: LocaleDictionary = {
   "persona.trait.efficient.x265":
     "x265: получает преимущество при любом разрешении",
   "persona.trait.efficient.size":
-    "Размер файла: предпочтение отдаётся компактным версиям",
+    "Размер файла: предпочтение компактным версиям, слишком большие файлы получают сильный штраф",
   "persona.trait.efficient.remux": "Remux: не является приоритетом",
   "persona.trait.efficient.hdr": "HDR: стандартные настройки",
   "persona.trait.compatible.source": "Источник: предпочтение отдаётся WEB-DL",
   "persona.trait.compatible.audio":
     "Аудио: DDP и AAC имеют приоритет для максимальной совместимости устройств",
   "persona.trait.compatible.x265": "x265: H.264 предпочтительнее H.265",
-  "persona.trait.compatible.size": "Размер файла: стандартные предпочтения",
+  "persona.trait.compatible.size":
+    "Размер файла: слишком большие файлы получают штраф",
   "persona.trait.compatible.remux": "Remux: не является приоритетом",
   "persona.trait.compatible.hdr":
     "HDR: Dolby Vision получает штраф (риск несовместимости)",
@@ -4350,6 +4351,7 @@ const ru: LocaleDictionary = {
   "history.episodeCountMultiple": "{{count}} эпизодов",
   "history.unknownEvent": "Неизвестно",
   "history.noMore": "Больше событий нет",
+  "history.pageRange": "{{start}}–{{end}}",
   "history.loadMore": "Загрузить ещё",
   "convenience.title": "Упрощённые правила",
   "convenience.requiredAudioLabel": "Обязательные языки аудиодорожек",
@@ -7359,7 +7361,9 @@ const ru: LocaleDictionary = {
   "error.reason.FOLDER_OWNERSHIP_TITLE_FOLDER_INVALID":
     "Путь к папке тайтла должен быть абсолютным и не содержать переходов к родительским каталогам.",
   "error.reason.FOLDER_OWNERSHIP_TITLE_FOLDER_NO_EXISTING_ANCESTOR":
-    "У папки тайтла нет существующего родительского каталога ни на одном уровне.",
+    "Диск или том, на котором находится папка тайтла, отсутствует.",
+  "error.missingDriveNamed":
+    "Папка тайтла {{titleFolder}} недоступна: диск или том {{missingDrive}} отсутствует.",
   "error.reason.FOLDER_OWNERSHIP_TITLE_FOLDER_PATH_REQUIRED":
     "Требуется путь к папке тайтла.",
   "error.reason.FS_SAFETY_CONFIGURED_MEDIA_ROOT_EMPTY":
