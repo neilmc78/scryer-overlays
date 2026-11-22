@@ -25,6 +25,7 @@ pub(crate) enum ModuleFlavor {
     DownloadClient,
     Notification,
     ListProvider,
+    MetadataProvider,
 }
 
 impl ModuleFlavor {
@@ -36,6 +37,7 @@ impl ModuleFlavor {
             Self::DownloadClient => "download_client_component",
             Self::Notification => "notification_component",
             Self::ListProvider => "list_provider_component",
+            Self::MetadataProvider => "metadata_provider_component",
         }
     }
 }
@@ -167,6 +169,7 @@ pub(crate) fn reset_failed_modules(wasm: &[u8]) {
         ModuleFlavor::DownloadClient,
         ModuleFlavor::Notification,
         ModuleFlavor::ListProvider,
+        ModuleFlavor::MetadataProvider,
     ] {
         let key = ModuleKey {
             flavor,

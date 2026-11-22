@@ -13,6 +13,7 @@ pub mod host;
 pub mod http;
 pub mod indexer;
 pub mod list;
+pub mod metadata;
 pub mod net;
 pub mod notification;
 pub mod torrent;
@@ -33,6 +34,12 @@ pub use list::{
     ListProviderDescriptor, ListProviderGroup, ListProviderItem, ListProviderNote,
     ListProviderRating, ListProviderTile, ListSourceParam, ListSourceParamType, ListUrlPattern,
     ListUrlPatternCapture,
+};
+pub use metadata::{
+    MetadataMediaKind, MetadataPluginHealthRequest, MetadataPluginHealthResponse,
+    MetadataPluginLookupRequest, MetadataPluginLookupResponse, MetadataPluginSearchRequest,
+    MetadataPluginSearchResponse, MetadataPluginTitle, MetadataProviderCapabilities,
+    MetadataProviderDescriptor, normalize_imdb_id,
 };
 pub use net::{
     SocketCloseRequest, SocketCloseResponse, SocketError, SocketErrorCode, SocketOpenRequest,
@@ -343,6 +350,7 @@ pub enum PluginKind {
     SubtitleProvider,
     ArchiveExtractor,
     ListProvider,
+    MetadataProvider,
 }
 
 impl PluginKind {
@@ -354,6 +362,7 @@ impl PluginKind {
             Self::SubtitleProvider => "subtitle_provider",
             Self::ArchiveExtractor => "archive_extractor",
             Self::ListProvider => "list_provider",
+            Self::MetadataProvider => "metadata_provider",
         }
     }
 }
@@ -412,6 +421,7 @@ impl PluginDescriptor {
             ProviderDescriptor::Subtitle(_) => PluginKind::SubtitleProvider,
             ProviderDescriptor::ArchiveExtractor(_) => PluginKind::ArchiveExtractor,
             ProviderDescriptor::ListProvider(_) => PluginKind::ListProvider,
+            ProviderDescriptor::MetadataProvider(_) => PluginKind::MetadataProvider,
         }
     }
 
@@ -423,6 +433,7 @@ impl PluginDescriptor {
             ProviderDescriptor::Subtitle(_) => PluginKind::SubtitleProvider.as_str(),
             ProviderDescriptor::ArchiveExtractor(_) => PluginKind::ArchiveExtractor.as_str(),
             ProviderDescriptor::ListProvider(_) => PluginKind::ListProvider.as_str(),
+            ProviderDescriptor::MetadataProvider(_) => PluginKind::MetadataProvider.as_str(),
         }
     }
 
@@ -434,6 +445,7 @@ impl PluginDescriptor {
             ProviderDescriptor::Subtitle(provider) => provider.provider_type.as_str(),
             ProviderDescriptor::ArchiveExtractor(provider) => provider.provider_type.as_str(),
             ProviderDescriptor::ListProvider(provider) => provider.provider_type.as_str(),
+            ProviderDescriptor::MetadataProvider(provider) => provider.provider_type.as_str(),
         }
     }
 
@@ -445,6 +457,7 @@ impl PluginDescriptor {
             ProviderDescriptor::Subtitle(provider) => provider.provider_aliases.as_slice(),
             ProviderDescriptor::ArchiveExtractor(provider) => provider.provider_aliases.as_slice(),
             ProviderDescriptor::ListProvider(provider) => provider.provider_aliases.as_slice(),
+            ProviderDescriptor::MetadataProvider(provider) => provider.provider_aliases.as_slice(),
         }
     }
 
@@ -456,6 +469,7 @@ impl PluginDescriptor {
             ProviderDescriptor::Subtitle(provider) => provider.config_fields.as_slice(),
             ProviderDescriptor::ArchiveExtractor(provider) => provider.config_fields.as_slice(),
             ProviderDescriptor::ListProvider(provider) => provider.config_fields.as_slice(),
+            ProviderDescriptor::MetadataProvider(provider) => provider.config_fields.as_slice(),
         }
     }
 
@@ -467,6 +481,7 @@ impl PluginDescriptor {
             ProviderDescriptor::Subtitle(provider) => &mut provider.config_fields,
             ProviderDescriptor::ArchiveExtractor(provider) => &mut provider.config_fields,
             ProviderDescriptor::ListProvider(provider) => &mut provider.config_fields,
+            ProviderDescriptor::MetadataProvider(provider) => &mut provider.config_fields,
         }
     }
 
@@ -478,6 +493,7 @@ impl PluginDescriptor {
             ProviderDescriptor::Subtitle(provider) => provider.allowed_hosts.as_slice(),
             ProviderDescriptor::ArchiveExtractor(provider) => provider.allowed_hosts.as_slice(),
             ProviderDescriptor::ListProvider(provider) => provider.allowed_hosts.as_slice(),
+            ProviderDescriptor::MetadataProvider(provider) => provider.allowed_hosts.as_slice(),
         }
     }
 
@@ -493,6 +509,7 @@ impl PluginDescriptor {
             ProviderDescriptor::Subtitle(provider) => provider.default_base_url.as_deref(),
             ProviderDescriptor::ArchiveExtractor(provider) => provider.default_base_url.as_deref(),
             ProviderDescriptor::ListProvider(provider) => provider.default_base_url.as_deref(),
+            ProviderDescriptor::MetadataProvider(provider) => provider.default_base_url.as_deref(),
         }
     }
 
@@ -512,6 +529,7 @@ impl PluginDescriptor {
             ProviderDescriptor::Subtitle(provider) => provider.default_base_url = value,
             ProviderDescriptor::ArchiveExtractor(provider) => provider.default_base_url = value,
             ProviderDescriptor::ListProvider(provider) => provider.default_base_url = value,
+            ProviderDescriptor::MetadataProvider(provider) => provider.default_base_url = value,
         }
     }
 
@@ -556,6 +574,13 @@ impl PluginDescriptor {
             _ => None,
         }
     }
+
+    pub fn metadata_provider(&self) -> Option<&MetadataProviderDescriptor> {
+        match &self.provider {
+            ProviderDescriptor::MetadataProvider(provider) => Some(provider),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -567,6 +592,7 @@ pub enum ProviderDescriptor {
     Subtitle(SubtitleDescriptor),
     ArchiveExtractor(ArchiveExtractorDescriptor),
     ListProvider(ListProviderDescriptor),
+    MetadataProvider(MetadataProviderDescriptor),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

@@ -113,6 +113,7 @@ mod library_scan_titles;
 mod library_scan_unmatched;
 pub mod lifecycle_claims;
 pub mod lists;
+pub mod metadata_plugins;
 pub use lists::{ListPluginProvider, ListProviderClient, NullListPluginProvider};
 pub mod lifecycle_rules;
 pub mod location;
@@ -892,20 +893,20 @@ pub use types::{
     DownloadQueuePage, DownloadSourceKind, EpisodeMediaAvailability, EpisodeMediaAvailabilityState,
     EpisodeMediaSizeSummary, EpisodeScopedMediaFile, FixTitleMatchResult, HealthCheckResult,
     HealthCheckStatus, HousekeepingReport, IgnorePendingImportResult, IgnorePendingImportsResult,
-    IndexerQueryStats, JwtAuthConfig, JwtSessionScope, LibraryRootDraft, LibraryScanUnmatchedItem,
-    LibraryScanUnmatchedSearchAttempt, LoginFailureTimingClass, LoginVerificationChallengeRecord,
-    LoginVerificationMethod, LoginVerificationRequirement, LoginVerificationSatisfied,
-    ManualImportSelection, ManualImportSelectionCandidate, MdblistSummary, MediaFileAssociations,
-    MediaFileCutoffSummary, MediaRequestCounts, MissingEpisodeCandidate, MissingScopeCandidates,
-    MissingSeriesMovieLinkCandidate, MissingTitleCandidate, MovieAvailabilityDecision,
-    MovieAvailabilityProjection, MovieAvailabilityStatus, OAuthAuthorizationCodeRecord,
-    OAuthAuthorizationSource, OAuthClientRegistrationRecord, OAuthConnectedAppRecord,
-    OAuthRefreshGrantRecord, OAuthRefreshRotation, OAuthRefreshRotationOutcome,
-    OAuthRefreshTokenRecord, PasskeySummary, PendingImportBindingFilePreview,
-    PendingImportBindingPreview, PendingImportConnection, PendingImportCounts, PendingImportItem,
-    PendingImportReasonClass, PendingImportSearchAttempt, PendingImportStatus,
-    PendingImportTitleSearchItem, PendingRelease, PendingReleaseObservation, PendingReleaseRole,
-    PendingReleaseStatus, PendingReleaseStatusCount, PendingTitleHydration,
+    IndexerQueryStats, JwtAuthConfig, JwtSessionScope, LibraryRootDraft, LibraryRootMediaBytes,
+    LibraryScanUnmatchedItem, LibraryScanUnmatchedSearchAttempt, LoginFailureTimingClass,
+    LoginVerificationChallengeRecord, LoginVerificationMethod, LoginVerificationRequirement,
+    LoginVerificationSatisfied, ManualImportSelection, ManualImportSelectionCandidate,
+    MdblistSummary, MediaFileAssociations, MediaFileCutoffSummary, MediaRequestCounts,
+    MissingEpisodeCandidate, MissingScopeCandidates, MissingSeriesMovieLinkCandidate,
+    MissingTitleCandidate, MovieAvailabilityDecision, MovieAvailabilityProjection,
+    MovieAvailabilityStatus, OAuthAuthorizationCodeRecord, OAuthAuthorizationSource,
+    OAuthClientRegistrationRecord, OAuthConnectedAppRecord, OAuthRefreshGrantRecord,
+    OAuthRefreshRotation, OAuthRefreshRotationOutcome, OAuthRefreshTokenRecord, PasskeySummary,
+    PendingImportBindingFilePreview, PendingImportBindingPreview, PendingImportConnection,
+    PendingImportCounts, PendingImportItem, PendingImportReasonClass, PendingImportSearchAttempt,
+    PendingImportStatus, PendingImportTitleSearchItem, PendingRelease, PendingReleaseObservation,
+    PendingReleaseRole, PendingReleaseStatus, PendingReleaseStatusCount, PendingTitleHydration,
     PrimaryCollectionSummary, ReassignEpisodeFileResult, RecycleBinBatchJobAccepted,
     RecycleBinSettings, RecycleRestoreConflictPolicy, RecycleRestorePreview,
     RecycleRestorePreviewItem, RecycledItem, RecycledItemHistory, ReleaseDecision,
