@@ -1,8 +1,9 @@
+mod catalog_paging;
 mod emby;
 pub mod external_identity;
 mod jellyfin;
 pub mod jellyfin_posters;
-/// Maintenance safety: live playback observation (RFC 137 §9.10, WP-G).
+/// Lifecycle safety: live playback observation.
 pub mod media_server_playback;
 /// Poster overlay uploads to Plex.
 pub mod media_server_posters;
