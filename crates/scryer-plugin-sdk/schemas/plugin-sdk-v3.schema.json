@@ -1961,6 +1961,7 @@
         "list_title_left",
         "list_sync_failed",
         "list_unfollowed",
+        "lifecycle_rule_notified",
         "test"
       ]
     },
