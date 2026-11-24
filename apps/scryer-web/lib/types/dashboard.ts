@@ -58,6 +58,9 @@ export type DashboardStorageRoot = {
   /** Null when the filesystem could not be inspected; never treat as zero. */
   usedBytes: number | null;
   totalBytes: number | null;
+  /** This library's own media in this root, counted as its catalogue page
+   *  counts it; null when it could not be read. */
+  libraryBytes: number | null;
 };
 
 export type DashboardOverview = {
